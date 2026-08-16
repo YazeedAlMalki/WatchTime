@@ -3,20 +3,24 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: WatchTime API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: catalog
+  - name: tracking
+  - name: safety
+  - name: stats
+  - name: feedback
+  - name: admin
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +28,1052 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /me:
+    get:
+      operationId: getMe
+      tags: [tracking]
+      summary: Current user profile and eligibility
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "401":
+          description: Not authenticated
+  /titles:
+    get:
+      operationId: listTitles
+      tags: [catalog]
+      summary: Browse titles with filters
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: type
+          in: query
+          schema: { type: string, enum: [movie, tv, anime, documentary] }
+        - name: genre
+          in: query
+          schema: { type: string }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [popular, newest, name] }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: offset
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Titles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Title"
+  /titles/trending:
+    get:
+      operationId: getTrendingTitles
+      tags: [catalog]
+      summary: Trending titles by content type
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string, enum: [movie, tv, anime, documentary] }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Trending titles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Title"
+  /titles/{id}:
+    get:
+      operationId: getTitle
+      tags: [catalog]
+      summary: Title detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Title detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TitleDetail"
+        "404":
+          description: Not found
+  /titles/{id}/seasons/{seasonNumber}:
+    get:
+      operationId: getSeason
+      tags: [catalog]
+      summary: Season with episodes (includes watched flags when authenticated)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: seasonNumber
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Season detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeasonDetail"
+        "404":
+          description: Not found
+  /titles/{id}/similar:
+    get:
+      operationId: getSimilarTitles
+      tags: [catalog]
+      summary: Similar titles
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Similar titles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Title"
+  /safety:
+    get:
+      operationId: getTitleSafety
+      tags: [safety]
+      summary: Content safety info with episode/season/series fallback
+      parameters:
+        - name: titleId
+          in: query
+          required: true
+          schema: { type: integer }
+        - name: seasonNumber
+          in: query
+          schema: { type: integer }
+        - name: episodeNumber
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Safety info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyInfo"
+  /titles/{id}/safety/contributions:
+    post:
+      operationId: createSafetyContribution
+      tags: [safety]
+      summary: Submit a community safety contribution (requires eligibility)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SafetyContributionInput"
+      responses:
+        "201":
+          description: Created (pending review)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyContribution"
+        "401":
+          description: Not authenticated
+        "403":
+          description: Not eligible
+  /titles/{id}/safety/reports:
+    post:
+      operationId: createSafetyReport
+      tags: [safety]
+      summary: Report incorrect safety data
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SafetyReportInput"
+      responses:
+        "201":
+          description: Report created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyReport"
+        "401":
+          description: Not authenticated
+  /titles/{id}/watchlist:
+    post:
+      operationId: addToWatchlist
+      tags: [tracking]
+      summary: Add title to watchlist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResult"
+        "401":
+          description: Not authenticated
+    delete:
+      operationId: removeFromWatchlist
+      tags: [tracking]
+      summary: Remove title from watchlist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResult"
+        "401":
+          description: Not authenticated
+  /titles/{id}/watched:
+    post:
+      operationId: markTitleWatched
+      tags: [tracking]
+      summary: Mark a movie watched (or follow a show)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Marked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResult"
+        "401":
+          description: Not authenticated
+    delete:
+      operationId: unmarkTitleWatched
+      tags: [tracking]
+      summary: Unmark a movie watched (or unfollow a show)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Unmarked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResult"
+        "401":
+          description: Not authenticated
+  /episodes/{episodeId}/watched:
+    post:
+      operationId: markEpisodeWatched
+      tags: [tracking]
+      summary: Mark an episode watched (optionally all previous episodes too)
+      parameters:
+        - name: episodeId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EpisodeWatchInput"
+      responses:
+        "200":
+          description: Marked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResult"
+        "401":
+          description: Not authenticated
+    delete:
+      operationId: unmarkEpisodeWatched
+      tags: [tracking]
+      summary: Unmark an episode watched
+      parameters:
+        - name: episodeId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Unmarked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResult"
+        "401":
+          description: Not authenticated
+  /me/shows:
+    get:
+      operationId: getMyShows
+      tags: [tracking]
+      summary: Tracked shows with progress and next episode to watch
+      responses:
+        "200":
+          description: Tracked shows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrackedShow"
+        "401":
+          description: Not authenticated
+  /me/movies:
+    get:
+      operationId: getMyMovies
+      tags: [tracking]
+      summary: Tracked (watched) movies
+      responses:
+        "200":
+          description: Watched movies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Title"
+        "401":
+          description: Not authenticated
+  /me/watchlist:
+    get:
+      operationId: getMyWatchlist
+      tags: [tracking]
+      summary: Watchlist titles
+      responses:
+        "200":
+          description: Watchlist
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Title"
+        "401":
+          description: Not authenticated
+  /me/recent:
+    get:
+      operationId: getMyRecentActivity
+      tags: [tracking]
+      summary: Recently watched episodes and movies
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RecentActivityItem"
+        "401":
+          description: Not authenticated
+  /me/recommendations:
+    get:
+      operationId: getMyRecommendations
+      tags: [tracking]
+      summary: Simple recommendations (because you watched X)
+      responses:
+        "200":
+          description: Recommendation groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RecommendationGroup"
+        "401":
+          description: Not authenticated
+  /stats/public:
+    get:
+      operationId: getPublicStats
+      tags: [stats]
+      summary: Public aggregate statistics
+      responses:
+        "200":
+          description: Public stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicStats"
+  /feedback:
+    post:
+      operationId: createFeedback
+      tags: [feedback]
+      summary: Submit bug report, feature suggestion, or general feedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackInput"
+      responses:
+        "201":
+          description: Feedback created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResult"
+  /admin/dashboard:
+    get:
+      operationId: getAdminDashboard
+      tags: [admin]
+      summary: Admin dashboard summary
+      responses:
+        "200":
+          description: Dashboard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminDashboard"
+        "403":
+          description: Forbidden
+  /admin/contributions:
+    get:
+      operationId: listAdminContributions
+      tags: [admin]
+      summary: List community contributions by status
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, approved, rejected, flagged] }
+      responses:
+        "200":
+          description: Contributions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SafetyContribution"
+        "403":
+          description: Forbidden
+  /admin/contributions/{contributionId}:
+    patch:
+      operationId: updateAdminContribution
+      tags: [admin]
+      summary: Approve/reject/flag a contribution
+      parameters:
+        - name: contributionId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContributionModeration"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyContribution"
+        "403":
+          description: Forbidden
+  /admin/reports:
+    get:
+      operationId: listAdminReports
+      tags: [admin]
+      summary: List safety issue reports
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, resolved, dismissed] }
+      responses:
+        "200":
+          description: Reports
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SafetyReport"
+        "403":
+          description: Forbidden
+  /admin/reports/{reportId}:
+    patch:
+      operationId: updateAdminReport
+      tags: [admin]
+      summary: Resolve or dismiss a report
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportModeration"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyReport"
+        "403":
+          description: Forbidden
+  /admin/feedback:
+    get:
+      operationId: listAdminFeedback
+      tags: [admin]
+      summary: List user feedback
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [new, reviewing, resolved, closed] }
+        - name: category
+          in: query
+          schema: { type: string, enum: [bug, feature, general] }
+      responses:
+        "200":
+          description: Feedback items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FeedbackItem"
+        "403":
+          description: Forbidden
+  /admin/feedback/{feedbackId}:
+    patch:
+      operationId: updateAdminFeedback
+      tags: [admin]
+      summary: Update feedback status
+      parameters:
+        - name: feedbackId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackModeration"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackItem"
+        "403":
+          description: Forbidden
+  /admin/integrations:
+    get:
+      operationId: listAdminIntegrations
+      tags: [admin]
+      summary: Provider integration health
+      responses:
+        "200":
+          description: Integration health rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IntegrationHealth"
+        "403":
+          description: Forbidden
+  /admin/content:
+    get:
+      operationId: searchAdminContent
+      tags: [admin]
+      summary: Search content items with provider mappings
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Content mappings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ContentMapping"
+        "403":
+          description: Forbidden
+  /admin/content/{id}/refresh:
+    post:
+      operationId: refreshAdminContent
+      tags: [admin]
+      summary: Force refresh safety data for a content item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Refresh queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResult"
+        "403":
+          description: Forbidden
+  /admin/analytics:
+    get:
+      operationId: getAdminAnalytics
+      tags: [admin]
+      summary: Internal analytics summary
+      responses:
+        "200":
+          description: Analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsSummary"
+        "403":
+          description: Forbidden
 components:
   schemas:
     HealthStatus:
       type: object
       properties:
-        status:
+        status: { type: string }
+      required: [status]
+    OkResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+      required: [ok]
+    UserProfile:
+      type: object
+      required: [id, email, isAdmin, canContribute, showsTracked, episodesWatched, moviesWatched]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        name: { type: ["string", "null"] }
+        isAdmin: { type: boolean }
+        canContribute: { type: boolean }
+        showsTracked: { type: integer }
+        episodesWatched: { type: integer }
+        moviesWatched: { type: integer }
+        timeWatchedMinutes: { type: integer }
+    Title:
+      type: object
+      required: [id, type, name, posterUrl, year, genres]
+      properties:
+        id: { type: integer }
+        type: { type: string, enum: [movie, tv, anime, documentary] }
+        name: { type: string }
+        overview: { type: ["string", "null"] }
+        posterUrl: { type: ["string", "null"] }
+        backdropUrl: { type: ["string", "null"] }
+        year: { type: ["integer", "null"] }
+        genres:
+          type: array
+          items: { type: string }
+        imdbRating: { type: ["number", "null"] }
+        rottenTomatoesScore: { type: ["integer", "null"] }
+        runtimeMinutes: { type: ["integer", "null"] }
+        status: { type: ["string", "null"] }
+        inWatchlist: { type: ["boolean", "null"] }
+        watched: { type: ["boolean", "null"] }
+    SeasonSummary:
+      type: object
+      required: [seasonNumber, name, episodeCount]
+      properties:
+        seasonNumber: { type: integer }
+        name: { type: string }
+        episodeCount: { type: integer }
+        watchedCount: { type: ["integer", "null"] }
+    CastMember:
+      type: object
+      required: [name, character]
+      properties:
+        name: { type: string }
+        character: { type: string }
+        photoUrl: { type: ["string", "null"] }
+    WatchProvider:
+      type: object
+      required: [name, kind]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [stream, rent, buy] }
+        logoUrl: { type: ["string", "null"] }
+    TitleDetail:
+      allOf:
+        - $ref: "#/components/schemas/Title"
+        - type: object
+          required: [altTitles, cast, providers, seasons]
+          properties:
+            altTitles:
+              type: array
+              items: { type: string }
+            cast:
+              type: array
+              items:
+                $ref: "#/components/schemas/CastMember"
+            providers:
+              type: array
+              items:
+                $ref: "#/components/schemas/WatchProvider"
+            seasons:
+              type: array
+              items:
+                $ref: "#/components/schemas/SeasonSummary"
+            totalEpisodes: { type: ["integer", "null"] }
+            watchedEpisodes: { type: ["integer", "null"] }
+            nextEpisode:
+              oneOf:
+                - $ref: "#/components/schemas/Episode"
+                - type: "null"
+    Episode:
+      type: object
+      required: [id, seasonNumber, episodeNumber, name]
+      properties:
+        id: { type: integer }
+        seasonNumber: { type: integer }
+        episodeNumber: { type: integer }
+        name: { type: string }
+        overview: { type: ["string", "null"] }
+        airDate: { type: ["string", "null"] }
+        runtimeMinutes: { type: ["integer", "null"] }
+        stillUrl: { type: ["string", "null"] }
+        watched: { type: ["boolean", "null"] }
+    SeasonDetail:
+      type: object
+      required: [seasonNumber, name, episodes]
+      properties:
+        seasonNumber: { type: integer }
+        name: { type: string }
+        overview: { type: ["string", "null"] }
+        episodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Episode"
+    EpisodeWatchInput:
+      type: object
+      properties:
+        includePrevious: { type: boolean }
+    TrackedShow:
+      type: object
+      required: [title, watchedEpisodes, totalEpisodes]
+      properties:
+        title:
+          $ref: "#/components/schemas/Title"
+        watchedEpisodes: { type: integer }
+        totalEpisodes: { type: integer }
+        nextEpisode:
+          oneOf:
+            - $ref: "#/components/schemas/Episode"
+            - type: "null"
+    RecentActivityItem:
+      type: object
+      required: [titleId, titleName, kind, watchedAt]
+      properties:
+        titleId: { type: integer }
+        titleName: { type: string }
+        posterUrl: { type: ["string", "null"] }
+        kind: { type: string, enum: [episode, movie] }
+        episodeLabel: { type: ["string", "null"] }
+        watchedAt: { type: string }
+    RecommendationGroup:
+      type: object
+      required: [reason, titles]
+      properties:
+        reason: { type: string }
+        titles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Title"
+    SafetyCategorySummary:
+      type: object
+      required: [category, severity]
+      properties:
+        category: { type: string }
+        severity: { type: string, enum: [none, mild, moderate, severe] }
+    SafetySourceItem:
+      type: object
+      required: [category, label]
+      properties:
+        category: { type: string }
+        label: { type: string }
+        score: { type: ["number", "null"] }
+        maxScore: { type: ["number", "null"] }
+        description: { type: ["string", "null"] }
+    SafetySource:
+      type: object
+      required: [sourceName, tier, items, isCommunity]
+      properties:
+        sourceName: { type: string }
+        tier: { type: integer }
+        isCommunity: { type: boolean }
+        ageRecommendation: { type: ["string", "null"] }
+        url: { type: ["string", "null"] }
+        status: { type: string, enum: [available, provider_unavailable] }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SafetySourceItem"
+    SafetyInfo:
+      type: object
+      required: [level, summary, sources]
+      properties:
+        level: { type: string, enum: [episode, season, series, movie] }
+        summary:
+          type: array
+          items:
+            $ref: "#/components/schemas/SafetyCategorySummary"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SafetySource"
+    SafetyContributionInput:
+      type: object
+      required: [category, severity]
+      properties:
+        category: { type: string }
+        severity: { type: string, enum: [none, mild, moderate, severe] }
+        seasonNumber: { type: ["integer", "null"] }
+        episodeNumber: { type: ["integer", "null"] }
+        description: { type: ["string", "null"] }
+    SafetyContribution:
+      type: object
+      required: [id, titleId, titleName, category, severity, status, createdAt]
+      properties:
+        id: { type: integer }
+        titleId: { type: integer }
+        titleName: { type: string }
+        category: { type: string }
+        severity: { type: string, enum: [none, mild, moderate, severe] }
+        seasonNumber: { type: ["integer", "null"] }
+        episodeNumber: { type: ["integer", "null"] }
+        description: { type: ["string", "null"] }
+        status: { type: string, enum: [pending, approved, rejected, flagged] }
+        createdAt: { type: string }
+    ContributionModeration:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [pending, approved, rejected, flagged] }
+    SafetyReportInput:
+      type: object
+      required: [reason]
+      properties:
+        reason:
           type: string
-      required:
-        - status
-
+          enum: [wrong_title, incorrect_info, outdated_info, broken_source, incorrect_episode, other]
+        sourceName: { type: ["string", "null"] }
+        details: { type: ["string", "null"] }
+    SafetyReport:
+      type: object
+      required: [id, titleId, titleName, reason, status, createdAt]
+      properties:
+        id: { type: integer }
+        titleId: { type: integer }
+        titleName: { type: string }
+        reason: { type: string }
+        sourceName: { type: ["string", "null"] }
+        details: { type: ["string", "null"] }
+        status: { type: string, enum: [open, resolved, dismissed] }
+        createdAt: { type: string }
+    ReportModeration:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [open, resolved, dismissed] }
+    FeedbackInput:
+      type: object
+      required: [category, message]
+      properties:
+        category: { type: string, enum: [bug, feature, general] }
+        message: { type: string, minLength: 1 }
+        page: { type: ["string", "null"] }
+        titleId: { type: ["integer", "null"] }
+    FeedbackItem:
+      type: object
+      required: [id, category, message, status, createdAt]
+      properties:
+        id: { type: integer }
+        category: { type: string, enum: [bug, feature, general] }
+        message: { type: string }
+        page: { type: ["string", "null"] }
+        titleId: { type: ["integer", "null"] }
+        userEmail: { type: ["string", "null"] }
+        status: { type: string, enum: [new, reviewing, resolved, closed] }
+        createdAt: { type: string }
+    FeedbackModeration:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [new, reviewing, resolved, closed] }
+    PublicStats:
+      type: object
+      required: [registeredUsers, titlesTracked, episodesWatched, moviesWatched, trendingTv, trendingMovies, trendingAnime, trendingDocumentaries, mostSafetyChecked]
+      properties:
+        registeredUsers: { type: integer }
+        titlesTracked: { type: integer }
+        episodesWatched: { type: integer }
+        moviesWatched: { type: integer }
+        trendingTv:
+          type: array
+          items:
+            $ref: "#/components/schemas/Title"
+        trendingMovies:
+          type: array
+          items:
+            $ref: "#/components/schemas/Title"
+        trendingAnime:
+          type: array
+          items:
+            $ref: "#/components/schemas/Title"
+        trendingDocumentaries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Title"
+        mostSafetyChecked:
+          type: array
+          items:
+            $ref: "#/components/schemas/Title"
+    AdminDashboard:
+      type: object
+      required: [totalUsers, newRegistrations7d, activeUsers7d, titlesInCatalog, safetyCoveragePercent, pendingContributions, openReports, newFeedback, failedSyncs]
+      properties:
+        totalUsers: { type: integer }
+        newRegistrations7d: { type: integer }
+        activeUsers7d: { type: integer }
+        titlesInCatalog: { type: integer }
+        safetyCoveragePercent: { type: number }
+        pendingContributions: { type: integer }
+        openReports: { type: integer }
+        newFeedback: { type: integer }
+        failedSyncs: { type: integer }
+    IntegrationHealth:
+      type: object
+      required: [provider, status, successRatePercent, mappedTitles, missingMappings]
+      properties:
+        provider: { type: string }
+        status: { type: string, enum: [healthy, degraded, failing, provider_unavailable] }
+        lastSyncAt: { type: ["string", "null"] }
+        lastSuccessAt: { type: ["string", "null"] }
+        lastError: { type: ["string", "null"] }
+        successRatePercent: { type: number }
+        mappedTitles: { type: integer }
+        missingMappings: { type: integer }
+    ProviderMapping:
+      type: object
+      required: [provider, status]
+      properties:
+        provider: { type: string }
+        externalId: { type: ["string", "null"] }
+        status: { type: string, enum: [mapped, missing, error] }
+        lastRefreshedAt: { type: ["string", "null"] }
+    ContentMapping:
+      type: object
+      required: [id, name, type, mappings]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        type: { type: string, enum: [movie, tv, anime, documentary] }
+        tmdbId: { type: ["integer", "null"] }
+        imdbId: { type: ["string", "null"] }
+        mappings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderMapping"
+    AnalyticsPoint:
+      type: object
+      required: [date, value]
+      properties:
+        date: { type: string }
+        value: { type: integer }
+    AnalyticsTopItem:
+      type: object
+      required: [name, count]
+      properties:
+        name: { type: string }
+        count: { type: integer }
+    AnalyticsSummary:
+      type: object
+      required: [dailyVisitors, registrations, conversionRatePercent, mostViewedTitles, mostSearchedQueries, mostViewedSafetyPages, mostTrackedTitles, deviceBreakdown, countryBreakdown]
+      properties:
+        dailyVisitors:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsPoint"
+        registrations:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsPoint"
+        conversionRatePercent: { type: number }
+        mostViewedTitles:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsTopItem"
+        mostSearchedQueries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsTopItem"
+        mostViewedSafetyPages:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsTopItem"
+        mostTrackedTitles:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsTopItem"
+        deviceBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsTopItem"
+        countryBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsTopItem"

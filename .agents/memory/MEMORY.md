@@ -1,0 +1,3 @@
+- [Orval/zod codegen quirks](codegen-quirks.md) — zod/v4 import rewrite required; avoid ops mixing path+query params (TS export collision).
+- [Drizzle array params](drizzle-array-params.md) — never interpolate JS arrays into raw sql`` for ANY()/&&; use inArray/arrayOverlaps.
+- Catalog is fictional/seeded because the user declined a TMDB key — don't re-ask; tmdbId/imdbId columns reserved for future sync.

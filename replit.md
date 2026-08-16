@@ -1,45 +1,19 @@
-# [Project name]
+# WatchTime
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A TV Time-style tracking app for movies, TV, anime, and documentaries with a differentiating **Content Safety** section on title pages (source-attributed data from Common Sense Media, Kids-In-Mind, Does the Dog Die?, CringeMDb, and community contributions, with episode → season → series fallback and explicit `provider_unavailable` states — data is never fabricated).
 
-## Run & Operate
+## Structure
+- `artifacts/watchtime` — React + Vite web app (preview path `/`), warm cinematic theme (crimson accent, Outfit/DM Sans).
+- `artifacts/api-server` — Express API (`/api/*`), Clerk auth via proxy middleware, Drizzle + Postgres.
+- `lib/api-spec` — OpenAPI source of truth; codegen produces `lib/api-zod` (server validation) and `lib/api-client-react` (TanStack Query hooks). Run `pnpm --filter @workspace/api-spec run codegen` after spec changes.
+- `lib/db` — Drizzle schema (`pnpm --filter @workspace/db run push` to sync).
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
-
-## Stack
-
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
-
-## Where things live
-
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
-
-## Architecture decisions
-
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
-
-## Product
-
-_Describe the high-level user-facing capabilities of this app once they exist._
+## Key behaviors
+- **First registered user becomes the single admin** (JIT provisioning in `artifacts/api-server/src/middlewares/auth.ts`).
+- Visitors can browse/search/view safety without signing in; tracking requires auth.
+- Safety contributions require ≥5 watched episodes+movies (`CONTRIBUTION_THRESHOLD`); approved contributions merge into a "WatchTime Community" safety record.
+- Catalog is a locally seeded set of 12 **fictional** titles (user declined a TMDB key); `tmdbId`/`imdbId` columns exist for a later real sync. Re-seed: `pnpm --filter @workspace/api-server exec tsx src/seed.ts` (idempotent — skips if titles exist).
+- Poster/backdrop images live in `artifacts/watchtime/public/posters|backdrops`.
 
 ## User preferences
-
-_Populate as you build — explicit user instructions worth remembering across sessions._
-
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Do not re-request a TMDB API key (declined).
