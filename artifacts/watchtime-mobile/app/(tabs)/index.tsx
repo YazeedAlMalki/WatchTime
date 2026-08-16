@@ -24,6 +24,7 @@ import {
   useMarkEpisodeWatched,
   getGetMyShowsQueryKey,
   getGetMyRecommendationsQueryKey,
+  getGetTitleQueryKey,
   type TrackedShow,
 } from '@workspace/api-client-react';
 import { EmptyState, ErrorState, Loading, PosterCard, SectionHeader } from '@/components/ui';
@@ -39,6 +40,19 @@ function UpNextCard({ show }: { show: TrackedShow }) {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
+        // Invalidate the title detail so the title page reflects the new watched state.
+        queryClient.invalidateQueries({ queryKey: getGetTitleQueryKey(show.title.id) });
+        // includePrevious can touch episodes across multiple seasons; clear every
+        // season cache for this title so the accordion shows correct checkmarks.
+        queryClient.invalidateQueries({
+          predicate: (query) => {
+            const key = query.queryKey[0];
+            return (
+              typeof key === 'string' &&
+              key.startsWith(`/api/titles/${show.title.id}/seasons/`)
+            );
+          },
+        });
       },
     },
   });

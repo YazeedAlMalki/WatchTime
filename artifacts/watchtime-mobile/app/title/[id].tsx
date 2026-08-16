@@ -35,6 +35,7 @@ import {
   getGetSeasonQueryKey,
   getGetMyWatchlistQueryKey,
   getGetMyShowsQueryKey,
+  getGetMyRecommendationsQueryKey,
   getGetTitleSafetyQueryKey,
   type SafetySource,
   type SafetyCategorySummary,
@@ -636,6 +637,7 @@ function SeasonAccordion({
     });
     queryClient.invalidateQueries({ queryKey: getGetTitleQueryKey(titleId) });
     queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
   };
   const mark = useMarkEpisodeWatched({ mutation: { onSuccess: invalidate } });
   const unmark = useUnmarkEpisodeWatched({ mutation: { onSuccess: invalidate } });
