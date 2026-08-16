@@ -14,7 +14,7 @@
  *    audit loss is possible.
  */
 
-import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { vi, describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from "vitest";
 
 // ─── Mock auth so requireAdmin just stamps req.userId ───────────────────────
 const ADMIN_ID = "test-audit-admin-001";
@@ -92,6 +92,7 @@ import {
   adminAuditLogTable,
 } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
+import { logger } from "../lib/logger";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -160,6 +161,12 @@ async function cleanAuditRows(entityType: string, entityId: number) {
 }
 
 // ─── Global setup / teardown ─────────────────────────────────────────────────
+
+// Reset all vi.fn() call counts between tests so logger.error assertions
+// in error-path tests are not polluted by calls from earlier tests.
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 beforeAll(async () => {
   // Ensure the admin user row exists (FK constraint on adminAuditLogTable.adminId).
@@ -310,6 +317,13 @@ describe("PATCH /api/admin/contributions/:id — audit log", () => {
     // both the audit write and the status change — the endpoint returns 500.
     expect(res.status).toBe(500);
 
+    // The global error handler must have logged the error via pino so the
+    // failure is visible in server logs (not silently dropped).
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      "unhandled request error",
+    );
+
     // The status must still be "pending" — the rollback preserved consistency.
     const [reloaded] = await db
       .select()
@@ -405,6 +419,12 @@ describe("PATCH /api/admin/reports/:id — audit log", () => {
 
     expect(res.status).toBe(500);
 
+    // The global error handler must have logged the error via pino.
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      "unhandled request error",
+    );
+
     const [reloaded] = await db
       .select()
       .from(reportsTable)
@@ -497,6 +517,12 @@ describe("PATCH /api/admin/feedback/:id — audit log", () => {
     spy.mockRestore();
 
     expect(res.status).toBe(500);
+
+    // The global error handler must have logged the error via pino.
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      "unhandled request error",
+    );
 
     const [reloaded] = await db
       .select()

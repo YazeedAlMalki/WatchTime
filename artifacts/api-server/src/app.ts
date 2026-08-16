@@ -74,4 +74,23 @@ app.use(
 
 app.use("/api", router);
 
+// Global error handler — must be registered after all routes.
+// Express 5 automatically forwards unhandled async-handler rejections here,
+// so any thrown error (including a failed audit-log insert inside a transaction)
+// is logged via pino and never silently dropped.
+app.use(
+  (
+    err: unknown,
+    _req: express.Request,
+    res: express.Response,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _next: express.NextFunction,
+  ) => {
+    logger.error({ err }, "unhandled request error");
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
 export default app;
