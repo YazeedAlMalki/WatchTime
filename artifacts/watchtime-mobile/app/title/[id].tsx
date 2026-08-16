@@ -865,75 +865,87 @@ export default function TitleDetailScreen() {
           </Text>
         ) : null}
 
-        {/* Actions */}
-        {isSignedIn ? (
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+        {/* Actions – visible to all; signed-out users are redirected to sign in */}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+          <Pressable
+            testID="watchlist-toggle"
+            disabled={watchlistBusy}
+            onPress={() => {
+              if (!isSignedIn) {
+                router.push({ pathname: '/(auth)/sign-in', params: { returnTo: `/title/${titleId}` } });
+                return;
+              }
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              if (t.inWatchlist) removeWatchlist.mutate({ id: titleId });
+              else addWatchlist.mutate({ id: titleId });
+            }}
+            style={({ pressed }) => [
+              styles.actionButton,
+              {
+                backgroundColor: t.inWatchlist ? c.card : c.primary,
+                borderWidth: t.inWatchlist ? 1 : 0,
+                borderColor: c.border,
+                opacity: watchlistBusy ? 0.5 : pressed ? 0.8 : isSignedIn ? 1 : 0.55,
+              },
+            ]}
+          >
+            <Feather
+              name="bookmark"
+              size={16}
+              color={t.inWatchlist ? c.foreground : c.primaryForeground}
+            />
+            <Text
+              style={{
+                color: t.inWatchlist ? c.foreground : c.primaryForeground,
+                fontSize: 14,
+                fontFamily: 'Inter_600SemiBold',
+              }}
+            >
+              {t.inWatchlist ? 'In Watchlist' : 'Watchlist'}
+            </Text>
+            {!isSignedIn ? (
+              <Feather name="lock" size={12} color={c.primaryForeground} />
+            ) : null}
+          </Pressable>
+          {t.type === 'movie' ? (
             <Pressable
-              testID="watchlist-toggle"
-              disabled={watchlistBusy}
+              testID="watched-toggle"
+              disabled={watchedBusy}
               onPress={() => {
+                if (!isSignedIn) {
+                  router.push({ pathname: '/(auth)/sign-in', params: { returnTo: `/title/${titleId}` } });
+                  return;
+                }
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                if (t.inWatchlist) removeWatchlist.mutate({ id: titleId });
-                else addWatchlist.mutate({ id: titleId });
+                if (t.watched) unmarkWatched.mutate({ id: titleId });
+                else markWatched.mutate({ id: titleId });
               }}
               style={({ pressed }) => [
                 styles.actionButton,
                 {
-                  backgroundColor: t.inWatchlist ? c.card : c.primary,
-                  borderWidth: t.inWatchlist ? 1 : 0,
-                  borderColor: c.border,
-                  opacity: watchlistBusy ? 0.5 : pressed ? 0.8 : 1,
+                  backgroundColor: t.watched ? c.card : c.secondary,
+                  borderWidth: 1,
+                  borderColor: t.watched ? c.primary : c.border,
+                  opacity: watchedBusy ? 0.5 : pressed ? 0.8 : isSignedIn ? 1 : 0.55,
                 },
               ]}
             >
-              <Feather
-                name="bookmark"
-                size={16}
-                color={t.inWatchlist ? c.foreground : c.primaryForeground}
-              />
+              <Feather name="check-circle" size={16} color={t.watched ? c.primary : c.foreground} />
               <Text
                 style={{
-                  color: t.inWatchlist ? c.foreground : c.primaryForeground,
+                  color: t.watched ? c.primary : c.foreground,
                   fontSize: 14,
                   fontFamily: 'Inter_600SemiBold',
                 }}
               >
-                {t.inWatchlist ? 'In Watchlist' : 'Watchlist'}
+                {t.watched ? 'Watched' : 'Mark watched'}
               </Text>
+              {!isSignedIn ? (
+                <Feather name="lock" size={12} color={c.mutedForeground} />
+              ) : null}
             </Pressable>
-            {t.type === 'movie' ? (
-              <Pressable
-                testID="watched-toggle"
-                disabled={watchedBusy}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  if (t.watched) unmarkWatched.mutate({ id: titleId });
-                  else markWatched.mutate({ id: titleId });
-                }}
-                style={({ pressed }) => [
-                  styles.actionButton,
-                  {
-                    backgroundColor: t.watched ? c.card : c.secondary,
-                    borderWidth: 1,
-                    borderColor: t.watched ? c.primary : c.border,
-                    opacity: watchedBusy ? 0.5 : pressed ? 0.8 : 1,
-                  },
-                ]}
-              >
-                <Feather name="check-circle" size={16} color={t.watched ? c.primary : c.foreground} />
-                <Text
-                  style={{
-                    color: t.watched ? c.primary : c.foreground,
-                    fontSize: 14,
-                    fontFamily: 'Inter_600SemiBold',
-                  }}
-                >
-                  {t.watched ? 'Watched' : 'Mark watched'}
-                </Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : null}
+          ) : null}
+        </View>
 
         {t.overview ? (
           <Text style={{ color: c.foreground, fontSize: 14, fontFamily: 'Inter_400Regular', lineHeight: 21, marginTop: 16 }}>
