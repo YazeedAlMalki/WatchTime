@@ -1,36 +1,36 @@
 /**
  * WatchTime brand tokens — mirrors artifacts/watchtime/src/index.css dark theme.
  * The app is dark-first: both schemes use the same dark palette so the brand
- * stays consistent (dark navy surfaces, crimson red primary).
+ * stays consistent (TVTime look: deep navy-black surfaces, amber/gold primary).
  */
 
 const palette = {
-  text: '#FBF9F6',
-  tint: '#C91D39',
+  text: '#F5F5F5',
+  tint: '#F5C619',
 
-  background: '#121724',
-  foreground: '#FBF9F6',
+  background: '#0C0C12',
+  foreground: '#F5F5F5',
 
-  card: '#171C26',
-  cardForeground: '#FBF9F6',
+  card: '#16161D',
+  cardForeground: '#F5F5F5',
 
-  primary: '#C91D39',
-  primaryForeground: '#FFFFFF',
+  primary: '#F5C619',
+  primaryForeground: '#0A0A0F',
 
-  secondary: '#1C2331',
-  secondaryForeground: '#E8E6E1',
+  secondary: '#23232F',
+  secondaryForeground: '#F5F5F5',
 
-  muted: '#1C2331',
-  mutedForeground: '#9AA3B2',
+  muted: '#1E1E29',
+  mutedForeground: '#818898',
 
-  accent: '#232B3B',
-  accentForeground: '#E8E6E1',
+  accent: '#23232F',
+  accentForeground: '#F5F5F5',
 
-  destructive: '#E5484D',
+  destructive: '#EF4444',
   destructiveForeground: '#FFFFFF',
 
-  border: '#29303D',
-  input: '#29303D',
+  border: '#23232F',
+  input: '#23232F',
 
   // Extra semantic colors for safety severity chips (match web badges)
   severityNone: '#3FB68B',
