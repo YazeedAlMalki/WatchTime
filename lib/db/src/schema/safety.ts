@@ -89,6 +89,18 @@ export const providerMappingsTable = pgTable("provider_mappings", {
   lastRefreshedAt: timestamp("last_refreshed_at"),
 });
 
+export const adminAuditLogTable = pgTable("admin_audit_log", {
+  id: serial("id").primaryKey(),
+  adminId: text("admin_id")
+    .notNull()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  action: text("action").notNull(), // approve_contribution | reject_contribution | resolve_report | dismiss_report | update_feedback | refresh_content
+  entityType: text("entity_type"), // contribution | report | feedback | content
+  entityId: integer("entity_id"),
+  details: jsonb("details"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const integrationHealthTable = pgTable("integration_health", {
   id: serial("id").primaryKey(),
   provider: text("provider").notNull(),

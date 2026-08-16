@@ -11,6 +11,7 @@ import {
   integrationHealthTable,
   analyticsEventsTable,
   watchedTitlesTable,
+  adminAuditLogTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, gte, ilike, inArray } from "drizzle-orm";
 import {
@@ -190,6 +191,15 @@ router.patch("/contributions/:contributionId", async (req, res) => {
   });
   if (!updated) return res.status(404).json({ error: "Not found" });
 
+  // Audit log
+  await db.insert(adminAuditLogTable).values({
+    adminId: req.userId!,
+    action: `${parsed.data.status}_contribution`,
+    entityType: "contribution",
+    entityId: updated.id,
+    details: { titleId: updated.titleId, category: updated.category },
+  }).catch(() => {}); // non-critical
+
   const [title] = await db
     .select()
     .from(titlesTable)
@@ -240,6 +250,16 @@ router.patch("/reports/:reportId", async (req, res) => {
     .where(eq(reportsTable.id, id))
     .returning();
   if (!updated) return res.status(404).json({ error: "Not found" });
+
+  // Audit log
+  await db.insert(adminAuditLogTable).values({
+    adminId: req.userId!,
+    action: `${parsed.data.status}_report`,
+    entityType: "report",
+    entityId: updated.id,
+    details: { titleId: updated.titleId, reason: updated.reason },
+  }).catch(() => {});
+
   const [title] = await db
     .select()
     .from(titlesTable)
@@ -291,6 +311,16 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
     .where(eq(feedbackTable.id, id))
     .returning();
   if (!updated) return res.status(404).json({ error: "Not found" });
+
+  // Audit log
+  await db.insert(adminAuditLogTable).values({
+    adminId: req.userId!,
+    action: `feedback_${parsed.data.status}`,
+    entityType: "feedback",
+    entityId: updated.id,
+    details: { category: updated.category },
+  }).catch(() => {});
+
   return res.json({
     id: updated.id,
     category: updated.category,

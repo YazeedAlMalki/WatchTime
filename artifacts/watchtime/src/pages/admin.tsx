@@ -1,13 +1,47 @@
-import React from "react";
-import { useGetMe, useGetAdminDashboard, getGetAdminDashboardQueryKey, useListAdminContributions, useListAdminReports, useListAdminFeedback, useListAdminIntegrations } from "@workspace/api-client-react";
+import React, { useState } from "react";
+import {
+  useGetMe,
+  useGetAdminDashboard,
+  useListAdminContributions,
+  useUpdateAdminContribution,
+  useListAdminReports,
+  useUpdateAdminReport,
+  useListAdminFeedback,
+  useUpdateAdminFeedback,
+  useListAdminIntegrations,
+  useGetAdminAnalytics,
+  useSearchAdminContent,
+  useRefreshAdminContent,
+  getGetAdminDashboardQueryKey,
+  getListAdminContributionsQueryKey,
+  getListAdminReportsQueryKey,
+  getListAdminFeedbackQueryKey,
+  getSearchAdminContentQueryKey,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Redirect } from "wouter";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ShieldAlert, Users, Database, Server, Activity, Settings, MessageSquare, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  ShieldAlert, Users, Database, Server, Activity, MessageSquare,
+  AlertTriangle, CheckCircle, XCircle, RefreshCw, Search, BarChart2,
+  CheckCheck, ThumbsDown, Flag, Eye, TrendingUp, Film, BookOpen,
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function AdminPage() {
   const { data: me, isLoading: meLoading } = useGetMe();
-  const { data: dashboard } = useGetAdminDashboard({ query: { enabled: !!me?.isAdmin, queryKey: getGetAdminDashboardQueryKey() }});
+  const { data: dashboard } = useGetAdminDashboard({
+    query: { enabled: !!me?.isAdmin, queryKey: getGetAdminDashboardQueryKey() },
+  });
 
   if (meLoading) return <div className="min-h-screen flex items-center justify-center"><div className="w-8 h-8 rounded-full border-4 border-primary border-t-transparent animate-spin" /></div>;
   if (!me?.isAdmin) return <Redirect to="/" />;
@@ -26,21 +60,24 @@ export default function AdminPage() {
 
       <Tabs defaultValue="dashboard" className="w-full">
         <TabsList className="bg-secondary/50 p-1 rounded-xl mb-8 flex-wrap h-auto gap-1">
-          <TabsTrigger value="dashboard" className="rounded-lg data-[state=active]:bg-background"><Activity className="w-4 h-4 mr-2" /> Dashboard</TabsTrigger>
-          <TabsTrigger value="moderation" className="rounded-lg data-[state=active]:bg-background"><CheckCircle className="w-4 h-4 mr-2" /> Moderation</TabsTrigger>
-          <TabsTrigger value="reports" className="rounded-lg data-[state=active]:bg-background"><AlertTriangle className="w-4 h-4 mr-2" /> Reports</TabsTrigger>
-          <TabsTrigger value="feedback" className="rounded-lg data-[state=active]:bg-background"><MessageSquare className="w-4 h-4 mr-2" /> Feedback</TabsTrigger>
-          <TabsTrigger value="integrations" className="rounded-lg data-[state=active]:bg-background"><Server className="w-4 h-4 mr-2" /> Integrations</TabsTrigger>
+          <TabsTrigger value="dashboard" className="rounded-lg data-[state=active]:bg-background"><Activity className="w-4 h-4 mr-1.5" /> Dashboard</TabsTrigger>
+          <TabsTrigger value="moderation" className="rounded-lg data-[state=active]:bg-background"><CheckCircle className="w-4 h-4 mr-1.5" /> Moderation</TabsTrigger>
+          <TabsTrigger value="reports" className="rounded-lg data-[state=active]:bg-background"><AlertTriangle className="w-4 h-4 mr-1.5" /> Reports</TabsTrigger>
+          <TabsTrigger value="feedback" className="rounded-lg data-[state=active]:bg-background"><MessageSquare className="w-4 h-4 mr-1.5" /> Feedback</TabsTrigger>
+          <TabsTrigger value="analytics" className="rounded-lg data-[state=active]:bg-background"><BarChart2 className="w-4 h-4 mr-1.5" /> Analytics</TabsTrigger>
+          <TabsTrigger value="content" className="rounded-lg data-[state=active]:bg-background"><Database className="w-4 h-4 mr-1.5" /> Content</TabsTrigger>
+          <TabsTrigger value="integrations" className="rounded-lg data-[state=active]:bg-background"><Server className="w-4 h-4 mr-1.5" /> Integrations</TabsTrigger>
         </TabsList>
 
+        {/* Dashboard */}
         <TabsContent value="dashboard" className="outline-none">
           {dashboard ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               <StatCard title="Total Users" value={dashboard.totalUsers} icon={Users} trend={`+${dashboard.newRegistrations7d} this week`} />
               <StatCard title="Titles in Catalog" value={dashboard.titlesInCatalog} icon={Database} />
               <StatCard title="Safety Coverage" value={`${Math.round(dashboard.safetyCoveragePercent)}%`} icon={ShieldAlert} />
-              <StatCard title="Pending Contributions" value={dashboard.pendingContributions} icon={CheckCircle} color="text-yellow-600" />
-              <StatCard title="Open Reports" value={dashboard.openReports} icon={AlertTriangle} color="text-red-600" />
+              <StatCard title="Pending Contributions" value={dashboard.pendingContributions} icon={CheckCircle} color={dashboard.pendingContributions > 0 ? "text-yellow-600" : "text-green-600"} />
+              <StatCard title="Open Reports" value={dashboard.openReports} icon={AlertTriangle} color={dashboard.openReports > 0 ? "text-red-600" : "text-green-600"} />
               <StatCard title="Failed Syncs" value={dashboard.failedSyncs} icon={XCircle} color={dashboard.failedSyncs > 0 ? "text-red-600" : "text-green-600"} />
             </div>
           ) : (
@@ -48,34 +85,32 @@ export default function AdminPage() {
           )}
         </TabsContent>
 
+        {/* Moderation */}
         <TabsContent value="moderation" className="outline-none">
-          <div className="bg-card border border-border rounded-2xl p-8 text-center text-muted-foreground shadow-sm">
-            <CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-20" />
-            <h3 className="text-xl font-display font-medium text-foreground mb-2">Moderation Queue</h3>
-            <p>Approve or reject community safety contributions.</p>
-            {/* The rest of the implementation would use useListAdminContributions and useUpdateAdminContribution */}
-            <div className="mt-8 text-sm italic">UI implementation stubbed.</div>
-          </div>
+          <ModerationTab />
         </TabsContent>
-        
+
+        {/* Reports */}
         <TabsContent value="reports" className="outline-none">
-          <div className="bg-card border border-border rounded-2xl p-8 text-center text-muted-foreground shadow-sm">
-            <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-20" />
-            <h3 className="text-xl font-display font-medium text-foreground mb-2">Safety Reports</h3>
-            <p>Review reports of incorrect safety data.</p>
-            <div className="mt-8 text-sm italic">UI implementation stubbed.</div>
-          </div>
+          <ReportsTab />
         </TabsContent>
 
+        {/* Feedback */}
         <TabsContent value="feedback" className="outline-none">
-           <div className="bg-card border border-border rounded-2xl p-8 text-center text-muted-foreground shadow-sm">
-            <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-20" />
-            <h3 className="text-xl font-display font-medium text-foreground mb-2">User Feedback</h3>
-            <p>Review and categorize beta feedback.</p>
-            <div className="mt-8 text-sm italic">UI implementation stubbed.</div>
-          </div>
+          <FeedbackTab />
         </TabsContent>
 
+        {/* Analytics */}
+        <TabsContent value="analytics" className="outline-none">
+          <AnalyticsTab />
+        </TabsContent>
+
+        {/* Content */}
+        <TabsContent value="content" className="outline-none">
+          <ContentTab />
+        </TabsContent>
+
+        {/* Integrations */}
         <TabsContent value="integrations" className="outline-none">
           <IntegrationsTab />
         </TabsContent>
@@ -83,6 +118,8 @@ export default function AdminPage() {
     </div>
   );
 }
+
+/* ─── Shared helpers ─── */
 
 function StatCard({ title, value, icon: Icon, trend, color = "text-primary" }: any) {
   return (
@@ -99,41 +136,525 @@ function StatCard({ title, value, icon: Icon, trend, color = "text-primary" }: a
   );
 }
 
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    pending: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+    approved: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    rejected: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    flagged: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    open: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    resolved: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    dismissed: "bg-secondary text-muted-foreground",
+    new: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    reviewing: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+    closed: "bg-secondary text-muted-foreground",
+  };
+  return (
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${map[status] ?? "bg-secondary text-muted-foreground"}`}>
+      {status}
+    </span>
+  );
+}
+
+function EmptyState({ icon: Icon, title, desc }: { icon: any; title: string; desc: string }) {
+  return (
+    <div className="bg-card border border-border rounded-2xl p-12 text-center text-muted-foreground shadow-sm">
+      <Icon className="w-10 h-10 mx-auto mb-3 opacity-20" />
+      <h3 className="text-lg font-display font-medium text-foreground mb-1">{title}</h3>
+      <p className="text-sm">{desc}</p>
+    </div>
+  );
+}
+
+/* ─── Moderation ─── */
+
+function ModerationTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [statusFilter, setStatusFilter] = useState<string>("pending");
+  const { data: contributions, isLoading } = useListAdminContributions(
+    statusFilter !== "all" ? { status: statusFilter as any } : undefined,
+  );
+  const updateContribution = useUpdateAdminContribution();
+
+  const mod = (contributionId: number, status: string) =>
+    updateContribution.mutate({ contributionId, data: { status: status as any } }, {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getListAdminContributionsQueryKey() });
+        qc.invalidateQueries({ queryKey: getGetAdminDashboardQueryKey() });
+        toast({ title: `Contribution ${status}` });
+      },
+      onError: () => toast({ title: "Action failed", variant: "destructive" }),
+    });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-display font-bold">Community Contributions</h2>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="pending">Pending</SelectItem>
+            <SelectItem value="approved">Approved</SelectItem>
+            <SelectItem value="rejected">Rejected</SelectItem>
+            <SelectItem value="flagged">Flagged</SelectItem>
+            <SelectItem value="all">All</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {isLoading ? (
+        <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
+      ) : !contributions?.length ? (
+        <EmptyState icon={CheckCircle} title="No contributions" desc={`No ${statusFilter} contributions at the moment.`} />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {contributions.map(c => (
+            <div key={c.id} className="bg-card border border-border rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-start gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <span className="font-bold text-foreground truncate">{c.titleName}</span>
+                  <StatusBadge status={c.status} />
+                </div>
+                <div className="flex flex-wrap gap-3 text-sm text-muted-foreground mb-2">
+                  <span>Category: <span className="font-medium text-foreground capitalize">{c.category}</span></span>
+                  <span>Severity: <span className="font-medium text-foreground capitalize">{c.severity}</span></span>
+                  {c.seasonNumber && <span>S{c.seasonNumber}{c.episodeNumber ? `E${c.episodeNumber}` : ""}</span>}
+                </div>
+                {c.description && <p className="text-sm text-foreground/80 italic">"{c.description}"</p>}
+                <p className="text-xs text-muted-foreground mt-1">{new Date(c.createdAt).toLocaleString()}</p>
+              </div>
+              {c.status === "pending" || c.status === "flagged" ? (
+                <div className="flex gap-2 flex-shrink-0">
+                  <Button size="sm" variant="default" className="bg-green-600 hover:bg-green-700 text-white rounded-xl"
+                    onClick={() => mod(c.id, "approved")} disabled={updateContribution.isPending}>
+                    <CheckCheck className="w-3.5 h-3.5 mr-1" /> Approve
+                  </Button>
+                  <Button size="sm" variant="outline" className="rounded-xl text-red-600 border-red-200 hover:bg-red-50 dark:hover:bg-red-950/20"
+                    onClick={() => mod(c.id, "rejected")} disabled={updateContribution.isPending}>
+                    <ThumbsDown className="w-3.5 h-3.5 mr-1" /> Reject
+                  </Button>
+                  {c.status !== "flagged" && (
+                    <Button size="sm" variant="ghost" className="rounded-xl" onClick={() => mod(c.id, "flagged")} disabled={updateContribution.isPending}>
+                      <Flag className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
+              ) : c.status === "approved" ? (
+                <Button size="sm" variant="outline" className="rounded-xl text-red-600 border-red-200 hover:bg-red-50 dark:hover:bg-red-950/20 flex-shrink-0"
+                  onClick={() => mod(c.id, "rejected")} disabled={updateContribution.isPending}>
+                  Revoke
+                </Button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Reports ─── */
+
+function ReportsTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [statusFilter, setStatusFilter] = useState<string>("open");
+  const { data: reports, isLoading } = useListAdminReports(
+    statusFilter !== "all" ? { status: statusFilter as any } : undefined,
+  );
+  const updateReport = useUpdateAdminReport();
+
+  const act = (reportId: number, status: string) =>
+    updateReport.mutate({ reportId, data: { status: status as any } }, {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getListAdminReportsQueryKey() });
+        qc.invalidateQueries({ queryKey: getGetAdminDashboardQueryKey() });
+        toast({ title: `Report marked ${status}` });
+      },
+      onError: () => toast({ title: "Action failed", variant: "destructive" }),
+    });
+
+  const REASON_LABELS: Record<string, string> = {
+    wrong_title: "Wrong title",
+    incorrect_info: "Incorrect info",
+    outdated_info: "Outdated info",
+    broken_source: "Broken source",
+    incorrect_episode: "Wrong episode",
+    other: "Other",
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-display font-bold">Safety Reports</h2>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="open">Open</SelectItem>
+            <SelectItem value="resolved">Resolved</SelectItem>
+            <SelectItem value="dismissed">Dismissed</SelectItem>
+            <SelectItem value="all">All</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {isLoading ? (
+        <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
+      ) : !reports?.length ? (
+        <EmptyState icon={AlertTriangle} title="No reports" desc={`No ${statusFilter} reports right now.`} />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {reports.map(r => (
+            <div key={r.id} className="bg-card border border-border rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-start gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <span className="font-bold text-foreground truncate">{r.titleName}</span>
+                  <StatusBadge status={r.status} />
+                  <span className="bg-secondary text-muted-foreground text-xs px-2 py-0.5 rounded-full">{REASON_LABELS[r.reason] ?? r.reason}</span>
+                </div>
+                {r.sourceName && <p className="text-sm text-muted-foreground">Source: <span className="font-medium text-foreground">{r.sourceName}</span></p>}
+                {r.details && <p className="text-sm text-foreground/80 italic mt-1">"{r.details}"</p>}
+                <p className="text-xs text-muted-foreground mt-1">{new Date(r.createdAt).toLocaleString()}</p>
+              </div>
+              {r.status === "open" && (
+                <div className="flex gap-2 flex-shrink-0">
+                  <Button size="sm" variant="default" className="bg-green-600 hover:bg-green-700 text-white rounded-xl"
+                    onClick={() => act(r.id, "resolved")} disabled={updateReport.isPending}>
+                    <CheckCircle className="w-3.5 h-3.5 mr-1" /> Resolve
+                  </Button>
+                  <Button size="sm" variant="outline" className="rounded-xl" onClick={() => act(r.id, "dismissed")} disabled={updateReport.isPending}>
+                    Dismiss
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Feedback ─── */
+
+function FeedbackTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [statusFilter, setStatusFilter] = useState<string>("new");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const { data: feedback, isLoading } = useListAdminFeedback(
+    {
+      ...(statusFilter !== "all" ? { status: statusFilter } : {}),
+      ...(categoryFilter !== "all" ? { category: categoryFilter } : {}),
+    } as any,
+  );
+  const updateFeedback = useUpdateAdminFeedback();
+
+  const setStatus = (feedbackId: number, status: string) =>
+    updateFeedback.mutate({ feedbackId, data: { status: status as any } }, {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getListAdminFeedbackQueryKey() });
+        qc.invalidateQueries({ queryKey: getGetAdminDashboardQueryKey() });
+        toast({ title: "Feedback updated" });
+      },
+      onError: () => toast({ title: "Action failed", variant: "destructive" }),
+    });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-display font-bold">User Feedback</h2>
+        <div className="flex gap-2">
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="w-32"><SelectValue placeholder="Category" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All types</SelectItem>
+              <SelectItem value="bug">Bug</SelectItem>
+              <SelectItem value="feature">Feature</SelectItem>
+              <SelectItem value="general">General</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="new">New</SelectItem>
+              <SelectItem value="reviewing">Reviewing</SelectItem>
+              <SelectItem value="resolved">Resolved</SelectItem>
+              <SelectItem value="closed">Closed</SelectItem>
+              <SelectItem value="all">All</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      {isLoading ? (
+        <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
+      ) : !feedback?.length ? (
+        <EmptyState icon={MessageSquare} title="No feedback" desc="No matching feedback items." />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {feedback.map(f => (
+            <div key={f.id} className="bg-card border border-border rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-start gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
+                    f.category === "bug" ? "bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400" :
+                    f.category === "feature" ? "bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400" :
+                    "bg-secondary text-muted-foreground"
+                  }`}>{f.category}</span>
+                  <StatusBadge status={f.status} />
+                  {f.userEmail && <span className="text-xs text-muted-foreground">{f.userEmail}</span>}
+                </div>
+                <p className="text-sm text-foreground">{f.message}</p>
+                {f.page && <p className="text-xs text-muted-foreground mt-1">Page: {f.page}</p>}
+                <p className="text-xs text-muted-foreground mt-1">{new Date(f.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex-shrink-0">
+                <Select value={f.status} onValueChange={(s) => setStatus(f.id, s)} disabled={updateFeedback.isPending}>
+                  <SelectTrigger className="w-32 text-xs h-8 rounded-xl"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="new">New</SelectItem>
+                    <SelectItem value="reviewing">Reviewing</SelectItem>
+                    <SelectItem value="resolved">Resolved</SelectItem>
+                    <SelectItem value="closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Analytics ─── */
+
+function AnalyticsTab() {
+  const { data: analytics, isLoading } = useGetAdminAnalytics();
+
+  if (isLoading) return <div className="h-64 flex items-center justify-center animate-pulse bg-secondary/30 rounded-3xl" />;
+  if (!analytics) return <EmptyState icon={BarChart2} title="No analytics data" desc="Analytics will populate as users visit." />;
+
+  const maxVisitors = Math.max(...(analytics.dailyVisitors?.map((d: any) => d.value) ?? [1]), 1);
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* KPIs */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider font-bold mb-2">Conversion Rate</p>
+          <p className="text-3xl font-display font-bold text-foreground">{analytics.conversionRatePercent?.toFixed(1)}%</p>
+          <p className="text-xs text-muted-foreground mt-1">Visitors → Registrations (14d)</p>
+        </div>
+        <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider font-bold mb-2">Total Visits (14d)</p>
+          <p className="text-3xl font-display font-bold text-foreground">
+            {analytics.dailyVisitors?.reduce((a: number, d: any) => a + d.value, 0).toLocaleString() ?? 0}
+          </p>
+        </div>
+        <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider font-bold mb-2">Registrations (14d)</p>
+          <p className="text-3xl font-display font-bold text-foreground">
+            {analytics.registrations?.reduce((a: number, d: any) => a + d.value, 0).toLocaleString() ?? 0}
+          </p>
+        </div>
+      </div>
+
+      {/* Daily Visitors Chart */}
+      <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
+        <h3 className="text-base font-display font-bold mb-4 flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Daily Visitors (14d)</h3>
+        {analytics.dailyVisitors?.length ? (
+          <div className="flex items-end gap-1 h-32">
+            {analytics.dailyVisitors.map((d: any) => (
+              <div key={d.date} className="flex-1 flex flex-col items-center gap-1 group relative">
+                <div className="w-full bg-primary/20 hover:bg-primary/40 transition-colors rounded-t" style={{ height: `${Math.max(4, (d.value / maxVisitors) * 100)}%` }} />
+                <span className="text-[9px] text-muted-foreground rotate-45 origin-left whitespace-nowrap absolute -bottom-5">{d.date.slice(5)}</span>
+              </div>
+            ))}
+          </div>
+        ) : <p className="text-sm text-muted-foreground">No visitor data yet.</p>}
+      </div>
+
+      {/* Top Lists */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <TopList title="Top Viewed" icon={Eye} items={analytics.mostViewedTitles} />
+        <TopList title="Top Searched" icon={Search} items={analytics.mostSearchedQueries} />
+        <TopList title="Safety Pages" icon={BookOpen} items={analytics.mostViewedSafetyPages} />
+        <TopList title="Most Tracked" icon={Film} items={analytics.mostTrackedTitles} />
+      </div>
+
+      {/* Device & Country */}
+      <div className="grid sm:grid-cols-2 gap-4">
+        <BreakdownCard title="Devices" items={analytics.deviceBreakdown} />
+        <BreakdownCard title="Countries" items={analytics.countryBreakdown} />
+      </div>
+    </div>
+  );
+}
+
+function TopList({ title, icon: Icon, items }: { title: string; icon: any; items?: { name: string; count: number }[] }) {
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
+      <h4 className="text-sm font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5"><Icon className="w-3.5 h-3.5" /> {title}</h4>
+      {!items?.length ? <p className="text-xs text-muted-foreground">No data yet.</p> : (
+        <div className="flex flex-col gap-2">
+          {items.slice(0, 6).map((item, i) => (
+            <div key={i} className="flex items-center justify-between gap-2">
+              <span className="text-sm text-foreground truncate">{item.name}</span>
+              <span className="text-xs font-bold text-muted-foreground flex-shrink-0">{item.count.toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BreakdownCard({ title, items }: { title: string; items?: { name: string; count: number }[] }) {
+  const total = items?.reduce((a, i) => a + i.count, 0) ?? 0;
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
+      <h4 className="text-sm font-bold text-muted-foreground uppercase tracking-wider mb-3">{title}</h4>
+      {!items?.length ? <p className="text-xs text-muted-foreground">No data yet.</p> : (
+        <div className="flex flex-col gap-2">
+          {items.slice(0, 6).map((item, i) => {
+            const pct = total > 0 ? Math.round((item.count / total) * 100) : 0;
+            return (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-sm text-foreground w-20 truncate capitalize">{item.name}</span>
+                <div className="flex-1 bg-secondary rounded-full h-1.5 overflow-hidden">
+                  <div className="bg-primary h-full rounded-full" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="text-xs font-bold text-muted-foreground w-8 text-right">{pct}%</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Content ─── */
+
+function ContentTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 400);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  const { data: content, isLoading } = useSearchAdminContent(debouncedQ ? { q: debouncedQ } : undefined);
+  const refresh = useRefreshAdminContent();
+
+  const doRefresh = (id: number, name: string) =>
+    refresh.mutate({ id }, {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
+        toast({ title: `Refreshed ${name}` });
+      },
+      onError: () => toast({ title: "Refresh failed", variant: "destructive" }),
+    });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-display font-bold">Content Mappings</h2>
+      </div>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input className="pl-9 rounded-xl" placeholder="Search titles…" value={q} onChange={e => setQ(e.target.value)} />
+      </div>
+      {isLoading ? (
+        <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
+      ) : !content?.length ? (
+        <EmptyState icon={Database} title="No titles found" desc="Try a different search term." />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {content.map(item => (
+            <div key={item.id} className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="font-bold text-foreground">{item.name}</span>
+                  <span className="px-2 py-0.5 rounded bg-secondary text-muted-foreground text-xs uppercase">{item.type}</span>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  {item.mappings?.map((m: any) => (
+                    <div key={m.provider} className="flex items-center gap-1.5 text-xs">
+                      <span className={`w-1.5 h-1.5 rounded-full ${m.status === "mapped" ? "bg-green-500" : m.status === "error" ? "bg-red-500" : "bg-muted-foreground/40"}`} />
+                      <span className="text-muted-foreground">{m.provider}</span>
+                      <span className={`font-medium ${m.status === "mapped" ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>{m.externalId ?? "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <Button size="sm" variant="outline" className="rounded-xl flex-shrink-0 gap-1.5"
+                onClick={() => doRefresh(item.id, item.name)} disabled={refresh.isPending}>
+                <RefreshCw className="w-3.5 h-3.5" /> Refresh
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Integrations ─── */
+
 function IntegrationsTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
   const { data: integrations, isLoading } = useListAdminIntegrations();
+  const refresh = useRefreshAdminContent();
 
   if (isLoading) return <div className="h-64 flex items-center justify-center animate-pulse bg-secondary/30 rounded-3xl" />;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      {integrations?.map(int => (
-        <div key={int.provider} className="bg-card border border-border rounded-3xl p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-display font-bold text-foreground">{int.provider}</h3>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-              int.status === 'healthy' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-              int.status === 'provider_unavailable' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' :
-              'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-            }`}>
-              {int.status.replace('_', ' ')}
-            </span>
+    <div className="flex flex-col gap-4">
+      <h2 className="text-xl font-display font-bold">Integration Health</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {integrations?.map(int => (
+          <div key={int.provider} className="bg-card border border-border rounded-3xl p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-display font-bold text-foreground">{int.provider}</h3>
+              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                int.status === "healthy" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                int.status === "provider_unavailable" ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400" :
+                int.status === "degraded" ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" :
+                "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+              }`}>{int.status.replace(/_/g, " ")}</span>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between items-center py-2 border-b border-border/50">
+                <span className="text-muted-foreground">Success Rate</span>
+                <span className="font-medium">{int.successRatePercent}%</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-border/50">
+                <span className="text-muted-foreground">Mapped Titles</span>
+                <span className="font-medium">{int.mappedTitles.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-border/50">
+                <span className="text-muted-foreground">Missing Mappings</span>
+                <span className={`font-medium ${int.missingMappings > 0 ? "text-orange-600 dark:text-orange-400" : "text-green-600 dark:text-green-400"}`}>{int.missingMappings}</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-border/50">
+                <span className="text-muted-foreground">Last Sync</span>
+                <span className="font-medium">{int.lastSyncAt ? new Date(int.lastSyncAt).toLocaleString() : "Never"}</span>
+              </div>
+              {int.lastError && (
+                <div className="py-2">
+                  <span className="text-muted-foreground block mb-1">Last Error</span>
+                  <span className="text-xs text-red-600 dark:text-red-400 font-mono bg-red-50 dark:bg-red-950/20 px-2 py-1 rounded">{int.lastError}</span>
+                </div>
+              )}
+            </div>
           </div>
-          <div className="space-y-4">
-            <div className="flex justify-between items-center py-2 border-b border-border/50">
-              <span className="text-sm text-muted-foreground">Success Rate</span>
-              <span className="font-medium text-foreground">{int.successRatePercent}%</span>
-            </div>
-            <div className="flex justify-between items-center py-2 border-b border-border/50">
-              <span className="text-sm text-muted-foreground">Mapped Titles</span>
-              <span className="font-medium text-foreground">{int.mappedTitles.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center py-2">
-              <span className="text-sm text-muted-foreground">Last Sync</span>
-              <span className="font-medium text-foreground">{int.lastSyncAt ? new Date(int.lastSyncAt).toLocaleString() : 'Never'}</span>
-            </div>
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

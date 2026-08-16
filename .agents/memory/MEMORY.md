@@ -1,3 +1,4 @@
 - [Orval/zod codegen quirks](codegen-quirks.md) — zod/v4 import rewrite required; avoid ops mixing path+query params (TS export collision).
+- [Orval query key invalidation](orval-query-key-invalidation.md) — always use getGet*QueryKey() helpers for invalidation; manual key arrays never match Orval's single-string keys.
 - [Drizzle array params](drizzle-array-params.md) — never interpolate JS arrays into raw sql`` for ANY()/&&; use inArray/arrayOverlaps.
 - [Real catalog sources](catalog-sources.md) — real titles come from TVMaze (no key) + Wikipedia; TMDB key still declined, don't re-ask; safety data must stay provider_unavailable, never fabricated.
