@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "WatchTime"
+description = "A TV Time-inspired movie and TV tracking web app. Users browse and search movies, TV shows, anime, and documentaries, track episodes and watch progress, keep watchlists, and view a Content Safety section aggregating source-attributed sensitive-content info (Common Sense Media, Kids-In-Mind, Does the Dog Die?, CringeMDb, community contributions). Includes passwordless sign-in and a single-admin panel."
+version = "1.0.0"
+id = "artifacts/watchtime"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19566
+
+[services.development]
+run = "pnpm --filter @workspace/watchtime run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/watchtime", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/watchtime/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19566"
+BASE_PATH = "/"
