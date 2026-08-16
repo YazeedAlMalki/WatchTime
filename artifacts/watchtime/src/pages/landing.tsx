@@ -25,7 +25,7 @@ export default function LandingPage() {
             </div>
             <h1 className="text-5xl md:text-7xl font-display font-bold tracking-tight text-foreground leading-[1.1] mb-6">
               Track your shows. <br />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-rose-600">
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-amber-300">
                 Protect your screen.
               </span>
             </h1>

@@ -60,82 +60,86 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* ─── TVTime dark theme — always applied ─── */
 :root {
-  --button-outline: rgba(0, 0, 0, 0.1);
-  --badge-outline: rgba(0, 0, 0, 0.05);
+  --button-outline: rgba(255, 255, 255, 0.08);
+  --badge-outline: rgba(255, 255, 255, 0.05);
 
-  --opaque-button-border-intensity: -8;
+  --opaque-button-border-intensity: 8;
 
-  --elevate-1: rgba(0, 0, 0, 0.03);
-  --elevate-2: rgba(0, 0, 0, 0.08);
+  --elevate-1: rgba(255, 255, 255, 0.04);
+  --elevate-2: rgba(255, 255, 255, 0.08);
 
-  --background: 40 33% 98%;
-  --foreground: 220 20% 15%;
-  --border: 40 15% 90%;
-  
-  --card: 0 0% 100%;
-  --card-foreground: 220 20% 15%;
-  --card-border: 40 15% 90%;
-  
-  --sidebar: 40 33% 98%;
-  --sidebar-foreground: 220 20% 15%;
-  --sidebar-border: 40 15% 90%;
-  --sidebar-primary: 350 75% 45%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 40 25% 92%;
-  --sidebar-accent-foreground: 220 20% 15%;
-  --sidebar-ring: 350 75% 45%;
-  
-  --popover: 0 0% 100%;
-  --popover-foreground: 220 20% 15%;
-  --popover-border: 40 15% 90%;
-  
-  --primary: 350 75% 45%;
-  --primary-foreground: 0 0% 100%;
-  
-  --secondary: 220 15% 25%;
-  --secondary-foreground: 0 0% 100%;
-  
-  --muted: 40 15% 94%;
-  --muted-foreground: 220 10% 45%;
-  
-  --accent: 40 25% 92%;
-  --accent-foreground: 220 20% 15%;
-  
+  /* Deep dark navy-black background — TVTime signature */
+  --background: 240 20% 6%;
+  --foreground: 0 0% 96%;
+  --border: 240 15% 16%;
+
+  --card: 240 15% 10%;
+  --card-foreground: 0 0% 96%;
+  --card-border: 240 15% 16%;
+
+  --sidebar: 240 20% 6%;
+  --sidebar-foreground: 0 0% 96%;
+  --sidebar-border: 240 15% 16%;
+  /* Amber/gold — TVTime accent */
+  --sidebar-primary: 47 92% 53%;
+  --sidebar-primary-foreground: 240 20% 5%;
+  --sidebar-accent: 240 15% 14%;
+  --sidebar-accent-foreground: 0 0% 96%;
+  --sidebar-ring: 47 92% 53%;
+
+  --popover: 240 15% 10%;
+  --popover-foreground: 0 0% 96%;
+  --popover-border: 240 15% 16%;
+
+  /* Primary = amber/gold */
+  --primary: 47 92% 53%;
+  --primary-foreground: 240 20% 5%;
+
+  --secondary: 240 15% 16%;
+  --secondary-foreground: 0 0% 96%;
+
+  --muted: 240 15% 14%;
+  --muted-foreground: 220 10% 55%;
+
+  --accent: 240 15% 16%;
+  --accent-foreground: 0 0% 96%;
+
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
-  
-  --input: 40 15% 90%;
-  --ring: 350 75% 45%;
-  
-  --chart-1: 350 75% 45%;
-  --chart-2: 220 15% 25%;
-  --chart-3: 40 50% 60%;
-  --chart-4: 180 30% 50%;
-  --chart-5: 300 20% 40%;
-  
+
+  --input: 240 15% 16%;
+  --ring: 47 92% 53%;
+
+  --chart-1: 47 92% 53%;
+  --chart-2: 240 15% 30%;
+  --chart-3: 200 70% 55%;
+  --chart-4: 160 60% 45%;
+  --chart-5: 280 50% 60%;
+
   --app-font-sans: 'DM Sans', sans-serif;
   --app-font-display: 'Outfit', sans-serif;
   --radius: 0.75rem;
 
-  --shadow-2xs: 0px 2px 0px 0px hsl(220 20% 15% / 0.05);
-  --shadow-xs: 0px 2px 0px 0px hsl(220 20% 15% / 0.05);
+  --shadow-2xs: 0px 2px 0px 0px hsl(240 20% 3% / 0.4);
+  --shadow-xs: 0px 2px 0px 0px hsl(240 20% 3% / 0.4);
   --shadow-sm:
-    0px 2px 0px 0px hsl(220 20% 15% / 0.05),
-    0px 1px 2px -1px hsl(220 20% 15% / 0.1);
+    0px 2px 0px 0px hsl(240 20% 3% / 0.4),
+    0px 1px 2px -1px hsl(240 20% 3% / 0.6);
   --shadow:
-    0px 2px 0px 0px hsl(220 20% 15% / 0.05),
-    0px 1px 2px -1px hsl(220 20% 15% / 0.1);
+    0px 2px 0px 0px hsl(240 20% 3% / 0.4),
+    0px 1px 2px -1px hsl(240 20% 3% / 0.6);
   --shadow-md:
-    0px 2px 0px 0px hsl(220 20% 15% / 0.05),
-    0px 2px 4px -1px hsl(220 20% 15% / 0.1);
+    0px 2px 0px 0px hsl(240 20% 3% / 0.4),
+    0px 2px 4px -1px hsl(240 20% 3% / 0.6);
   --shadow-lg:
-    0px 2px 0px 0px hsl(220 20% 15% / 0.05),
-    0px 4px 6px -1px hsl(220 20% 15% / 0.1);
+    0px 2px 0px 0px hsl(240 20% 3% / 0.4),
+    0px 4px 6px -1px hsl(240 20% 3% / 0.6);
   --shadow-xl:
-    0px 2px 0px 0px hsl(220 20% 15% / 0.05),
-    0px 8px 10px -1px hsl(220 20% 15% / 0.1);
-  --shadow-2xl: 0px 2px 0px 0px hsl(220 20% 15% / 0.1);
+    0px 2px 0px 0px hsl(240 20% 3% / 0.4),
+    0px 8px 10px -1px hsl(240 20% 3% / 0.6);
+  --shadow-2xl: 0px 2px 0px 0px hsl(240 20% 3% / 0.6);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
@@ -148,51 +152,52 @@
   --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
 }
 
+/* .dark mirrors :root — the site is always dark */
 .dark {
-  --background: 220 30% 10%;
-  --foreground: 40 33% 98%;
-  --border: 220 20% 20%;
-  
-  --card: 220 25% 12%;
-  --card-foreground: 40 33% 98%;
-  --card-border: 220 20% 20%;
-  
-  --sidebar: 220 30% 10%;
-  --sidebar-foreground: 40 33% 98%;
-  --sidebar-border: 220 20% 20%;
-  --sidebar-primary: 350 75% 45%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 220 25% 15%;
-  --sidebar-accent-foreground: 40 33% 98%;
-  --sidebar-ring: 350 75% 45%;
-  
-  --popover: 220 25% 12%;
-  --popover-foreground: 40 33% 98%;
-  --popover-border: 220 20% 20%;
-  
-  --primary: 350 75% 45%;
-  --primary-foreground: 0 0% 100%;
-  
-  --secondary: 220 20% 20%;
-  --secondary-foreground: 0 0% 100%;
-  
-  --muted: 220 25% 15%;
-  --muted-foreground: 220 10% 65%;
-  
-  --accent: 220 25% 15%;
-  --accent-foreground: 40 33% 98%;
-  
+  --background: 240 20% 6%;
+  --foreground: 0 0% 96%;
+  --border: 240 15% 16%;
+
+  --card: 240 15% 10%;
+  --card-foreground: 0 0% 96%;
+  --card-border: 240 15% 16%;
+
+  --sidebar: 240 20% 6%;
+  --sidebar-foreground: 0 0% 96%;
+  --sidebar-border: 240 15% 16%;
+  --sidebar-primary: 47 92% 53%;
+  --sidebar-primary-foreground: 240 20% 5%;
+  --sidebar-accent: 240 15% 14%;
+  --sidebar-accent-foreground: 0 0% 96%;
+  --sidebar-ring: 47 92% 53%;
+
+  --popover: 240 15% 10%;
+  --popover-foreground: 0 0% 96%;
+  --popover-border: 240 15% 16%;
+
+  --primary: 47 92% 53%;
+  --primary-foreground: 240 20% 5%;
+
+  --secondary: 240 15% 16%;
+  --secondary-foreground: 0 0% 96%;
+
+  --muted: 240 15% 14%;
+  --muted-foreground: 220 10% 55%;
+
+  --accent: 240 15% 16%;
+  --accent-foreground: 0 0% 96%;
+
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
-  
-  --input: 220 20% 20%;
-  --ring: 350 75% 45%;
-  
-  --chart-1: 350 75% 45%;
-  --chart-2: 220 15% 25%;
-  --chart-3: 40 50% 60%;
-  --chart-4: 180 30% 50%;
-  --chart-5: 300 20% 40%;
+
+  --input: 240 15% 16%;
+  --ring: 47 92% 53%;
+
+  --chart-1: 47 92% 53%;
+  --chart-2: 240 15% 30%;
+  --chart-3: 200 70% 55%;
+  --chart-4: 160 60% 45%;
+  --chart-5: 280 50% 60%;
 }
 
 @layer base {
