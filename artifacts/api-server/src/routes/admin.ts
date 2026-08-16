@@ -123,6 +123,16 @@ router.patch("/contributions/:contributionId", async (req, res) => {
       .where(eq(contributionsTable.id, id))
       .returning();
 
+    // Audit every successful PATCH (including no-ops) inside the transaction
+    // so the audit entry and any safety-record changes are always atomic.
+    await tx.insert(adminAuditLogTable).values({
+      adminId: req.userId!,
+      action: `${parsed.data.status}_contribution`,
+      entityType: "contribution",
+      entityId: row.id,
+      details: { titleId: row.titleId, category: row.category },
+    });
+
     if (prev.status === parsed.data.status) return row;
 
     const recordScope = and(
@@ -191,15 +201,6 @@ router.patch("/contributions/:contributionId", async (req, res) => {
   });
   if (!updated) return res.status(404).json({ error: "Not found" });
 
-  // Audit log
-  await db.insert(adminAuditLogTable).values({
-    adminId: req.userId!,
-    action: `${parsed.data.status}_contribution`,
-    entityType: "contribution",
-    entityId: updated.id,
-    details: { titleId: updated.titleId, category: updated.category },
-  }).catch(() => {}); // non-critical
-
   const [title] = await db
     .select()
     .from(titlesTable)
@@ -244,21 +245,25 @@ router.patch("/reports/:reportId", async (req, res) => {
   const id = parseInt(String(req.params.reportId), 10);
   const parsed = UpdateAdminReportBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-  const [updated] = await db
-    .update(reportsTable)
-    .set({ status: parsed.data.status })
-    .where(eq(reportsTable.id, id))
-    .returning();
+  const updated = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(reportsTable)
+      .set({ status: parsed.data.status })
+      .where(eq(reportsTable.id, id))
+      .returning();
+    if (!row) return null;
+    // Audit log is inside the transaction — the status change and its audit
+    // entry are written atomically; a failure rolls back both.
+    await tx.insert(adminAuditLogTable).values({
+      adminId: req.userId!,
+      action: `${parsed.data.status}_report`,
+      entityType: "report",
+      entityId: row.id,
+      details: { titleId: row.titleId, reason: row.reason },
+    });
+    return row;
+  });
   if (!updated) return res.status(404).json({ error: "Not found" });
-
-  // Audit log
-  await db.insert(adminAuditLogTable).values({
-    adminId: req.userId!,
-    action: `${parsed.data.status}_report`,
-    entityType: "report",
-    entityId: updated.id,
-    details: { titleId: updated.titleId, reason: updated.reason },
-  }).catch(() => {});
 
   const [title] = await db
     .select()
@@ -305,21 +310,25 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
   const id = parseInt(String(req.params.feedbackId), 10);
   const parsed = UpdateAdminFeedbackBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-  const [updated] = await db
-    .update(feedbackTable)
-    .set({ status: parsed.data.status })
-    .where(eq(feedbackTable.id, id))
-    .returning();
+  const updated = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(feedbackTable)
+      .set({ status: parsed.data.status })
+      .where(eq(feedbackTable.id, id))
+      .returning();
+    if (!row) return null;
+    // Audit log is inside the transaction — the status change and its audit
+    // entry are written atomically; a failure rolls back both.
+    await tx.insert(adminAuditLogTable).values({
+      adminId: req.userId!,
+      action: `feedback_${parsed.data.status}`,
+      entityType: "feedback",
+      entityId: row.id,
+      details: { category: row.category },
+    });
+    return row;
+  });
   if (!updated) return res.status(404).json({ error: "Not found" });
-
-  // Audit log
-  await db.insert(adminAuditLogTable).values({
-    adminId: req.userId!,
-    action: `feedback_${parsed.data.status}`,
-    entityType: "feedback",
-    entityId: updated.id,
-    details: { category: updated.category },
-  }).catch(() => {});
 
   return res.json({
     id: updated.id,
