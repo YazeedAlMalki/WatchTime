@@ -615,6 +615,7 @@ function ContentTab() {
 
 function AuditLogTab() {
   const [actionFilter, setActionFilter] = useState("");
+  const [adminEmailFilter, setAdminEmailFilter] = useState("");
   const [entityTypeFilter, setEntityTypeFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -625,6 +626,7 @@ function AuditLogTab() {
     limit: LIMIT,
     offset: page * LIMIT,
     ...(actionFilter ? { action: actionFilter } : {}),
+    ...(adminEmailFilter ? { adminEmail: adminEmailFilter } : {}),
     ...(entityTypeFilter !== "all" ? { entityType: entityTypeFilter as any } : {}),
     ...(dateFrom ? { dateFrom: new Date(dateFrom).toISOString() } : {}),
     ...(dateTo ? { dateTo: new Date(dateTo + "T23:59:59").toISOString() } : {}),
@@ -684,6 +686,12 @@ function AuditLogTab() {
           value={actionFilter}
           onChange={e => { setActionFilter(e.target.value); setPage(0); }}
         />
+        <Input
+          placeholder="Filter by admin email…"
+          className="rounded-xl h-9 w-52 text-sm"
+          value={adminEmailFilter}
+          onChange={e => { setAdminEmailFilter(e.target.value); setPage(0); }}
+        />
         <Select value={entityTypeFilter} onValueChange={v => { setEntityTypeFilter(v); setPage(0); }}>
           <SelectTrigger className="w-36 h-9 rounded-xl text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -708,9 +716,9 @@ function AuditLogTab() {
           onChange={e => { setDateTo(e.target.value); setPage(0); }}
           placeholder="To"
         />
-        {(actionFilter || entityTypeFilter !== "all" || dateFrom || dateTo) && (
+        {(actionFilter || adminEmailFilter || entityTypeFilter !== "all" || dateFrom || dateTo) && (
           <Button size="sm" variant="ghost" className="rounded-xl text-muted-foreground h-9"
-            onClick={() => { setActionFilter(""); setEntityTypeFilter("all"); setDateFrom(""); setDateTo(""); setPage(0); }}>
+            onClick={() => { setActionFilter(""); setAdminEmailFilter(""); setEntityTypeFilter("all"); setDateFrom(""); setDateTo(""); setPage(0); }}>
             Clear
           </Button>
         )}

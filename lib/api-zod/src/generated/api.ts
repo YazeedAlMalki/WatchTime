@@ -837,6 +837,7 @@ export const GetAdminAnalyticsResponse = zod.object({
 export const GetAdminAuditLogQueryParams = zod.object({
   "action": zod.coerce.string().optional(),
   "entityType": zod.enum(['contribution', 'report', 'feedback', 'content']).optional(),
+  "adminEmail": zod.coerce.string().optional(),
   "dateFrom": zod.date().optional(),
   "dateTo": zod.date().optional(),
   "limit": zod.coerce.number().int().optional(),

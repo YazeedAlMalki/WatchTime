@@ -654,6 +654,7 @@ q?: string;
 export type GetAdminAuditLogParams = {
 action?: string;
 entityType?: GetAdminAuditLogEntityType;
+adminEmail?: string;
 dateFrom?: string;
 dateTo?: string;
 limit?: number;

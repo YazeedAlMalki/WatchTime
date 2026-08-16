@@ -692,6 +692,9 @@ paths:
         - name: entityType
           in: query
           schema: { type: string, enum: [contribution, report, feedback, content] }
+        - name: adminEmail
+          in: query
+          schema: { type: string }
         - name: dateFrom
           in: query
           schema: { type: string, format: date-time }

@@ -487,7 +487,7 @@ router.get("/analytics", async (_req, res) => {
 });
 
 router.get("/audit-log", async (req, res) => {
-  const { action, entityType, dateFrom, dateTo } = req.query as Record<string, string>;
+  const { action, entityType, adminEmail, dateFrom, dateTo } = req.query as Record<string, string>;
   const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
   const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
 
@@ -497,20 +497,27 @@ router.get("/audit-log", async (req, res) => {
   if (dateFrom) conds.push(gte(adminAuditLogTable.createdAt, new Date(dateFrom)));
   if (dateTo) conds.push(lte(adminAuditLogTable.createdAt, new Date(dateTo)));
 
-  const where = conds.length ? and(...conds) : undefined;
+  // adminEmail filter must be applied after the join — build the base query with the join first
+  const baseQuery = () =>
+    db
+      .select({
+        log: adminAuditLogTable,
+        adminEmail: usersTable.email,
+      })
+      .from(adminAuditLogTable)
+      .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId));
+
+  const emailCond = adminEmail ? ilike(usersTable.email, `%${adminEmail}%`) : undefined;
+  const allConds = emailCond ? [...conds, emailCond] : conds;
+  const where = allConds.length ? and(...allConds) : undefined;
 
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(adminAuditLogTable)
+    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
     .where(where);
 
-  const rows = await db
-    .select({
-      log: adminAuditLogTable,
-      adminEmail: usersTable.email,
-    })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
+  const rows = await baseQuery()
     .where(where)
     .orderBy(desc(adminAuditLogTable.createdAt))
     .limit(limit)

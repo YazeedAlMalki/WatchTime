@@ -10,6 +10,7 @@ import type { GetAdminAuditLogEntityType } from './getAdminAuditLogEntityType';
 export type GetAdminAuditLogParams = {
 action?: string;
 entityType?: GetAdminAuditLogEntityType;
+adminEmail?: string;
 dateFrom?: Date;
 dateTo?: Date;
 limit?: number;
