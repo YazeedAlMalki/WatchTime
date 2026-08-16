@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useAuth } from "@clerk/react";
 import {
   useGetMe,
   useGetAdminDashboard,
@@ -636,24 +637,30 @@ function AuditLogTab() {
 
   const totalPages = Math.ceil((data?.total ?? 0) / LIMIT);
 
-  const exportCSV = () => {
-    if (!data?.entries.length) return;
-    const header = ["ID", "Timestamp", "Admin", "Action", "Entity Type", "Entity ID", "Details"];
-    const rows = data.entries.map(e => [
-      e.id,
-      e.createdAt,
-      e.adminEmail ?? "",
-      e.action,
-      e.entityType ?? "",
-      e.entityId ?? "",
-      e.details ? JSON.stringify(e.details) : "",
-    ]);
-    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+  const { getToken } = useAuth();
+
+  const exportCSV = async () => {
+    const token = await getToken();
+    const params = new URLSearchParams();
+    if (actionFilter) params.set("action", actionFilter);
+    if (adminEmailFilter) params.set("adminEmail", adminEmailFilter);
+    if (entityTypeFilter !== "all") params.set("entityType", entityTypeFilter);
+    if (dateFrom) params.set("dateFrom", new Date(dateFrom).toISOString());
+    if (dateTo) params.set("dateTo", new Date(dateTo + "T23:59:59").toISOString());
+
+    const qs = params.size > 0 ? `?${params}` : "";
+    const res = await fetch(`/api/admin/audit-log/export${qs}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return;
+
+    const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
+    const cd = res.headers.get("content-disposition") ?? "";
+    const match = cd.match(/filename="([^"]+)"/);
+    a.download = match?.[1] ?? `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
     a.href = url;
-    a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

@@ -495,30 +495,29 @@ router.get("/analytics", async (_req, res) => {
   });
 });
 
-router.get("/audit-log", async (req, res) => {
-  const { action, entityType, adminEmail, dateFrom, dateTo } = req.query as Record<string, string>;
-  const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
-  const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
-
+/** Shared helper: build WHERE conditions from audit-log filter query params. */
+function buildAuditLogWhere(query: Record<string, string>) {
+  const { action, entityType, adminEmail, dateFrom, dateTo } = query;
   const conds = [];
   if (action) conds.push(ilike(adminAuditLogTable.action, `%${action}%`));
   if (entityType) conds.push(eq(adminAuditLogTable.entityType, entityType));
   if (dateFrom) conds.push(gte(adminAuditLogTable.createdAt, new Date(dateFrom)));
   if (dateTo) conds.push(lte(adminAuditLogTable.createdAt, new Date(dateTo)));
-
-  // adminEmail filter must be applied after the join — build the base query with the join first
-  const baseQuery = () =>
-    db
-      .select({
-        log: adminAuditLogTable,
-        adminEmail: usersTable.email,
-      })
-      .from(adminAuditLogTable)
-      .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId));
-
   const emailCond = adminEmail ? ilike(usersTable.email, `%${adminEmail}%`) : undefined;
   const allConds = emailCond ? [...conds, emailCond] : conds;
-  const where = allConds.length ? and(...allConds) : undefined;
+  return allConds.length ? and(...allConds) : undefined;
+}
+
+router.get("/audit-log", async (req, res) => {
+  const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
+  const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
+  const where = buildAuditLogWhere(req.query as Record<string, string>);
+
+  const baseJoin = () =>
+    db
+      .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
+      .from(adminAuditLogTable)
+      .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId));
 
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
@@ -526,7 +525,7 @@ router.get("/audit-log", async (req, res) => {
     .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
     .where(where);
 
-  const rows = await baseQuery()
+  const rows = await baseJoin()
     .where(where)
     .orderBy(desc(adminAuditLogTable.createdAt))
     .limit(limit)
@@ -544,6 +543,45 @@ router.get("/audit-log", async (req, res) => {
       createdAt: log.createdAt.toISOString(),
     })),
   });
+});
+
+/** GET /admin/audit-log/export — server-side CSV download applying all active filters. */
+router.get("/audit-log/export", async (req, res) => {
+  const where = buildAuditLogWhere(req.query as Record<string, string>);
+
+  const rows = await db
+    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
+    .from(adminAuditLogTable)
+    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
+    .where(where)
+    .orderBy(desc(adminAuditLogTable.createdAt));
+
+  const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+
+  const header = ["ID", "Timestamp", "Admin", "Action", "Entity Type", "Entity ID", "Details"];
+  const dataRows = rows.map(({ log, adminEmail }) => [
+    log.id,
+    log.createdAt.toISOString(),
+    adminEmail ?? "",
+    log.action,
+    log.entityType ?? "",
+    log.entityId ?? "",
+    log.details ? JSON.stringify(log.details) : "",
+  ]);
+
+  const csv = [header, ...dataRows]
+    .map(row => row.map(escape).join(","))
+    .join("\n");
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const emailPart = (req.query.adminEmail as string | undefined)?.trim();
+  const filename = emailPart
+    ? `audit-log-${emailPart}-${dateStr}.csv`
+    : `audit-log-${dateStr}.csv`;
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  return res.send(csv);
 });
 
 export default router;

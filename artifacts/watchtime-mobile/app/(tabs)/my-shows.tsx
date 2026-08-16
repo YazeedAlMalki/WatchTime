@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -271,16 +272,31 @@ function HistoryRow({ item }: { item: RecentActivityItem }) {
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
+type ShowFilter = 'all' | 'up-next' | 'caught-up';
+
 export default function MyShowsScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { isSignedIn } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('shows');
+  const [showSearch, setShowSearch] = useState('');
+  const [showFilter, setShowFilter] = useState<ShowFilter>('all');
 
   const shows = useGetMyShows({ query: { enabled: !!isSignedIn } as any });
   const movies = useGetMyMovies({ query: { enabled: !!isSignedIn } as any });
   const history = useGetMyRecentActivity({ query: { enabled: !!isSignedIn } as any });
+
+  // Client-side filter for the TV Shows tab
+  const filteredShows = (shows.data ?? []).filter(show => {
+    const matchesSearch = !showSearch.trim() ||
+      show.title.name.toLowerCase().includes(showSearch.toLowerCase());
+    const matchesFilter =
+      showFilter === 'all' ||
+      (showFilter === 'up-next' && show.nextEpisode !== null) ||
+      (showFilter === 'caught-up' && show.nextEpisode === null);
+    return matchesSearch && matchesFilter;
+  });
 
   const bottomPad = (Platform.OS === 'web' ? 34 : insets.bottom) + 90;
 
@@ -338,9 +354,58 @@ export default function MyShowsScreen() {
     );
   }
 
+  const SHOW_FILTER_CHIPS: { key: ShowFilter; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'up-next', label: 'Up Next' },
+    { key: 'caught-up', label: 'Caught Up' },
+  ];
+
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
       <TabBar active={activeTab} onChange={setActiveTab} />
+
+      {/* Search bar + filter chips — TV Shows tab only */}
+      {activeTab === 'shows' && (
+        <>
+          <View style={[styles.searchBox, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Feather name="search" size={16} color={c.mutedForeground} style={{ marginLeft: 12 }} />
+            <TextInput
+              testID="shows-search-input"
+              style={{ flex: 1, color: c.foreground, paddingHorizontal: 10, paddingVertical: 11, fontSize: 14, fontFamily: 'Inter_400Regular' }}
+              placeholder="Search my shows…"
+              placeholderTextColor={c.mutedForeground}
+              value={showSearch}
+              onChangeText={setShowSearch}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8, gap: 8 }}
+          >
+            {SHOW_FILTER_CHIPS.map(chip => {
+              const active = showFilter === chip.key;
+              return (
+                <Pressable
+                  key={chip.key}
+                  testID={`filter-chip-${chip.key}`}
+                  onPress={() => { Haptics.selectionAsync(); setShowFilter(chip.key); }}
+                  style={[
+                    styles.filterChip,
+                    { backgroundColor: active ? c.primary : c.secondary, borderColor: active ? c.primary : c.border },
+                  ]}
+                >
+                  <Text style={{ color: active ? c.primaryForeground : c.foreground, fontSize: 13, fontFamily: 'Inter_500Medium' }}>
+                    {chip.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </>
+      )}
 
       {isLoading ? (
         <Loading />
@@ -348,15 +413,15 @@ export default function MyShowsScreen() {
         <ErrorState onRetry={onRetry} />
       ) : activeTab === 'shows' ? (
         <FlatList
-          data={shows.data ?? []}
+          data={filteredShows}
           keyExtractor={(s) => String(s.title.id)}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: bottomPad, gap: 12 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: bottomPad, gap: 12 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
           ListEmptyComponent={
             <EmptyState
               icon="tv"
-              title="No shows tracked yet"
-              subtitle="Browse titles and start tracking shows you're watching."
+              title={showSearch || showFilter !== 'all' ? 'No shows match' : 'No shows tracked yet'}
+              subtitle={showSearch || showFilter !== 'all' ? 'Try a different search or filter.' : 'Browse titles and start tracking shows you\'re watching.'}
             />
           }
           renderItem={({ item }) => <ShowRow show={item} />}
@@ -411,6 +476,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     borderRadius: colors.radius - 2,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderRadius: colors.radius,
+    overflow: 'hidden',
+  },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
   },
   showRow: {
     flexDirection: 'row',

@@ -1,5 +1,6 @@
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import type { Request } from "express";
+import { DrizzleRateLimitStore } from "./drizzleRateLimitStore";
 
 /**
  * Key generator that prefers authenticated userId, falls back to IP (with IPv6 normalisation).
@@ -15,8 +16,9 @@ function userOrIpKey(req: Request): string {
 export const feedbackRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   limit: 5,
-  standardHeaders: "draft-7", // Return X-RateLimit-* headers
+  standardHeaders: "draft-7", // Return RateLimit-* headers
   legacyHeaders: false,
+  store: new DrizzleRateLimitStore("feedback"),
   message: { error: "Too many feedback submissions. Please wait before trying again." },
 });
 
@@ -30,6 +32,7 @@ export const safetyReportRateLimit = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   keyGenerator: userOrIpKey,
+  store: new DrizzleRateLimitStore("safety_report"),
   message: { error: "Too many safety reports. Please wait before submitting another." },
 });
 
@@ -43,5 +46,6 @@ export const safetyContributionRateLimit = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   keyGenerator: userOrIpKey,
+  store: new DrizzleRateLimitStore("safety_contribution"),
   message: { error: "Daily contribution limit reached. You can submit more contributions tomorrow." },
 });

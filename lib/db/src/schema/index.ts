@@ -3,3 +3,4 @@ export * from "./catalog";
 export * from "./tracking";
 export * from "./safety";
 export * from "./feedback";
+export * from "./rate-limits";
