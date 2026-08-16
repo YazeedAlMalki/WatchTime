@@ -24,6 +24,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: 'bookmark', selected: 'bookmark.fill' }} />
         <Label>Watchlist</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="my-shows">
+        <Icon sf={{ default: 'play.square.stack', selected: 'play.square.stack.fill' }} />
+        <Label>My Shows</Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="profile">
         <Icon sf={{ default: 'person', selected: 'person.fill' }} />
         <Label>Profile</Label>
@@ -122,6 +126,18 @@ function ClassicTabLayout() {
               <SymbolView name="bookmark" tintColor={color} size={24} />
             ) : (
               <Feather name="bookmark" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="my-shows"
+        options={{
+          title: 'My Shows',
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="play.square.stack" tintColor={color} size={24} />
+            ) : (
+              <Feather name="play-circle" size={22} color={color} />
             ),
         }}
       />
