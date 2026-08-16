@@ -10,7 +10,7 @@ import {
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import { useAuth, useSignIn, useSSO } from '@clerk/expo';
-import { Link, Redirect, useRouter, type Href } from 'expo-router';
+import { Link, Redirect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
@@ -38,28 +38,30 @@ export default function SignInScreen() {
   const { signIn, errors, fetchStatus } = useSignIn();
   const { startSSOFlow } = useSSO();
 
+  const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
   const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
 
-  const navigateHome = useCallback(
+  const navigateAfterSignIn = useCallback(
     ({ session, decorateUrl }: any) => {
       if (session?.currentTask) return;
-      const url = decorateUrl('/');
+      const dest = (returnTo as string | undefined) ?? '/';
+      const url = decorateUrl(dest);
       if (typeof url === 'string' && url.startsWith('http')) {
         if (Platform.OS === 'web') window.location.href = url;
-        else router.replace('/');
+        else router.replace(dest as Href);
       } else {
         router.replace(url as Href);
       }
     },
-    [router],
+    [router, returnTo],
   );
 
   const handleSubmit = async () => {
     const { error } = await signIn.password({ emailAddress, password });
     if (error) return;
     if (signIn.status === 'complete') {
-      await signIn.finalize({ navigate: navigateHome });
+      await signIn.finalize({ navigate: navigateAfterSignIn });
     }
   };
 
@@ -72,16 +74,17 @@ export default function SignInScreen() {
       if (createdSessionId && setActive) {
         await setActive({
           session: createdSessionId,
-          navigate: async ({ session, decorateUrl }: any) => {
+          navigate: async ({ session }: any) => {
             if (session?.currentTask) return;
-            router.replace('/');
+            const dest = (returnTo as string | undefined) ?? '/';
+            router.replace(dest as Href);
           },
         });
       }
     } catch (err) {
       console.error(JSON.stringify(err, null, 2));
     }
-  }, [startSSOFlow, router]);
+  }, [startSSOFlow, router, returnTo]);
 
   if (isSignedIn) return <Redirect href="/" />;
 

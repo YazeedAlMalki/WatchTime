@@ -515,6 +515,7 @@ function SafetySection({
   isMovie: boolean;
 }) {
   const c = useColors();
+  const router = useRouter();
   const safety = useGetTitleSafety({ titleId });
   const [showReport, setShowReport] = useState(false);
   const [showContribute, setShowContribute] = useState(false);
@@ -527,39 +528,59 @@ function SafetySection({
   const info = safety.data;
   if (!info) return null;
 
+  const handleReportPress = () => {
+    if (!isSignedIn) {
+      router.push({ pathname: '/(auth)/sign-in', params: { returnTo: `/title/${titleId}` } });
+      return;
+    }
+    setShowReport(true);
+  };
+
+  const handleContributePress = () => {
+    if (!isSignedIn) {
+      router.push({ pathname: '/(auth)/sign-in', params: { returnTo: `/title/${titleId}` } });
+      return;
+    }
+    setShowContribute(true);
+  };
+
   return (
     <View style={{ paddingHorizontal: 16 }}>
-      {/* Action buttons for signed-in users */}
-      {isSignedIn ? (
-        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-          <Pressable
-            testID="report-safety-btn"
-            onPress={() => setShowReport(true)}
-            style={({ pressed }) => [
-              styles.safetyActionBtn,
-              { borderColor: c.border, backgroundColor: c.card, opacity: pressed ? 0.7 : 1 },
-            ]}
-          >
-            <Feather name="flag" size={13} color={c.mutedForeground} />
-            <Text style={{ color: c.foreground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
-              Report issue
-            </Text>
-          </Pressable>
-          <Pressable
-            testID="contribute-safety-btn"
-            onPress={() => setShowContribute(true)}
-            style={({ pressed }) => [
-              styles.safetyActionBtn,
-              { borderColor: c.primary, backgroundColor: c.primary, opacity: pressed ? 0.8 : 1 },
-            ]}
-          >
-            <Feather name="plus" size={13} color={c.primaryForeground} />
-            <Text style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
-              Contribute
-            </Text>
-          </Pressable>
-        </View>
-      ) : null}
+      {/* Action buttons – visible to all users; signed-out users are redirected to sign in */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+        <Pressable
+          testID="report-safety-btn"
+          onPress={handleReportPress}
+          style={({ pressed }) => [
+            styles.safetyActionBtn,
+            { borderColor: c.border, backgroundColor: c.card, opacity: pressed ? 0.7 : isSignedIn ? 1 : 0.55 },
+          ]}
+        >
+          <Feather name="flag" size={13} color={c.mutedForeground} />
+          <Text style={{ color: c.foreground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
+            Report issue
+          </Text>
+          {!isSignedIn ? (
+            <Feather name="lock" size={11} color={c.mutedForeground} />
+          ) : null}
+        </Pressable>
+        <Pressable
+          testID="contribute-safety-btn"
+          onPress={handleContributePress}
+          style={({ pressed }) => [
+            styles.safetyActionBtn,
+            { borderColor: c.primary, backgroundColor: c.primary, opacity: pressed ? 0.8 : isSignedIn ? 1 : 0.55 },
+          ]}
+        >
+          <Feather name="plus" size={13} color={c.primaryForeground} />
+          <Text style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
+            Contribute
+          </Text>
+          {!isSignedIn ? (
+            <Feather name="lock" size={11} color={c.primaryForeground} />
+          ) : null}
+        </Pressable>
+      </View>
 
       {/* Summary chips */}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
