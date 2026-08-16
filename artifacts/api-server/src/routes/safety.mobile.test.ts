@@ -399,3 +399,114 @@ describe("POST /api/titles/:id/safety/contributions (mobile flow)", () => {
     expect(res.body.error).toMatch(/limit/i);
   });
 });
+
+// ─── PATCH /api/admin/contributions/:id (moderation queue filter) ─────────────
+
+describe("PATCH /api/admin/contributions/:id — approved/rejected items drop out of pending filter", () => {
+  const createdContributionIds: number[] = [];
+  const watchedTitleRowIds: number[] = [];
+
+  afterEach(async () => {
+    for (const id of createdContributionIds) {
+      await db.delete(contributionsTable).where(eq(contributionsTable.id, id));
+    }
+    createdContributionIds.length = 0;
+
+    for (const id of watchedTitleRowIds) {
+      await db.delete(watchedTitlesTable).where(eq(watchedTitlesTable.id, id));
+    }
+    watchedTitleRowIds.length = 0;
+  });
+
+  async function grantEligibility() {
+    for (const etId of eligibilityTitleIds) {
+      const [row] = await db
+        .insert(watchedTitlesTable)
+        .values({ userId: MOBILE_USER_ID, titleId: etId })
+        .onConflictDoNothing()
+        .returning();
+      if (row) watchedTitleRowIds.push(row.id);
+    }
+  }
+
+  it("an approved contribution no longer appears in GET /api/admin/contributions?status=pending", async () => {
+    await grantEligibility();
+
+    // Submit a contribution (lands as pending)
+    const submitRes = await supertest(app)
+      .post(`/api/titles/${titleId}/safety/contributions`)
+      .send({ category: "Violence", severity: "moderate", description: "Intense scene." });
+
+    expect(submitRes.status).toBe(201);
+    const contributionId: number = submitRes.body.id;
+    createdContributionIds.push(contributionId);
+
+    // Confirm it is initially visible in the pending queue
+    const beforeRes = await supertest(app).get("/api/admin/contributions?status=pending");
+    expect(beforeRes.status).toBe(200);
+    expect(beforeRes.body.find((c: any) => c.id === contributionId)).toBeDefined();
+
+    // Approve it via PATCH
+    const patchRes = await supertest(app)
+      .patch(`/api/admin/contributions/${contributionId}`)
+      .send({ status: "approved" });
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.status).toBe("approved");
+
+    // It must no longer appear in the pending filter
+    const afterRes = await supertest(app).get("/api/admin/contributions?status=pending");
+    expect(afterRes.status).toBe(200);
+    expect(afterRes.body.find((c: any) => c.id === contributionId)).toBeUndefined();
+  });
+
+  it("a rejected contribution no longer appears in GET /api/admin/contributions?status=pending", async () => {
+    await grantEligibility();
+
+    // Submit a contribution (lands as pending)
+    const submitRes = await supertest(app)
+      .post(`/api/titles/${titleId}/safety/contributions`)
+      .send({ category: "Language", severity: "mild", description: "Some strong language." });
+
+    expect(submitRes.status).toBe(201);
+    const contributionId: number = submitRes.body.id;
+    createdContributionIds.push(contributionId);
+
+    // Confirm it is initially visible in the pending queue
+    const beforeRes = await supertest(app).get("/api/admin/contributions?status=pending");
+    expect(beforeRes.status).toBe(200);
+    expect(beforeRes.body.find((c: any) => c.id === contributionId)).toBeDefined();
+
+    // Reject it via PATCH
+    const patchRes = await supertest(app)
+      .patch(`/api/admin/contributions/${contributionId}`)
+      .send({ status: "rejected" });
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.status).toBe("rejected");
+
+    // It must no longer appear in the pending filter
+    const afterRes = await supertest(app).get("/api/admin/contributions?status=pending");
+    expect(afterRes.status).toBe(200);
+    expect(afterRes.body.find((c: any) => c.id === contributionId)).toBeUndefined();
+  });
+
+  it("the approved contribution appears when filtering by status=approved", async () => {
+    await grantEligibility();
+
+    const submitRes = await supertest(app)
+      .post(`/api/titles/${titleId}/safety/contributions`)
+      .send({ category: "Drugs", severity: "severe", description: "Drug use depicted." });
+
+    expect(submitRes.status).toBe(201);
+    const contributionId: number = submitRes.body.id;
+    createdContributionIds.push(contributionId);
+
+    await supertest(app)
+      .patch(`/api/admin/contributions/${contributionId}`)
+      .send({ status: "approved" });
+
+    // Must show up under the approved filter
+    const approvedRes = await supertest(app).get("/api/admin/contributions?status=approved");
+    expect(approvedRes.status).toBe(200);
+    expect(approvedRes.body.find((c: any) => c.id === contributionId)).toBeDefined();
+  });
+});
