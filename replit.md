@@ -12,7 +12,7 @@ A TV Time-style tracking app for movies, TV, anime, and documentaries with a dif
 - **First registered user becomes the single admin** (JIT provisioning in `artifacts/api-server/src/middlewares/auth.ts`).
 - Visitors can browse/search/view safety without signing in; tracking requires auth.
 - Safety contributions require ≥5 watched episodes+movies (`CONTRIBUTION_THRESHOLD`); approved contributions merge into a "WatchTime Community" safety record.
-- Catalog is a locally seeded set of 12 **fictional** titles (user declined a TMDB key); `tmdbId`/`imdbId` columns exist for a later real sync. Re-seed: `pnpm --filter @workspace/api-server exec tsx src/seed.ts` (idempotent — skips if titles exist).
+- Catalog contains 16 **real** titles seeded from TVMaze (TV/anime/docuseries: episodes, cast, artwork, IMDb ids) and Wikipedia (movies: plot + poster). Reseed: `pnpm --filter @workspace/api-server exec tsx src/seed-real.ts` (DESTRUCTIVE — truncates catalog + watch history). Safety records are `provider_unavailable` (no live safety integrations; never fabricate). Legacy fictional seed remains in `src/seed.ts`.
 - Poster/backdrop images live in `artifacts/watchtime/public/posters|backdrops`.
 
 ## User preferences
