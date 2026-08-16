@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { useAuth, useSignUp } from '@clerk/expo';
-import { Link, Redirect, useRouter, type Href } from 'expo-router';
+import { Link, Redirect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
@@ -21,6 +21,7 @@ export default function SignUpScreen() {
   const router = useRouter();
   const { isSignedIn } = useAuth();
   const { signUp, errors, fetchStatus } = useSignUp();
+  const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
 
   const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
@@ -36,13 +37,14 @@ export default function SignUpScreen() {
   const handleVerify = async () => {
     await signUp.verifications.verifyEmailCode({ code });
     if (signUp.status === 'complete') {
+      const dest = (returnTo as string | undefined) ?? '/';
       await signUp.finalize({
         navigate: ({ session, decorateUrl }: any) => {
           if (session?.currentTask) return;
-          const url = decorateUrl('/');
+          const url = decorateUrl(dest);
           if (typeof url === 'string' && url.startsWith('http')) {
             if (Platform.OS === 'web') window.location.href = url;
-            else router.replace('/');
+            else router.replace(dest as Href);
           } else {
             router.replace(url as Href);
           }
@@ -193,7 +195,7 @@ export default function SignUpScreen() {
               <Text style={{ color: c.mutedForeground, fontFamily: 'Inter_400Regular' }}>
                 Already have an account?{' '}
               </Text>
-              <Link href="/(auth)/sign-in">
+              <Link href={returnTo ? { pathname: '/(auth)/sign-in', params: { returnTo } } : '/(auth)/sign-in'}>
                 <Text style={{ color: c.primary, fontFamily: 'Inter_600SemiBold' }}>Sign in</Text>
               </Link>
             </View>

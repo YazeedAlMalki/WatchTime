@@ -216,7 +216,7 @@ export default function SignInScreen() {
           <Text style={{ color: c.mutedForeground, fontFamily: 'Inter_400Regular' }}>
             New to WatchTime?{' '}
           </Text>
-          <Link href="/(auth)/sign-up">
+          <Link href={returnTo ? { pathname: '/(auth)/sign-up', params: { returnTo } } : '/(auth)/sign-up'}>
             <Text style={{ color: c.primary, fontFamily: 'Inter_600SemiBold' }}>Sign up</Text>
           </Link>
         </View>
