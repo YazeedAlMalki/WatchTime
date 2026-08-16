@@ -680,6 +680,39 @@ paths:
                 $ref: "#/components/schemas/AnalyticsSummary"
         "403":
           description: Forbidden
+  /admin/audit-log:
+    get:
+      operationId: getAdminAuditLog
+      tags: [admin]
+      summary: Paginated admin audit log
+      parameters:
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: entityType
+          in: query
+          schema: { type: string, enum: [contribution, report, feedback, content] }
+        - name: dateFrom
+          in: query
+          schema: { type: string, format: date-time }
+        - name: dateTo
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: offset
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Audit log page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditLogPage"
+        "403":
+          description: Forbidden
 components:
   schemas:
     HealthStatus:
@@ -1077,3 +1110,23 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AnalyticsTopItem"
+    AuditLogEntry:
+      type: object
+      required: [id, adminEmail, action, createdAt]
+      properties:
+        id: { type: integer }
+        adminEmail: { type: ["string", "null"] }
+        action: { type: string }
+        entityType: { type: ["string", "null"] }
+        entityId: { type: ["integer", "null"] }
+        details: {}
+        createdAt: { type: string }
+    AuditLogPage:
+      type: object
+      required: [total, entries]
+      properties:
+        total: { type: integer }
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditLogEntry"

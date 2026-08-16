@@ -529,6 +529,24 @@ export interface AnalyticsSummary {
   countryBreakdown: AnalyticsTopItem[];
 }
 
+export interface AuditLogEntry {
+  id: number;
+  /** @nullable */
+  adminEmail: string | null;
+  action: string;
+  /** @nullable */
+  entityType?: string | null;
+  /** @nullable */
+  entityId?: number | null;
+  details?: unknown;
+  createdAt: string;
+}
+
+export interface AuditLogPage {
+  total: number;
+  entries: AuditLogEntry[];
+}
+
 export type ListTitlesParams = {
 q?: string;
 type?: ListTitlesType;
@@ -632,4 +650,23 @@ export const ListAdminFeedbackCategory = {
 export type SearchAdminContentParams = {
 q?: string;
 };
+
+export type GetAdminAuditLogParams = {
+action?: string;
+entityType?: GetAdminAuditLogEntityType;
+dateFrom?: string;
+dateTo?: string;
+limit?: number;
+offset?: number;
+};
+
+export type GetAdminAuditLogEntityType = typeof GetAdminAuditLogEntityType[keyof typeof GetAdminAuditLogEntityType];
+
+
+export const GetAdminAuditLogEntityType = {
+  contribution: 'contribution',
+  report: 'report',
+  feedback: 'feedback',
+  content: 'content',
+} as const;
 

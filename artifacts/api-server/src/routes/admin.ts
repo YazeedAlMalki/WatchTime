@@ -13,7 +13,7 @@ import {
   watchedTitlesTable,
   adminAuditLogTable,
 } from "@workspace/db";
-import { and, eq, sql, desc, gte, ilike, inArray } from "drizzle-orm";
+import { and, eq, sql, desc, gte, lte, ilike, inArray } from "drizzle-orm";
 import {
   UpdateAdminContributionBody,
   UpdateAdminReportBody,
@@ -483,6 +483,50 @@ router.get("/analytics", async (_req, res) => {
     mostTrackedTitles: mostTracked,
     deviceBreakdown: deviceRows,
     countryBreakdown: countryRows,
+  });
+});
+
+router.get("/audit-log", async (req, res) => {
+  const { action, entityType, dateFrom, dateTo } = req.query as Record<string, string>;
+  const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
+  const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
+
+  const conds = [];
+  if (action) conds.push(ilike(adminAuditLogTable.action, `%${action}%`));
+  if (entityType) conds.push(eq(adminAuditLogTable.entityType, entityType));
+  if (dateFrom) conds.push(gte(adminAuditLogTable.createdAt, new Date(dateFrom)));
+  if (dateTo) conds.push(lte(adminAuditLogTable.createdAt, new Date(dateTo)));
+
+  const where = conds.length ? and(...conds) : undefined;
+
+  const [{ total }] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(adminAuditLogTable)
+    .where(where);
+
+  const rows = await db
+    .select({
+      log: adminAuditLogTable,
+      adminEmail: usersTable.email,
+    })
+    .from(adminAuditLogTable)
+    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
+    .where(where)
+    .orderBy(desc(adminAuditLogTable.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  return res.json({
+    total,
+    entries: rows.map(({ log, adminEmail }) => ({
+      id: log.id,
+      adminEmail: adminEmail ?? null,
+      action: log.action,
+      entityType: log.entityType ?? null,
+      entityId: log.entityId ?? null,
+      details: log.details ?? null,
+      createdAt: log.createdAt.toISOString(),
+    })),
   });
 });
 

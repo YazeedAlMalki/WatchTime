@@ -12,6 +12,7 @@ import {
   useGetAdminAnalytics,
   useSearchAdminContent,
   useRefreshAdminContent,
+  useGetAdminAuditLog,
   getGetAdminDashboardQueryKey,
   getListAdminContributionsQueryKey,
   getListAdminReportsQueryKey,
@@ -34,6 +35,7 @@ import {
   ShieldAlert, Users, Database, Server, Activity, MessageSquare,
   AlertTriangle, CheckCircle, XCircle, RefreshCw, Search, BarChart2,
   CheckCheck, ThumbsDown, Flag, Eye, TrendingUp, Film, BookOpen,
+  ClipboardList, Download, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -67,6 +69,7 @@ export default function AdminPage() {
           <TabsTrigger value="analytics" className="rounded-lg data-[state=active]:bg-background"><BarChart2 className="w-4 h-4 mr-1.5" /> Analytics</TabsTrigger>
           <TabsTrigger value="content" className="rounded-lg data-[state=active]:bg-background"><Database className="w-4 h-4 mr-1.5" /> Content</TabsTrigger>
           <TabsTrigger value="integrations" className="rounded-lg data-[state=active]:bg-background"><Server className="w-4 h-4 mr-1.5" /> Integrations</TabsTrigger>
+          <TabsTrigger value="audit-log" className="rounded-lg data-[state=active]:bg-background"><ClipboardList className="w-4 h-4 mr-1.5" /> Audit Log</TabsTrigger>
         </TabsList>
 
         {/* Dashboard */}
@@ -113,6 +116,11 @@ export default function AdminPage() {
         {/* Integrations */}
         <TabsContent value="integrations" className="outline-none">
           <IntegrationsTab />
+        </TabsContent>
+
+        {/* Audit Log */}
+        <TabsContent value="audit-log" className="outline-none">
+          <AuditLogTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -598,6 +606,179 @@ function ContentTab() {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Audit Log ─── */
+
+function AuditLogTab() {
+  const [actionFilter, setActionFilter] = useState("");
+  const [entityTypeFilter, setEntityTypeFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [page, setPage] = useState(0);
+  const LIMIT = 25;
+
+  const params = {
+    limit: LIMIT,
+    offset: page * LIMIT,
+    ...(actionFilter ? { action: actionFilter } : {}),
+    ...(entityTypeFilter !== "all" ? { entityType: entityTypeFilter as any } : {}),
+    ...(dateFrom ? { dateFrom: new Date(dateFrom).toISOString() } : {}),
+    ...(dateTo ? { dateTo: new Date(dateTo + "T23:59:59").toISOString() } : {}),
+  };
+
+  const { data, isLoading } = useGetAdminAuditLog(params);
+
+  const totalPages = Math.ceil((data?.total ?? 0) / LIMIT);
+
+  const exportCSV = () => {
+    if (!data?.entries.length) return;
+    const header = ["ID", "Timestamp", "Admin", "Action", "Entity Type", "Entity ID", "Details"];
+    const rows = data.entries.map(e => [
+      e.id,
+      e.createdAt,
+      e.adminEmail ?? "",
+      e.action,
+      e.entityType ?? "",
+      e.entityId ?? "",
+      e.details ? JSON.stringify(e.details) : "",
+    ]);
+    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const ACTION_COLOR: Record<string, string> = {
+    approved_contribution: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    rejected_contribution: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    flagged_contribution: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    resolved_report: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    dismissed_report: "bg-secondary text-muted-foreground",
+    feedback_reviewing: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+    feedback_resolved: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    feedback_closed: "bg-secondary text-muted-foreground",
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-display font-bold">Audit Log</h2>
+        <Button size="sm" variant="outline" className="rounded-xl gap-1.5" onClick={exportCSV} disabled={!data?.entries.length}>
+          <Download className="w-3.5 h-3.5" /> Export CSV
+        </Button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <Input
+          placeholder="Filter by action…"
+          className="rounded-xl h-9 w-44 text-sm"
+          value={actionFilter}
+          onChange={e => { setActionFilter(e.target.value); setPage(0); }}
+        />
+        <Select value={entityTypeFilter} onValueChange={v => { setEntityTypeFilter(v); setPage(0); }}>
+          <SelectTrigger className="w-36 h-9 rounded-xl text-sm"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All types</SelectItem>
+            <SelectItem value="contribution">Contribution</SelectItem>
+            <SelectItem value="report">Report</SelectItem>
+            <SelectItem value="feedback">Feedback</SelectItem>
+            <SelectItem value="content">Content</SelectItem>
+          </SelectContent>
+        </Select>
+        <input
+          type="date"
+          className="h-9 rounded-xl border border-border bg-background px-3 text-sm text-foreground"
+          value={dateFrom}
+          onChange={e => { setDateFrom(e.target.value); setPage(0); }}
+          placeholder="From"
+        />
+        <input
+          type="date"
+          className="h-9 rounded-xl border border-border bg-background px-3 text-sm text-foreground"
+          value={dateTo}
+          onChange={e => { setDateTo(e.target.value); setPage(0); }}
+          placeholder="To"
+        />
+        {(actionFilter || entityTypeFilter !== "all" || dateFrom || dateTo) && (
+          <Button size="sm" variant="ghost" className="rounded-xl text-muted-foreground h-9"
+            onClick={() => { setActionFilter(""); setEntityTypeFilter("all"); setDateFrom(""); setDateTo(""); setPage(0); }}>
+            Clear
+          </Button>
+        )}
+        {data && (
+          <span className="text-xs text-muted-foreground ml-auto">{data.total.toLocaleString()} total entries</span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="h-64 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
+      ) : !data?.entries.length ? (
+        <EmptyState icon={ClipboardList} title="No audit log entries" desc="Moderation actions will appear here." />
+      ) : (
+        <>
+          <div className="overflow-x-auto rounded-2xl border border-border shadow-sm">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-secondary/50 text-left">
+                  <th className="px-4 py-3 font-bold text-muted-foreground text-xs uppercase tracking-wider whitespace-nowrap">Timestamp</th>
+                  <th className="px-4 py-3 font-bold text-muted-foreground text-xs uppercase tracking-wider whitespace-nowrap">Admin</th>
+                  <th className="px-4 py-3 font-bold text-muted-foreground text-xs uppercase tracking-wider whitespace-nowrap">Action</th>
+                  <th className="px-4 py-3 font-bold text-muted-foreground text-xs uppercase tracking-wider whitespace-nowrap">Entity</th>
+                  <th className="px-4 py-3 font-bold text-muted-foreground text-xs uppercase tracking-wider whitespace-nowrap">ID</th>
+                  <th className="px-4 py-3 font-bold text-muted-foreground text-xs uppercase tracking-wider">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {data.entries.map(entry => (
+                  <tr key={entry.id} className="bg-card hover:bg-secondary/20 transition-colors">
+                    <td className="px-4 py-3 whitespace-nowrap text-muted-foreground text-xs font-mono">
+                      {new Date(entry.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-foreground text-xs max-w-[160px] truncate">
+                      {entry.adminEmail ?? <span className="text-muted-foreground italic">unknown</span>}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${ACTION_COLOR[entry.action] ?? "bg-secondary text-muted-foreground"}`}>
+                        {entry.action.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-muted-foreground text-xs capitalize">
+                      {entry.entityType ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-muted-foreground text-xs font-mono">
+                      {entry.entityId ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground max-w-[240px] truncate font-mono">
+                      {entry.details ? JSON.stringify(entry.details) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between gap-2">
+              <Button size="sm" variant="outline" className="rounded-xl gap-1" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
+                <ChevronLeft className="w-4 h-4" /> Previous
+              </Button>
+              <span className="text-sm text-muted-foreground">Page {page + 1} of {totalPages}</span>
+              <Button size="sm" variant="outline" className="rounded-xl gap-1" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
+                Next <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

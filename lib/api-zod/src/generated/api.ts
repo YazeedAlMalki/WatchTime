@@ -831,3 +831,29 @@ export const GetAdminAnalyticsResponse = zod.object({
 })
 
 
+/**
+ * @summary Paginated admin audit log
+ */
+export const GetAdminAuditLogQueryParams = zod.object({
+  "action": zod.coerce.string().optional(),
+  "entityType": zod.enum(['contribution', 'report', 'feedback', 'content']).optional(),
+  "dateFrom": zod.date().optional(),
+  "dateTo": zod.date().optional(),
+  "limit": zod.coerce.number().int().optional(),
+  "offset": zod.coerce.number().int().optional()
+})
+
+export const GetAdminAuditLogResponse = zod.object({
+  "total": zod.int(),
+  "entries": zod.array(zod.object({
+  "id": zod.int(),
+  "adminEmail": zod.string().nullable(),
+  "action": zod.string(),
+  "entityType": zod.string().nullish(),
+  "entityId": zod.int().nullish(),
+  "details": zod.unknown().optional(),
+  "createdAt": zod.string()
+}))
+})
+
+
