@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import cors from "cors";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
@@ -29,6 +30,31 @@ app.use(
         };
       },
     },
+  }),
+);
+
+// Allow the Expo mobile app (dev preview runs on a separate expo.* origin;
+// native apps send no Origin header and pass through unaffected).
+const allowedOrigins = new Set(
+  [
+    process.env.REPLIT_EXPO_DEV_DOMAIN,
+    process.env.REPLIT_DEV_DOMAIN,
+    ...(process.env.REPLIT_DOMAINS?.split(",") ?? []),
+  ]
+    .filter((d): d is string => Boolean(d))
+    .map((d) => `https://${d.trim()}`),
+);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
+    credentials: true,
   }),
 );
 

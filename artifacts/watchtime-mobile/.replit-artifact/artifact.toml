@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/mobile/"
+title = "WatchTime Mobile"
+description = "Mobile companion app for WatchTime: browse and search the show catalog (including alternate titles), view title details with episode-level tracking checkboxes, manage a watchlist, review content safety information per title, and sign in with the same Clerk account used on the web app."
+version = "1.0.0"
+id = "artifacts/watchtime-mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/mobile/" ]
+localPort = 21371
+
+[services.development]
+run = "pnpm --filter @workspace/watchtime-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/watchtime-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/watchtime-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "21371"
+BASE_PATH = "/mobile/"
