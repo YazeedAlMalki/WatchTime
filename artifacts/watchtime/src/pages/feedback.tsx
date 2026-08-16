@@ -41,10 +41,13 @@ export default function FeedbackPage() {
           });
           form.reset();
         },
-        onError: () => {
+        onError: (err: any) => {
+          const is429 = err?.response?.status === 429;
           toast({
-            title: "Error",
-            description: "Failed to send feedback. Please try again.",
+            title: is429 ? "Too many requests" : "Error",
+            description: is429
+              ? "You've sent too much feedback recently. Please wait a while before trying again."
+              : "Failed to send feedback. Please try again.",
             variant: "destructive",
           });
         }

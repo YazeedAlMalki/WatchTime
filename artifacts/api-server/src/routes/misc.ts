@@ -11,6 +11,7 @@ import {
 import { eq, sql, desc, inArray } from "drizzle-orm";
 import { CreateFeedbackBody } from "@workspace/api-zod";
 import { optionalAuth } from "../middlewares/auth";
+import { feedbackRateLimit } from "../middlewares/rateLimiters";
 import { toTitleJson } from "../lib/serialize";
 
 const router: IRouter = Router();
@@ -74,7 +75,7 @@ router.get("/stats/public", async (_req, res) => {
   });
 });
 
-router.post("/feedback", optionalAuth, async (req, res) => {
+router.post("/feedback", feedbackRateLimit, optionalAuth, async (req, res) => {
   const parsed = CreateFeedbackBody.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.message });

@@ -135,8 +135,12 @@ export default function TitleDetailPage() {
         toast({ title: "Contribution submitted", description: "Your safety note is pending admin review. Thank you!" });
       },
       onError: (err: any) => {
-        const msg = err?.response?.status === 403 ? "You need to watch at least 5 titles or episodes before contributing." : "Failed to submit. Please try again.";
-        toast({ title: "Could not submit", description: msg, variant: "destructive" });
+        const status = err?.response?.status;
+        const msg =
+          status === 429 ? "You've reached the daily contribution limit. Try again tomorrow." :
+          status === 403 ? "You need to watch at least 5 titles or episodes before contributing." :
+          "Failed to submit. Please try again.";
+        toast({ title: status === 429 ? "Too many requests" : "Could not submit", description: msg, variant: "destructive" });
       },
     });
   };
@@ -156,8 +160,15 @@ export default function TitleDetailPage() {
         setReportReason(""); setReportSource(""); setReportDetails("");
         toast({ title: "Report submitted", description: "The admin team will review your report shortly." });
       },
-      onError: () => {
-        toast({ title: "Could not submit report", description: "Please try again.", variant: "destructive" });
+      onError: (err: any) => {
+        const is429 = err?.response?.status === 429;
+        toast({
+          title: is429 ? "Too many requests" : "Could not submit report",
+          description: is429
+            ? "You've submitted too many reports recently. Please wait before trying again."
+            : "Please try again.",
+          variant: "destructive",
+        });
       },
     });
   };

@@ -15,6 +15,7 @@ import {
   CreateSafetyReportBody,
 } from "@workspace/api-zod";
 import { requireAuth, optionalAuth } from "../middlewares/auth";
+import { safetyReportRateLimit, safetyContributionRateLimit } from "../middlewares/rateLimiters";
 
 const router: IRouter = Router();
 
@@ -138,7 +139,7 @@ router.get("/safety", optionalAuth, async (req, res) => {
 
 const CONTRIBUTION_THRESHOLD = 5;
 
-router.post("/titles/:id/safety/contributions", requireAuth, async (req, res) => {
+router.post("/titles/:id/safety/contributions", requireAuth, safetyContributionRateLimit, async (req, res) => {
   const titleId = parseInt(String(req.params.id), 10);
   const parsed = CreateSafetyContributionBody.safeParse(req.body);
   if (!parsed.success) {
@@ -189,7 +190,7 @@ router.post("/titles/:id/safety/contributions", requireAuth, async (req, res) =>
   });
 });
 
-router.post("/titles/:id/safety/reports", requireAuth, async (req, res) => {
+router.post("/titles/:id/safety/reports", requireAuth, safetyReportRateLimit, async (req, res) => {
   const titleId = parseInt(String(req.params.id), 10);
   const parsed = CreateSafetyReportBody.safeParse(req.body);
   if (!parsed.success) {
