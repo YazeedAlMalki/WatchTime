@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import {
   db,
+  pool,
   titlesTable,
   safetyRecordsTable,
   contributionsTable,
@@ -148,46 +149,113 @@ router.post("/titles/:id/safety/contributions", requireAuth, safetyContributionR
   const [title] = await db.select().from(titlesTable).where(eq(titlesTable.id, titleId));
   if (!title) return res.status(404).json({ error: "Not found" });
 
-  const [[eps], [movies]] = await Promise.all([
-    db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(watchedEpisodesTable)
-      .where(eq(watchedEpisodesTable.userId, req.userId!)),
-    db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(watchedTitlesTable)
-      .where(eq(watchedTitlesTable.userId, req.userId!)),
-  ]);
-  if (eps.count + movies.count < CONTRIBUTION_THRESHOLD) {
-    return res.status(403).json({
-      error: `Track at least ${CONTRIBUTION_THRESHOLD} episodes or movies before contributing safety information.`,
-    });
-  }
+  // Concurrency protocol: SELECT … FOR SHARE + explicit transaction.
+  //
+  // The race being closed: without locking, a concurrent DELETE of watch history
+  // can commit between the eligibility COUNT and the contribution INSERT, letting
+  // an ineligible contribution slip through.
+  //
+  // How FOR SHARE stops it:
+  //   1. We lock every watched row for this user with FOR SHARE.
+  //   2. FOR SHARE conflicts with the exclusive lock DELETE must acquire on each
+  //      row, so any concurrent DELETE on those rows blocks until we COMMIT.
+  //   3. We then COUNT (same transaction, same rows still locked) and INSERT.
+  //   4. On COMMIT the locks release, and any waiting DELETE can proceed —
+  //      but the contribution is already durably committed with valid eligibility.
+  //
+  // Why a plain transaction (without FOR SHARE) is not enough:
+  //   READ COMMITTED gives each statement its own snapshot. Two separate
+  //   statements (COUNT then INSERT) still have a window: a DELETE could commit
+  //   between them. FOR SHARE removes that window by holding the lock across all
+  //   three statements.
+  //
+  // Edge case: if the user has zero watched items, FOR SHARE locks nothing, and
+  // the COUNT correctly sees zero — the 403 path fires before any INSERT.
 
-  const [created] = await db
-    .insert(contributionsTable)
-    .values({
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Acquire shared row locks on every watched item for this user.
+    // Any concurrent DELETE on these rows must wait for COMMIT.
+    await Promise.all([
+      client.query(
+        "SELECT id FROM watched_episodes WHERE user_id = $1 FOR SHARE",
+        [req.userId],
+      ),
+      client.query(
+        "SELECT id FROM watched_titles WHERE user_id = $1 FOR SHARE",
+        [req.userId],
+      ),
+    ]);
+
+    // Count within the same transaction — locked rows cannot be deleted yet.
+    const {
+      rows: [{ total }],
+    } = await client.query<{ total: number }>(
+      `SELECT (
+         (SELECT COUNT(*)::int FROM watched_episodes WHERE user_id = $1) +
+         (SELECT COUNT(*)::int FROM watched_titles     WHERE user_id = $1)
+       ) AS total`,
+      [req.userId],
+    );
+
+    if (total < CONTRIBUTION_THRESHOLD) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({
+        error: `Track at least ${CONTRIBUTION_THRESHOLD} episodes or movies before contributing safety information.`,
+      });
+    }
+
+    type ContributionRow = {
+      id: number;
+      category: string;
+      severity: string;
+      season_number: number | null;
+      episode_number: number | null;
+      description: string | null;
+      status: string;
+      created_at: Date;
+    };
+
+    const {
+      rows: [created],
+    } = await client.query<ContributionRow>(
+      `INSERT INTO contributions
+         (title_id, user_id, category, severity, season_number, episode_number, description)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, category, severity, season_number, episode_number, description, status, created_at`,
+      [
+        titleId,
+        req.userId,
+        parsed.data.category,
+        parsed.data.severity,
+        parsed.data.seasonNumber ?? null,
+        parsed.data.episodeNumber ?? null,
+        parsed.data.description ?? null,
+      ],
+    );
+
+    await client.query("COMMIT");
+
+    return res.status(201).json({
+      id: created.id,
       titleId,
-      userId: req.userId!,
-      category: parsed.data.category,
-      severity: parsed.data.severity,
-      seasonNumber: parsed.data.seasonNumber ?? null,
-      episodeNumber: parsed.data.episodeNumber ?? null,
-      description: parsed.data.description ?? null,
-    })
-    .returning();
-  return res.status(201).json({
-    id: created.id,
-    titleId,
-    titleName: title.name,
-    category: created.category,
-    severity: created.severity,
-    seasonNumber: created.seasonNumber,
-    episodeNumber: created.episodeNumber,
-    description: created.description,
-    status: created.status,
-    createdAt: created.createdAt.toISOString(),
-  });
+      titleName: title.name,
+      category: created.category,
+      severity: created.severity,
+      seasonNumber: created.season_number,
+      episodeNumber: created.episode_number,
+      description: created.description,
+      status: created.status,
+      createdAt: created.created_at.toISOString(),
+    });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 });
 
 router.post("/titles/:id/safety/reports", requireAuth, safetyReportRateLimit, async (req, res) => {

@@ -111,7 +111,7 @@ import {
   watchedEpisodesTable,
   watchedTitlesTable,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 
 // ─── Global fixtures ──────────────────────────────────────────────────────────
 
@@ -508,5 +508,195 @@ describe("PATCH /api/admin/contributions/:id — approved/rejected items drop ou
     const approvedRes = await supertest(app).get("/api/admin/contributions?status=approved");
     expect(approvedRes.status).toBe(200);
     expect(approvedRes.body.find((c: any) => c.id === contributionId)).toBeDefined();
+  });
+});
+
+// ─── Eligibility-insert race protection ───────────────────────────────────────
+//
+// The concurrency protocol: SELECT … FOR SHARE inside an explicit transaction.
+//
+// The race being closed:
+//   Without locking, a concurrent DELETE of watch history can commit between
+//   the eligibility COUNT and the contribution INSERT on two separate statements,
+//   letting an ineligible contribution slip through silently.
+//
+//   READ COMMITTED (PostgreSQL default) gives each statement its own snapshot.
+//   A plain db.transaction() wrapping does NOT close this window — the COUNT
+//   and INSERT still have separate snapshots. FOR SHARE closes it:
+//
+//     1. SELECT … FOR SHARE acquires shared row locks on each watched item.
+//     2. DELETE requires an exclusive row lock — it blocks while we hold FOR SHARE.
+//     3. We COUNT (locked rows cannot be deleted), INSERT, then COMMIT.
+//     4. Locks release on COMMIT; blocked DELETE runs — but contribution is already durable.
+//
+// Tests:
+//   1. Exactly-at-threshold (5 items) → 201, row persisted.
+//   2. One below threshold (4 items)  → 403, zero rows inserted.
+//   3. Two-connection concurrent test: connection B's DELETE blocks while
+//      connection A holds FOR SHARE, confirming the interleaving is prevented.
+
+describe("eligibility-insert race protection", () => {
+  const raceContributionIds: number[] = [];
+  const raceWatchedTitleIds: number[] = [];
+
+  afterEach(async () => {
+    for (const id of raceContributionIds) {
+      await db.delete(contributionsTable).where(eq(contributionsTable.id, id));
+    }
+    raceContributionIds.length = 0;
+
+    for (const id of raceWatchedTitleIds) {
+      await db.delete(watchedTitlesTable).where(eq(watchedTitlesTable.id, id));
+    }
+    raceWatchedTitleIds.length = 0;
+  });
+
+  async function setWatchedCount(n: number) {
+    for (let i = 0; i < n && i < eligibilityTitleIds.length; i++) {
+      const [row] = await db
+        .insert(watchedTitlesTable)
+        .values({ userId: MOBILE_USER_ID, titleId: eligibilityTitleIds[i] })
+        .onConflictDoNothing()
+        .returning();
+      if (row) raceWatchedTitleIds.push(row.id);
+    }
+  }
+
+  it("commits the contribution when user is exactly at the threshold (5 items)", async () => {
+    await setWatchedCount(5);
+
+    const res = await supertest(app)
+      .post(`/api/titles/${titleId}/safety/contributions`)
+      .send({ category: "Violence", severity: "mild" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeDefined();
+    raceContributionIds.push(res.body.id);
+
+    const [row] = await db
+      .select()
+      .from(contributionsTable)
+      .where(eq(contributionsTable.id, res.body.id));
+    expect(row).toBeDefined();
+    expect(row.status).toBe("pending");
+  });
+
+  it("returns 403 and inserts zero rows when user has 4 watched items (one below threshold)", async () => {
+    await setWatchedCount(4);
+
+    const [{ count: before }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(contributionsTable)
+      .where(eq(contributionsTable.userId, MOBILE_USER_ID));
+
+    const res = await supertest(app)
+      .post(`/api/titles/${titleId}/safety/contributions`)
+      .send({ category: "Violence", severity: "mild" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/5/);
+
+    const [{ count: after }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(contributionsTable)
+      .where(eq(contributionsTable.userId, MOBILE_USER_ID));
+    expect(after).toBe(before);
+  });
+
+  it("two-connection concurrent test: DELETE blocks while FOR SHARE is held, contribution commits before history is wiped", async () => {
+    // This test exercises the exact interleaving the FOR SHARE protocol prevents.
+    //
+    // Timeline being tested:
+    //   A: BEGIN + SELECT FOR SHARE on watched rows → acquires shared row locks
+    //   B: DELETE watched rows                       → blocks (needs exclusive lock)
+    //   A: COUNT (5 rows still locked), INSERT, COMMIT → releases locks
+    //   B: DELETE finally runs (after A committed)
+    //
+    // The contribution commits with valid eligibility (5 items at lock time),
+    // and B's delete only runs afterwards — no silent ineligible insert.
+    //
+    // Compare with the old two-statement approach (no locking):
+    //   A: COUNT 5 items (passes gate)
+    //   B: DELETE committed here — A's next statement will see 0 items
+    //   A: INSERT runs with stale eligibility → silent ineligible contribution
+
+    const { pool } = await import("@workspace/db");
+
+    // Setup: user has exactly 5 watched items (at the threshold).
+    await setWatchedCount(5);
+
+    const clientA = await pool.connect();
+    const clientB = await pool.connect();
+    try {
+      // A: begin transaction and lock all watched rows with FOR SHARE.
+      // Any concurrent DELETE on these rows must wait for A to commit.
+      await clientA.query("BEGIN");
+      await clientA.query(
+        "SELECT id FROM watched_titles WHERE user_id = $1 FOR SHARE",
+        [MOBILE_USER_ID],
+      );
+
+      // B: attempt to delete the same rows in a background Promise.
+      // DELETE needs an exclusive row lock — it must block while A holds FOR SHARE.
+      let bDone = false;
+      const bTask = clientB
+        .query("DELETE FROM watched_titles WHERE user_id = $1", [MOBILE_USER_ID])
+        .then(() => {
+          bDone = true;
+        });
+
+      // Give B enough time to reach the lock wait (a delete on an unlocked table
+      // completes in <1 ms; if it's still pending after 100 ms it is blocked).
+      await new Promise((r) => setTimeout(r, 100));
+      expect(bDone).toBe(false); // B is blocked by A's FOR SHARE lock
+
+      // A: count within the same transaction — locked rows cannot be deleted yet.
+      const {
+        rows: [{ total }],
+      } = await clientA.query<{ total: number }>(
+        `SELECT (
+           (SELECT COUNT(*)::int FROM watched_episodes WHERE user_id = $1) +
+           (SELECT COUNT(*)::int FROM watched_titles     WHERE user_id = $1)
+         ) AS total`,
+        [MOBILE_USER_ID],
+      );
+      expect(total).toBeGreaterThanOrEqual(5); // CONTRIBUTION_THRESHOLD
+
+      // A: insert the contribution while still holding the lock.
+      const {
+        rows: [contrib],
+      } = await clientA.query<{ id: number; status: string }>(
+        `INSERT INTO contributions (title_id, user_id, category, severity, status)
+         VALUES ($1, $2, $3, $4, 'pending') RETURNING id, status`,
+        [titleId, MOBILE_USER_ID, "Violence", "mild"],
+      );
+      raceContributionIds.push(contrib.id);
+
+      // A: commit — releases FOR SHARE locks, letting B's DELETE proceed.
+      await clientA.query("COMMIT");
+
+      // B's DELETE can now acquire the exclusive lock and complete.
+      await bTask;
+      expect(bDone).toBe(true);
+      raceWatchedTitleIds.length = 0; // B wiped the rows; prevent double-delete in afterEach
+
+      // The contribution was committed before the delete ran — status is pending.
+      expect(contrib.status).toBe("pending");
+
+      // Confirm the row is durable in the DB.
+      const {
+        rows: [dbRow],
+      } = await clientA.query<{ id: number; status: string }>(
+        "SELECT id, status FROM contributions WHERE id = $1",
+        [contrib.id],
+      );
+      expect(dbRow).toBeDefined();
+      expect(dbRow.status).toBe("pending");
+    } finally {
+      // Safety rollback in case A never committed (e.g. test assertion failed).
+      await clientA.query("ROLLBACK").catch(() => {});
+      clientA.release();
+      clientB.release();
+    }
   });
 });

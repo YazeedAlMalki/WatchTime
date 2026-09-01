@@ -22,6 +22,7 @@
     "@stardazed/streams-text-encoding": "^1.0.2",
     "@tanstack/react-query": "catalog:",
     "@testing-library/react-native": "^14.0.1",
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.1.10",
     "@types/react-dom": "~19.1.7",
     "@ungap/structured-clone": "^1.3.0",
