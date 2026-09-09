@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useDebounce } from "@/hooks/use-debounce";
+import { trackEvent } from "@/lib/analytics";
 
 export default function BrowsePage() {
   const [search, setSearch] = useState("");
@@ -19,12 +20,22 @@ export default function BrowsePage() {
   const [type, setType] = useState<ListTitlesType | "all">("all");
   const [sort, setSort] = useState<ListTitlesSort>("popular");
 
-  const { data: titles, isLoading } = useListTitles({
+  const { data: titles, isLoading, isSuccess } = useListTitles({
     q: debouncedSearch || undefined,
     type: type !== "all" ? type : undefined,
     sort,
     limit: 40
   });
+
+  useEffect(() => {
+    if (!isSuccess || !debouncedSearch.trim()) return;
+    trackEvent("catalog_search", {
+      query_length: debouncedSearch.trim().length,
+      result_count: titles?.length ?? 0,
+      title_type: type,
+      sort,
+    });
+  }, [debouncedSearch, isSuccess, sort, titles?.length, type]);
 
   return (
     <div className="container mx-auto px-4 sm:px-8 py-8 flex flex-col gap-8 min-h-screen">

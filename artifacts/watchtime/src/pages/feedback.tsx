@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { ChartBar, Send } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { trackEvent } from "@/lib/analytics";
 
 const feedbackSchema = z.object({
   category: z.enum(["bug", "feature", "general"]),
@@ -35,6 +36,10 @@ export default function FeedbackPage() {
       { data: values },
       {
         onSuccess: () => {
+          trackEvent("feedback_submitted", {
+            category: values.category,
+            has_page_context: Boolean(values.page),
+          });
           toast({
             title: "Feedback sent",
             description: "Thank you for helping us improve WatchTime!",

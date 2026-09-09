@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams, Link } from "wouter";
 import { 
   useGetTitle, 
@@ -47,6 +47,7 @@ import {
 import { Show } from "@clerk/react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { trackEvent } from "@/lib/analytics";
 
 const SEVERITY_OPTIONS = ["none", "mild", "moderate", "severe"] as const;
 const REPORT_REASONS = [
@@ -94,6 +95,16 @@ export default function TitleDetailPage() {
   const createContribution = useCreateSafetyContribution();
   const createReport = useCreateSafetyReport();
 
+  useEffect(() => {
+    if (!title) return;
+    trackEvent("title_viewed", {
+      title_id: title.id,
+      title_type: title.type,
+      year: title.year ?? 0,
+      has_seasons: Boolean(title.seasons?.length),
+    });
+  }, [title?.id]);
+
   const invalidateTitle = () => queryClient.invalidateQueries({ queryKey: ["/api/titles", titleId] });
   const invalidateSeason = (s: number) => queryClient.invalidateQueries({ queryKey: getGetSeasonQueryKey(titleId, s) });
   const invalidateSafety = () => queryClient.invalidateQueries({ queryKey: getGetTitleSafetyQueryKey({ titleId }) });
@@ -107,13 +118,23 @@ export default function TitleDetailPage() {
   const isMovie = title.type === "movie";
 
   const handleWatchlist = () => {
-    if (title.inWatchlist) removeWatchlist.mutate({ id: titleId }, { onSuccess: invalidateTitle });
-    else addWatchlist.mutate({ id: titleId }, { onSuccess: invalidateTitle });
+    const action = title.inWatchlist ? "remove" : "add";
+    const onSuccess = () => {
+      invalidateTitle();
+      trackEvent("watchlist_changed", { action, title_id: titleId, title_type: title.type });
+    };
+    if (title.inWatchlist) removeWatchlist.mutate({ id: titleId }, { onSuccess });
+    else addWatchlist.mutate({ id: titleId }, { onSuccess });
   };
 
   const handleWatched = () => {
-    if (title.watched) unmarkWatched.mutate({ id: titleId }, { onSuccess: invalidateTitle });
-    else markWatched.mutate({ id: titleId }, { onSuccess: invalidateTitle });
+    const action = title.watched ? "unmark" : "mark";
+    const onSuccess = () => {
+      invalidateTitle();
+      trackEvent("title_watch_changed", { action, title_id: titleId, title_type: title.type });
+    };
+    if (title.watched) unmarkWatched.mutate({ id: titleId }, { onSuccess });
+    else markWatched.mutate({ id: titleId }, { onSuccess });
   };
 
   const handleContribute = () => {
@@ -129,6 +150,13 @@ export default function TitleDetailPage() {
       },
     }, {
       onSuccess: () => {
+        trackEvent("safety_contribution_submitted", {
+          title_id: titleId,
+          category: contribCategory,
+          severity: contribSeverity,
+          has_episode_scope: Boolean(contribEpisode),
+          has_season_scope: Boolean(contribSeason),
+        });
         setShowContribute(false);
         setContribCategory(""); setContribSeverity(""); setContribDescription(""); setContribSeason(""); setContribEpisode("");
         invalidateSafety();
@@ -156,6 +184,11 @@ export default function TitleDetailPage() {
       },
     }, {
       onSuccess: () => {
+        trackEvent("safety_report_submitted", {
+          title_id: titleId,
+          reason: reportReason,
+          has_source: Boolean(reportSource),
+        });
         setShowReport(false);
         setReportReason(""); setReportSource(""); setReportDetails("");
         toast({ title: "Report submitted", description: "The admin team will review your report shortly." });
@@ -443,8 +476,18 @@ export default function TitleDetailPage() {
                                 <Checkbox
                                   checked={ep.watched || false}
                                   onCheckedChange={(checked) => {
-                                    if (checked) markEpWatched.mutate({ episodeId: ep.id, data: { includePrevious: false } }, { onSuccess: () => invalidateSeason(season.seasonNumber) });
-                                    else unmarkEpWatched.mutate({ episodeId: ep.id }, { onSuccess: () => invalidateSeason(season.seasonNumber) });
+                                    const action = checked ? "mark" : "unmark";
+                                    const onSuccess = () => {
+                                      invalidateSeason(season.seasonNumber);
+                                      trackEvent("episode_watch_changed", {
+                                        action,
+                                        title_id: titleId,
+                                        season_number: season.seasonNumber,
+                                        episode_number: ep.episodeNumber,
+                                      });
+                                    };
+                                    if (checked) markEpWatched.mutate({ episodeId: ep.id, data: { includePrevious: false } }, { onSuccess });
+                                    else unmarkEpWatched.mutate({ episodeId: ep.id }, { onSuccess });
                                   }}
                                   className="w-5 h-5 rounded-full border-muted-foreground data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                                 />
