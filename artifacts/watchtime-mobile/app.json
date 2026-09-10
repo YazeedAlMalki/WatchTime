@@ -7,12 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "watchtime-mobile",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/images/splash-logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0C0C12"
-    },
     "ios": {
       "supportsTablet": false
     },

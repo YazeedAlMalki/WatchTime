@@ -67,7 +67,19 @@ function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
           }}
           style={[
             styles.tabPill,
-            active === key && { backgroundColor: c.background, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
+            active === key && {
+              backgroundColor: c.background,
+              ...Platform.select({
+                web: { boxShadow: '0 1px 4px rgba(0, 0, 0, 0.12)' },
+                default: {
+                  shadowColor: '#000',
+                  shadowOpacity: 0.12,
+                  shadowRadius: 4,
+                  shadowOffset: { width: 0, height: 1 },
+                  elevation: 2,
+                },
+              }),
+            },
           ]}
         >
           <Text
