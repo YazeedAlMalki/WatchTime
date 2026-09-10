@@ -4,3 +4,4 @@
 - [Expo cross-origin API](expo-cross-origin-api.md) — Expo preview runs on a separate expo.* origin; api-server must allowlist it in CORS or all mobile fetches fail.
 - [Real catalog sources](catalog-sources.md) — real titles come from TVMaze (no key) + Wikipedia; TMDB key still declined, don't re-ask; safety data must stay provider_unavailable, never fabricated.
 - [Expo 57 config compatibility](expo-57-config.md) — keep splash settings in the plugin; SDK 57 rejects the legacy top-level splash field.
+- [Jest Expo tab-layout tests](jest-expo-tab-layout-tests.md) — use async renders and mock capture arrays for repeated config-only tab entries.
