@@ -14,6 +14,7 @@ const mockQueryEnabled = {
   shows: [] as boolean[],
   watchlist: [] as boolean[],
   recommendations: [] as boolean[],
+  trending: [] as boolean[],
 };
 
 jest.mock('@clerk/expo', () => {
@@ -25,6 +26,7 @@ jest.mock('@clerk/expo', () => {
     useAuth: (...args: any[]) => mockUseAuth(...args),
   };
 });
+
 
 jest.mock('@clerk/expo/token-cache', () => ({
   tokenCache: {},
@@ -105,14 +107,17 @@ jest.mock('@workspace/api-client-react', () => ({
     mockQueryEnabled.recommendations.push(options?.query?.enabled);
     return { data: [], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false, refetch: jest.fn() };
   },
-  useGetTrendingTitles: () => ({
-    data: [],
-    dataUpdatedAt: 0,
-    isError: false,
-    isLoading: false,
-    isRefetching: false,
-    refetch: jest.fn(),
-  }),
+  useGetTrendingTitles: (_params: any, options: any) => {
+    mockQueryEnabled.trending.push(options?.query?.enabled);
+    return {
+      data: [],
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+      refetch: jest.fn(),
+    };
+  },
   useMarkEpisodeWatched: () => ({ isPending: false, mutate: jest.fn() }),
   getGetMyShowsQueryKey: () => ['/api/me/shows'],
   getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
@@ -191,6 +196,7 @@ describe('mobile startup contracts', () => {
     mockQueryEnabled.shows.length = 0;
     mockQueryEnabled.watchlist.length = 0;
     mockQueryEnabled.recommendations.length = 0;
+    mockQueryEnabled.trending.length = 0;
     jest.clearAllMocks();
   });
 
@@ -236,6 +242,30 @@ describe('mobile startup contracts', () => {
       expect(mockQueryEnabled.shows.at(-1)).toBe(true);
       expect(mockQueryEnabled.watchlist.at(-1)).toBe(true);
       expect(mockQueryEnabled.recommendations.at(-1)).toBe(true);
+    });
+  });
+
+  it('keeps signed-out trending disabled until the post-first-frame gate opens', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
+
+    await render(<HomeScreen />);
+
+    expect(InteractionManager.runAfterInteractions).toHaveBeenCalledTimes(1);
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
+    await act(async () => {
+      pendingInteraction?.();
+    });
+
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
+    await act(async () => {
+      pendingFrame?.(0);
+    });
+
+    await waitFor(() => {
+      expect(mockQueryEnabled.trending.at(-1)).toBe(true);
     });
   });
 });
