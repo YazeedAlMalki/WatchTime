@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   FlatList,
+  InteractionManager,
   Platform,
   Pressable,
   RefreshControl,
@@ -9,6 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useEffect, useState } from 'react';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -30,6 +32,7 @@ import {
 import { EmptyState, ErrorState, Loading, PosterCard, SectionHeader } from '@/components/ui';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
+import { markStartup } from '@/lib/startup-metrics';
 
 function UpNextCard({ show }: { show: TrackedShow }) {
   const c = useColors();
@@ -131,12 +134,36 @@ function UpNextCard({ show }: { show: TrackedShow }) {
   );
 }
 
-function SignedInHome() {
+function SignedInHome({ startupReady }: { startupReady: boolean }) {
   const c = useColors();
-  const shows = useGetMyShows();
-  const watchlist = useGetMyWatchlist();
-  const recs = useGetMyRecommendations();
+  const shows = useGetMyShows({ query: { enabled: startupReady } as any });
+  const watchlist = useGetMyWatchlist({ query: { enabled: startupReady } as any });
+  const recs = useGetMyRecommendations({ query: { enabled: startupReady } as any });
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (startupReady) {
+      markStartup('signed-in-feed-start');
+    }
+  }, [startupReady]);
+
+  useEffect(() => {
+    if (shows.dataUpdatedAt) {
+      markStartup('my-shows-loaded');
+    }
+  }, [shows.dataUpdatedAt]);
+
+  useEffect(() => {
+    if (watchlist.dataUpdatedAt) {
+      markStartup('watchlist-loaded');
+    }
+  }, [watchlist.dataUpdatedAt]);
+
+  useEffect(() => {
+    if (recs.dataUpdatedAt) {
+      markStartup('recommendations-loaded');
+    }
+  }, [recs.dataUpdatedAt]);
 
   const refreshing = shows.isRefetching || watchlist.isRefetching;
   const onRefresh = () => {
@@ -145,7 +172,7 @@ function SignedInHome() {
     recs.refetch();
   };
 
-  if (shows.isLoading && watchlist.isLoading) return <Loading />;
+  if (!startupReady || (shows.isLoading && watchlist.isLoading)) return <Loading />;
   if (shows.isError && watchlist.isError) {
     return <ErrorState onRetry={onRefresh} />;
   }
@@ -212,11 +239,28 @@ function SignedInHome() {
   );
 }
 
-function SignedOutHome() {
+function SignedOutHome({ startupReady }: { startupReady: boolean }) {
   const c = useColors();
   const router = useRouter();
-  const trending = useGetTrendingTitles({ limit: 12 });
+  const trending = useGetTrendingTitles(
+    { limit: 12 },
+    { query: { enabled: startupReady } as any },
+  );
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (startupReady) {
+      markStartup('signed-out-feed-start');
+    }
+  }, [startupReady]);
+
+  useEffect(() => {
+    if (trending.dataUpdatedAt) {
+      markStartup('trending-loaded');
+    }
+  }, [trending.dataUpdatedAt]);
+
+  if (!startupReady) return <Loading />;
 
   return (
     <ScrollView
@@ -273,8 +317,31 @@ function SignedOutHome() {
 }
 
 export default function HomeScreen() {
-  const { isSignedIn } = useAuth();
-  return isSignedIn ? <SignedInHome /> : <SignedOutHome />;
+  const { isLoaded, isSignedIn } = useAuth();
+  const [startupReady, setStartupReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const interaction = InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => {
+        if (!cancelled) {
+          setStartupReady(true);
+        }
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      interaction.cancel();
+    };
+  }, []);
+
+  if (!isLoaded) return <Loading />;
+  return isSignedIn ? (
+    <SignedInHome startupReady={startupReady} />
+  ) : (
+    <SignedOutHome startupReady={startupReady} />
+  );
 }
 
 const styles = StyleSheet.create({

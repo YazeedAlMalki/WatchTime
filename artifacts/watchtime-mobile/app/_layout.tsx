@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { ClerkProvider, ClerkLoaded, useAuth } from '@clerk/expo';
+import { ClerkProvider, useAuth } from '@clerk/expo';
 import { tokenCache } from '@clerk/expo/token-cache';
 import { setBaseUrl, setAuthTokenGetter } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -18,6 +18,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import colors from '@/constants/colors';
+import { markStartup } from '@/lib/startup-metrics';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -32,11 +33,27 @@ const queryClient = new QueryClient();
 
 /** Attaches the Clerk bearer token to every generated API client request. */
 function AuthTokenBridge() {
-  const { getToken } = useAuth();
+  const { getToken, isLoaded } = useAuth();
   useEffect(() => {
     setAuthTokenGetter(() => getToken());
     return () => setAuthTokenGetter(null);
   }, [getToken]);
+
+  useEffect(() => {
+    if (isLoaded) {
+      markStartup('auth-ready');
+    }
+  }, [isLoaded]);
+
+  return null;
+}
+
+function StartupFrameMarker() {
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => markStartup('first-frame'));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   return null;
 }
 
@@ -67,6 +84,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (fontsLoaded || fontError) {
+      markStartup(fontError ? 'font-error' : 'fonts-ready');
       SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError]);
@@ -79,21 +97,20 @@ export default function RootLayout() {
       tokenCache={tokenCache}
       proxyUrl={proxyUrl}
     >
-      <ClerkLoaded>
-        <SafeAreaProvider>
-          <ErrorBoundary>
-            <QueryClientProvider client={queryClient}>
-              <AuthTokenBridge />
-              <GestureHandlerRootView>
-                <KeyboardProvider>
-                  <StatusBar style="light" />
-                  <RootLayoutNav />
-                </KeyboardProvider>
-              </GestureHandlerRootView>
-            </QueryClientProvider>
-          </ErrorBoundary>
-        </SafeAreaProvider>
-      </ClerkLoaded>
+      <SafeAreaProvider>
+        <ErrorBoundary>
+          <QueryClientProvider client={queryClient}>
+            <AuthTokenBridge />
+            <StartupFrameMarker />
+            <GestureHandlerRootView>
+              <KeyboardProvider>
+                <StatusBar style="light" />
+                <RootLayoutNav />
+              </KeyboardProvider>
+            </GestureHandlerRootView>
+          </QueryClientProvider>
+        </ErrorBoundary>
+      </SafeAreaProvider>
     </ClerkProvider>
   );
 }
