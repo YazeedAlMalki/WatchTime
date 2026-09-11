@@ -1,0 +1,229 @@
+import React from 'react';
+import { act, cleanup, render, waitFor } from '@testing-library/react-native';
+import { InteractionManager } from 'react-native';
+
+const mockUseAuth = jest.fn();
+const mockUseFonts = jest.fn();
+const mockRequestAnimationFrame = jest.fn();
+const mockCancelAnimationFrame = jest.fn();
+const mockMarkStartup = jest.fn();
+const mockSetBaseUrl = jest.fn();
+const mockSetAuthTokenGetter = jest.fn();
+const mockQueryEnabled = {
+  shows: [] as boolean[],
+  watchlist: [] as boolean[],
+  recommendations: [] as boolean[],
+};
+
+jest.mock('@clerk/expo', () => {
+  const React = require('react');
+
+  return {
+    ClerkProvider: ({ children }: any) => children,
+    ClerkLoaded: () => null,
+    useAuth: (...args: any[]) => mockUseAuth(...args),
+  };
+});
+
+jest.mock('@clerk/expo/token-cache', () => ({
+  tokenCache: {},
+}));
+
+jest.mock('@expo-google-fonts/inter', () => ({
+  Inter_400Regular: {},
+  Inter_500Medium: {},
+  Inter_600SemiBold: {},
+  Inter_700Bold: {},
+  useFonts: (...args: any[]) => mockUseFonts(...args),
+}));
+
+jest.mock('expo-splash-screen', () => ({
+  hideAsync: jest.fn(),
+  preventAutoHideAsync: jest.fn(),
+}));
+
+jest.mock('expo-router', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+
+  const Stack: any = ({ children }: any) => (
+    <View testID="root-navigation">{children}</View>
+  );
+  Stack.Screen = () => null;
+
+  return {
+    Stack,
+    useRouter: () => ({ push: jest.fn() }),
+  };
+});
+
+jest.mock('expo-status-bar', () => ({
+  StatusBar: () => null,
+}));
+
+jest.mock('react-native-gesture-handler', () => {
+  const React = require('react');
+  return {
+    GestureHandlerRootView: ({ children }: any) => children,
+  };
+});
+
+jest.mock('react-native-keyboard-controller', () => ({
+  KeyboardProvider: ({ children }: any) => children,
+}));
+
+jest.mock('react-native-safe-area-context', () => ({
+  SafeAreaProvider: ({ children }: any) => children,
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
+jest.mock('@tanstack/react-query', () => {
+  const React = require('react');
+
+  class QueryClient {}
+
+  return {
+    QueryClient,
+    QueryClientProvider: ({ children }: any) => children,
+    useQueryClient: () => ({}),
+  };
+});
+
+jest.mock('@workspace/api-client-react', () => ({
+  setBaseUrl: (...args: any[]) => mockSetBaseUrl(...args),
+  setAuthTokenGetter: (...args: any[]) => mockSetAuthTokenGetter(...args),
+  useGetMyShows: (options: any) => {
+    mockQueryEnabled.shows.push(options?.query?.enabled);
+    return { data: [], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false, refetch: jest.fn() };
+  },
+  useGetMyWatchlist: (options: any) => {
+    mockQueryEnabled.watchlist.push(options?.query?.enabled);
+    return { data: [], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false, refetch: jest.fn() };
+  },
+  useGetMyRecommendations: (options: any) => {
+    mockQueryEnabled.recommendations.push(options?.query?.enabled);
+    return { data: [], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false, refetch: jest.fn() };
+  },
+  useGetTrendingTitles: () => ({
+    data: [],
+    dataUpdatedAt: 0,
+    isError: false,
+    isLoading: false,
+    isRefetching: false,
+    refetch: jest.fn(),
+  }),
+  useMarkEpisodeWatched: () => ({ isPending: false, mutate: jest.fn() }),
+  getGetMyShowsQueryKey: () => ['/api/me/shows'],
+  getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
+  getGetTitleQueryKey: (id: number) => [`/api/titles/${id}`],
+}));
+
+jest.mock('@/components/ErrorBoundary', () => ({
+  ErrorBoundary: ({ children }: any) => children,
+}));
+
+jest.mock('@/components/ui', () => {
+  const React = require('react');
+  const { Text, View } = require('react-native');
+
+  return {
+    EmptyState: () => <View />,
+    ErrorState: () => <View />,
+    Loading: () => <View testID="loading" />,
+    PosterCard: () => <View />,
+    SectionHeader: ({ title }: any) => <Text>{title}</Text>,
+  };
+});
+
+jest.mock('@/hooks/useColors', () => ({
+  useColors: () => ({
+    background: '#ffffff',
+    border: '#dddddd',
+    card: '#f5f5f5',
+    foreground: '#111111',
+    muted: '#eeeeee',
+    mutedForeground: '#777777',
+    primary: '#6633cc',
+    primaryForeground: '#ffffff',
+  }),
+}));
+
+jest.mock('@/constants/colors', () => ({
+  __esModule: true,
+  default: { dark: { background: '#000000' }, radius: 8 },
+}));
+
+jest.mock('@/lib/startup-metrics', () => ({
+  markStartup: (...args: any[]) => mockMarkStartup(...args),
+}));
+
+import RootLayout from '../app/_layout';
+import HomeScreen from '../app/(tabs)/index';
+
+describe('mobile startup contracts', () => {
+  let pendingInteraction: (() => void) | undefined;
+  let pendingFrame: ((time: number) => void) | undefined;
+
+  beforeEach(() => {
+    mockUseFonts.mockReturnValue([true, null]);
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
+    jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation((task?: any) => {
+      pendingInteraction = typeof task === 'function' ? task : undefined;
+      return { cancel: jest.fn() } as any;
+    });
+    mockRequestAnimationFrame.mockImplementation((callback: (time: number) => void) => {
+      pendingFrame = callback;
+      return 1;
+    });
+
+    Object.assign(globalThis, {
+      requestAnimationFrame: mockRequestAnimationFrame,
+      cancelAnimationFrame: mockCancelAnimationFrame,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    jest.restoreAllMocks();
+    pendingInteraction = undefined;
+    pendingFrame = undefined;
+    mockQueryEnabled.shows.length = 0;
+    mockQueryEnabled.watchlist.length = 0;
+    mockQueryEnabled.recommendations.length = 0;
+    jest.clearAllMocks();
+  });
+
+  it('renders root navigation without waiting for ClerkLoaded', async () => {
+    const { getByTestId } = await render(<RootLayout />);
+
+    expect(getByTestId('root-navigation')).toBeTruthy();
+  });
+
+  it('keeps signed-in home queries disabled until the post-first-frame gate opens', async () => {
+    await render(<HomeScreen />);
+
+    expect(InteractionManager.runAfterInteractions).toHaveBeenCalledTimes(1);
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
+
+    await act(async () => {
+      pendingInteraction?.();
+    });
+
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
+
+    await act(async () => {
+      pendingFrame?.(0);
+    });
+
+    await waitFor(() => {
+      expect(mockQueryEnabled.shows.at(-1)).toBe(true);
+      expect(mockQueryEnabled.watchlist.at(-1)).toBe(true);
+      expect(mockQueryEnabled.recommendations.at(-1)).toBe(true);
+    });
+  });
+});
