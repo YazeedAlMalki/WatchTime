@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, cleanup, render, waitFor } from '@testing-library/react-native';
 import { InteractionManager } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
 
 const mockUseAuth = jest.fn();
 const mockUseFonts = jest.fn();
@@ -197,6 +198,17 @@ describe('mobile startup contracts', () => {
     const { getByTestId } = await render(<RootLayout />);
 
     expect(getByTestId('root-navigation')).toBeTruthy();
+  });
+
+  it('hides the splash screen and renders root navigation when fonts fail to load', async () => {
+    const fontError = new Error('font loading failed');
+    mockUseFonts.mockReturnValue([false, fontError]);
+
+    const { getByTestId } = await render(<RootLayout />);
+
+    expect(getByTestId('root-navigation')).toBeTruthy();
+    expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('font-error');
   });
 
   it('keeps signed-in home queries disabled until the post-first-frame gate opens', async () => {
