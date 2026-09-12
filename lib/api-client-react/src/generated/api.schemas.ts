@@ -13,6 +13,16 @@ export interface OkResult {
   ok: boolean;
 }
 
+export interface AdminContentRefreshBatchInput {
+  /**
+     * @minimum 1
+     * @maximum 25
+     */
+  limit?: number;
+  /** @minimum 0 */
+  offset?: number;
+}
+
 export interface UserProfile {
   id: string;
   email: string;
@@ -649,6 +659,16 @@ export const ListAdminFeedbackCategory = {
 
 export type SearchAdminContentParams = {
 q?: string;
+};
+
+export type RefreshAdminContentBatch200ResultsItem = { [key: string]: unknown };
+
+export type RefreshAdminContentBatch200 = {
+  ok: boolean;
+  offset: number;
+  limit: number;
+  processed: number;
+  results: RefreshAdminContentBatch200ResultsItem[];
 };
 
 export type GetAdminAuditLogParams = {

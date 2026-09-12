@@ -20,6 +20,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AdminContentRefreshBatchInput,
   AdminDashboard,
   AnalyticsSummary,
   AuditLogPage,
@@ -42,6 +43,7 @@ import type {
   PublicStats,
   RecentActivityItem,
   RecommendationGroup,
+  RefreshAdminContentBatch200,
   ReportModeration,
   SafetyContribution,
   SafetyContributionInput,
@@ -2604,6 +2606,77 @@ export const useRefreshAdminContent = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getRefreshAdminContentMutationOptions(options));
+    }
+
+export const getRefreshAdminContentBatchUrl = () => {
+
+
+
+
+  return `/api/admin/content/refresh-batch`
+}
+
+/**
+ * @summary Refresh a bounded batch of catalog safety data
+ */
+export const refreshAdminContentBatch = async (adminContentRefreshBatchInput?: AdminContentRefreshBatchInput, options?: Parameters<typeof customFetch>[1]): Promise<RefreshAdminContentBatch200> => {
+
+  return customFetch<RefreshAdminContentBatch200>(getRefreshAdminContentBatchUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminContentRefreshBatchInput)
+  }
+);}
+
+
+
+
+
+export const getRefreshAdminContentBatchMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdminContentBatch>>, TError,{data?: BodyType<AdminContentRefreshBatchInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshAdminContentBatch>>, TError,{data?: BodyType<AdminContentRefreshBatchInput>}, TContext> => {
+
+const mutationKey = ['refreshAdminContentBatch'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshAdminContentBatch>>, {data?: BodyType<AdminContentRefreshBatchInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  refreshAdminContentBatch(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshAdminContentBatchMutationResult = NonNullable<Awaited<ReturnType<typeof refreshAdminContentBatch>>>
+    export type RefreshAdminContentBatchMutationBody = BodyType<AdminContentRefreshBatchInput> | undefined
+    export type RefreshAdminContentBatchMutationError = ErrorType<void>
+
+    /**
+ * @summary Refresh a bounded batch of catalog safety data
+ */
+export const useRefreshAdminContentBatch = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdminContentBatch>>, TError,{data?: BodyType<AdminContentRefreshBatchInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof refreshAdminContentBatch>>,
+        TError,
+        {data?: BodyType<AdminContentRefreshBatchInput>},
+        TContext
+      > => {
+      return useMutation(getRefreshAdminContentBatchMutationOptions(options));
     }
 
 export const getGetAdminAnalyticsUrl = () => {

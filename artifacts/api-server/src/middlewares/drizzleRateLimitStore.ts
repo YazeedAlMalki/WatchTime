@@ -12,7 +12,7 @@ import { sql } from "drizzle-orm";
 
 export class DrizzleRateLimitStore implements Store {
   private windowMs = 60_000;
-  private readonly prefix: string;
+  readonly prefix: string;
 
   constructor(prefix: string) {
     this.prefix = prefix;

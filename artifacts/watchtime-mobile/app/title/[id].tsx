@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Alert,
   FlatList,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -501,6 +502,17 @@ function SafetySourceCard({ source }: { source: SafetySource }) {
           ) : null}
         </View>
       ))}
+      {source.url ? (
+        <Pressable
+          accessibilityRole="link"
+          onPress={() => Linking.openURL(source.url!)}
+          style={{ marginTop: 12 }}
+        >
+          <Text style={{ color: c.primary, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
+            View source
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

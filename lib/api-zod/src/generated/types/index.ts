@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './adminContentRefreshBatchInput';
 export * from './adminDashboard';
 export * from './analyticsPoint';
 export * from './analyticsSummary';
@@ -51,6 +52,8 @@ export * from './publicStats';
 export * from './recentActivityItem';
 export * from './recentActivityItemKind';
 export * from './recommendationGroup';
+export * from './refreshAdminContentBatch200';
+export * from './refreshAdminContentBatch200ResultsItem';
 export * from './reportModeration';
 export * from './reportModerationStatus';
 export * from './safetyCategorySummary';

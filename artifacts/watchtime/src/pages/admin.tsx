@@ -561,9 +561,17 @@ function ContentTab() {
 
   const doRefresh = (id: number, name: string) =>
     refresh.mutate({ id }, {
-      onSuccess: () => {
+      onSuccess: (result) => {
         qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
-        toast({ title: `Refreshed ${name}` });
+        if (result.ok) {
+          toast({ title: `Refreshed ${name}` });
+        } else {
+          toast({
+            title: "Refresh did not complete",
+            description: (result as any).error ?? "The provider data was left unchanged.",
+            variant: "destructive",
+          });
+        }
       },
       onError: () => toast({ title: "Refresh failed", variant: "destructive" }),
     });

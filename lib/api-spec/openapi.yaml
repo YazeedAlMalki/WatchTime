@@ -666,6 +666,37 @@ paths:
                 $ref: "#/components/schemas/OkResult"
         "403":
           description: Forbidden
+  /admin/content/refresh-batch:
+    post:
+      operationId: refreshAdminContentBatch
+      tags: [admin]
+      summary: Refresh a bounded batch of catalog safety data
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminContentRefreshBatchInput"
+      responses:
+        "200":
+          description: Per-title refresh outcomes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, offset, limit, processed, results]
+                properties:
+                  ok: { type: boolean }
+                  offset: { type: integer }
+                  limit: { type: integer }
+                  processed: { type: integer }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "403":
+          description: Forbidden
   /admin/analytics:
     get:
       operationId: getAdminAnalytics
@@ -728,6 +759,11 @@ components:
       properties:
         ok: { type: boolean }
       required: [ok]
+    AdminContentRefreshBatchInput:
+      type: object
+      properties:
+        limit: { type: integer, minimum: 1, maximum: 25, default: 10 }
+        offset: { type: integer, minimum: 0, default: 0 }
     UserProfile:
       type: object
       required: [id, email, isAdmin, canContribute, showsTracked, episodesWatched, moviesWatched]

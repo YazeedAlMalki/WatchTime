@@ -792,6 +792,31 @@ export const RefreshAdminContentResponse = zod.object({
 
 
 /**
+ * @summary Refresh a bounded batch of catalog safety data
+ */
+export const refreshAdminContentBatchBodyLimitDefault = 10;
+export const refreshAdminContentBatchBodyLimitMax = 25;
+
+export const refreshAdminContentBatchBodyOffsetDefault = 0;
+export const refreshAdminContentBatchBodyOffsetMin = 0;
+
+
+
+export const RefreshAdminContentBatchBody = zod.object({
+  "limit": zod.int().min(1).max(refreshAdminContentBatchBodyLimitMax).default(refreshAdminContentBatchBodyLimitDefault),
+  "offset": zod.int().min(refreshAdminContentBatchBodyOffsetMin).default(refreshAdminContentBatchBodyOffsetDefault)
+})
+
+export const RefreshAdminContentBatchResponse = zod.object({
+  "ok": zod.boolean(),
+  "offset": zod.int(),
+  "limit": zod.int(),
+  "processed": zod.int(),
+  "results": zod.array(zod.record(zod.string(), zod.unknown()))
+})
+
+
+/**
  * @summary Internal analytics summary
  */
 export const GetAdminAnalyticsResponse = zod.object({

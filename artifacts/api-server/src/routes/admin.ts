@@ -20,6 +20,10 @@ import {
   UpdateAdminFeedbackBody,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middlewares/auth";
+import {
+  refreshDoesTheDogDieBatch,
+  refreshDoesTheDogDieTitle,
+} from "../lib/does-the-dog-die";
 
 const router: IRouter = Router();
 
@@ -394,11 +398,22 @@ router.get("/content", async (req, res) => {
 
 router.post("/content/:id/refresh", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
-  await db
-    .update(providerMappingsTable)
-    .set({ lastRefreshedAt: new Date() })
-    .where(eq(providerMappingsTable.titleId, id));
-  return res.json({ ok: true });
+  if (!Number.isInteger(id)) return res.status(400).json({ ok: false, error: "Invalid title id" });
+  const result = await refreshDoesTheDogDieTitle(id);
+  return res.json(result);
+});
+
+router.post("/content/refresh-batch", async (req, res) => {
+  const limit = Number.isFinite(Number(req.body?.limit)) ? Number(req.body.limit) : 10;
+  const offset = Number.isFinite(Number(req.body?.offset)) ? Number(req.body.offset) : 0;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
+    return res.status(400).json({ ok: false, error: "limit must be an integer from 1 to 25" });
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    return res.status(400).json({ ok: false, error: "offset must be a non-negative integer" });
+  }
+  const result = await refreshDoesTheDogDieBatch({ limit, offset });
+  return res.json({ ok: true, ...result });
 });
 
 router.get("/analytics", async (_req, res) => {
