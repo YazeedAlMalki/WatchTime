@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { ClerkProvider, SignIn, SignUp, Show, useClerk } from '@clerk/react';
+import { ClerkProvider, Show } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
 import NotFound from '@/pages/not-found';
@@ -26,6 +26,7 @@ import StatsPage from '@/pages/stats';
 import ProfilePage from '@/pages/profile';
 import FeedbackPage from '@/pages/feedback';
 import AdminPage from '@/pages/admin';
+import { DevAuthPage } from '@/components/auth/DevAuthPage';
 
 const queryClient = new QueryClient();
 
@@ -115,7 +116,7 @@ function SignInPage() {
     <div className="flex min-h-[100dvh] flex-col bg-background">
       <Navbar />
       <div className="flex flex-1 items-center justify-center px-4 py-12">
-        <SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} />
+        <DevAuthPage mode="sign-in" />
       </div>
     </div>
   );
@@ -126,7 +127,7 @@ function SignUpPage() {
     <div className="flex min-h-[100dvh] flex-col bg-background">
       <Navbar />
       <div className="flex flex-1 items-center justify-center px-4 py-12">
-        <SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} />
+        <DevAuthPage mode="sign-up" />
       </div>
     </div>
   );

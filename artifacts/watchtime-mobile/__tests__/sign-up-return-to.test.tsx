@@ -1,49 +1,40 @@
 /**
- * Tests: returnTo is preserved through email-verification in the sign-up flow.
+ * Development demo authentication contract.
  *
- * Scenario: a signed-out user taps a greyed-out safety button on a title page,
- * gets sent to sign-in (with returnTo=/title/456), navigates to sign-up (same
- * returnTo preserved), creates an account, then verifies their email.
- * After successful verification handleVerify must call router.replace with the
- * original title path — not the home screen.
- *
- * Note: these are unit-level tests; the component is rendered with all native
- * dependencies mocked so they run in a plain Node/jsdom environment.
+ * The auth screens intentionally do not call Clerk. A valid submission only
+ * navigates locally, while an invalid submission stays on the form.
  */
 
 import React from 'react';
-import { render, fireEvent, act, waitFor, cleanup } from '@testing-library/react-native';
+import { render, fireEvent, act, cleanup } from '@testing-library/react-native';
+import {
+  DEV_DEMO_EMAIL,
+  DEV_DEMO_PASSWORD,
+} from '@workspace/dev-auth';
 
-// ─── Module-level mocks (prefixed "mock*" so Jest hoisting allows them) ───────
-
-// The hooks are jest.fn() so each test can configure fresh return values.
 const mockUseAuth = jest.fn();
-const mockUseSignUp = jest.fn();
 const mockUseLocalSearchParams = jest.fn();
 const mockUseRouter = jest.fn();
-
-// Per-test navigation spy — recreated in beforeEach.
 let mockReplace: jest.Mock;
-
-// ─── Mock declarations ────────────────────────────────────────────────────────
+let mockLinkHref: unknown;
 
 jest.mock('@clerk/expo', () => ({
   useAuth: (...args: any[]) => mockUseAuth(...args),
-  useSignUp: (...args: any[]) => mockUseSignUp(...args),
-  Link: ({ children }: any) => children,
   Redirect: () => null,
 }));
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: (...args: any[]) => mockUseLocalSearchParams(...args),
   useRouter: (...args: any[]) => mockUseRouter(...args),
-  Link: ({ children }: any) => children,
+  Link: ({ children, href }: any) => {
+    mockLinkHref = href;
+    return children;
+  },
   Redirect: () => null,
 }));
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-  SafeAreaProvider: ({ children }: any) => children,
 }));
 
 jest.mock('@expo/vector-icons', () => ({
@@ -71,220 +62,74 @@ jest.mock('@/constants/colors', () => ({
   default: { radius: 8 },
 }));
 
-// ─── Component import (after mocks) ──────────────────────────────────────────
-
+import SignInScreen from '../app/(auth)/sign-in';
 import SignUpScreen from '../app/(auth)/sign-up';
 
-// ─── Test helpers ─────────────────────────────────────────────────────────────
+describe('development demo authentication', () => {
+  beforeEach(() => {
+    mockReplace = jest.fn();
+    mockLinkHref = undefined;
+    mockUseAuth.mockReturnValue({ isSignedIn: false });
+    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
+    mockUseRouter.mockReturnValue({ replace: mockReplace, push: jest.fn() });
+  });
 
-/**
- * Builds a fresh signUp-like object whose `status` is writable.
- * Pass in the jest.fn() spies you want to capture calls on.
- */
-function makeSignUpMock({
-  verifyEmailCode,
-  finalize,
-}: {
-  verifyEmailCode: jest.Mock;
-  finalize: jest.Mock;
-}) {
-  return {
-    status: 'missing_requirements' as string,
-    unverifiedFields: ['email_address'],
-    missingFields: [] as string[],
-    verifications: {
-      verifyEmailCode,
-      sendEmailCode: jest.fn(),
-    },
-    finalize,
-  };
-}
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
-describe('SignUpScreen – returnTo forwarding through email verification', () => {
   afterEach(() => {
     cleanup();
     jest.clearAllMocks();
   });
 
-  it('navigates to the title page when returnTo is set and verification succeeds', async () => {
-    mockReplace = jest.fn();
-    const verifyEmailCode = jest.fn();
-    const finalize = jest.fn();
-    const signUp = makeSignUpMock({ verifyEmailCode, finalize });
-
-    // verifyEmailCode advances signUp to complete
-    verifyEmailCode.mockImplementation(async () => {
-      signUp.status = 'complete';
-    });
-    // finalize calls navigate with a simple decorateUrl echo
-    finalize.mockImplementation(async ({ navigate }: any) => {
-      navigate({ session: {}, decorateUrl: (url: string) => url });
-    });
-
-    mockUseAuth.mockReturnValue({ isSignedIn: false });
-    mockUseSignUp.mockReturnValue({ signUp, errors: { fields: {} }, fetchStatus: 'idle' });
-    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
-    mockUseRouter.mockReturnValue({ replace: mockReplace, push: jest.fn() });
-
-    const { getByTestId } = await render(<SignUpScreen />);
-
-    // Component should be in "verifying" state (unverifiedFields contains email_address)
-    await act(async () => {
-      fireEvent.changeText(getByTestId('code-input'), '123456');
-    });
+  it('shows a validation message and does not navigate for invalid sign-up credentials', async () => {
+    const { getByTestId, queryByTestId } = await render(<SignUpScreen />);
 
     await act(async () => {
-      fireEvent.press(getByTestId('verify-button'));
+      fireEvent.changeText(getByTestId('email-input'), 'wrong@example.com');
+      fireEvent.changeText(getByTestId('password-input'), 'wrong-password');
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('sign-up-button'));
     });
 
-    await waitFor(() => {
-      expect(verifyEmailCode).toHaveBeenCalledWith({ code: '123456' });
-    });
-    await waitFor(() => {
-      expect(finalize).toHaveBeenCalled();
-    });
-
-    // Must navigate to the original title, not the home screen
-    await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith('/title/456');
-    });
-    expect(mockReplace).not.toHaveBeenCalledWith('/');
+    expect(getByTestId('auth-error')).toBeTruthy();
+    expect(queryByTestId('auth-error')?.props.children).toContain('incorrect');
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
-  it('falls back to "/" when returnTo is absent and verification succeeds', async () => {
-    mockReplace = jest.fn();
-    const verifyEmailCode = jest.fn();
-    const finalize = jest.fn();
-    const signUp = makeSignUpMock({ verifyEmailCode, finalize });
+  it('accepts the demo credentials and returns to the requested title', async () => {
+    const { getByTestId } = await render(<SignInScreen />);
 
-    verifyEmailCode.mockImplementation(async () => {
-      signUp.status = 'complete';
+    await act(async () => {
+      fireEvent.changeText(getByTestId('email-input'), DEV_DEMO_EMAIL);
+      fireEvent.changeText(getByTestId('password-input'), DEV_DEMO_PASSWORD);
     });
-    finalize.mockImplementation(async ({ navigate }: any) => {
-      navigate({ session: {}, decorateUrl: (url: string) => url });
+    await act(async () => {
+      fireEvent.press(getByTestId('sign-in-button'));
     });
 
-    mockUseAuth.mockReturnValue({ isSignedIn: false });
-    mockUseSignUp.mockReturnValue({ signUp, errors: { fields: {} }, fetchStatus: 'idle' });
+    expect(mockReplace).toHaveBeenCalledWith('/title/456');
+  });
+
+  it('falls back to home after a valid demo submission without returnTo', async () => {
     mockUseLocalSearchParams.mockReturnValue({ returnTo: undefined });
-    mockUseRouter.mockReturnValue({ replace: mockReplace, push: jest.fn() });
-
     const { getByTestId } = await render(<SignUpScreen />);
 
     await act(async () => {
-      fireEvent.changeText(getByTestId('code-input'), '654321');
+      fireEvent.changeText(getByTestId('email-input'), DEV_DEMO_EMAIL);
+      fireEvent.changeText(getByTestId('password-input'), DEV_DEMO_PASSWORD);
     });
     await act(async () => {
-      fireEvent.press(getByTestId('verify-button'));
+      fireEvent.press(getByTestId('sign-up-button'));
     });
 
-    await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith('/');
-    });
+    expect(mockReplace).toHaveBeenCalledWith('/');
   });
 
-  it('does NOT call finalize or navigate when status stays non-complete', async () => {
-    mockReplace = jest.fn();
-    const verifyEmailCode = jest.fn();
-    const finalize = jest.fn();
-    const signUp = makeSignUpMock({ verifyEmailCode, finalize });
+  it('preserves returnTo when switching from sign-up to sign-in', async () => {
+    await render(<SignUpScreen />);
 
-    // verifyEmailCode resolves but status stays 'missing_requirements'
-    verifyEmailCode.mockResolvedValue(undefined);
-
-    mockUseAuth.mockReturnValue({ isSignedIn: false });
-    mockUseSignUp.mockReturnValue({ signUp, errors: { fields: {} }, fetchStatus: 'idle' });
-    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
-    mockUseRouter.mockReturnValue({ replace: mockReplace, push: jest.fn() });
-
-    const { getByTestId } = await render(<SignUpScreen />);
-
-    await act(async () => {
-      fireEvent.changeText(getByTestId('code-input'), '000000');
+    expect(mockLinkHref).toEqual({
+      pathname: '/(auth)/sign-in',
+      params: { returnTo: '/title/456' },
     });
-    await act(async () => {
-      fireEvent.press(getByTestId('verify-button'));
-    });
-
-    await waitFor(() => {
-      expect(verifyEmailCode).toHaveBeenCalled();
-    });
-
-    expect(finalize).not.toHaveBeenCalled();
-    expect(mockReplace).not.toHaveBeenCalled();
-  });
-
-  it('preserves a different title ID and does not fall back to home', async () => {
-    mockReplace = jest.fn();
-    const verifyEmailCode = jest.fn();
-    const finalize = jest.fn();
-    const signUp = makeSignUpMock({ verifyEmailCode, finalize });
-
-    verifyEmailCode.mockImplementation(async () => {
-      signUp.status = 'complete';
-    });
-    finalize.mockImplementation(async ({ navigate }: any) => {
-      navigate({ session: {}, decorateUrl: (url: string) => url });
-    });
-
-    mockUseAuth.mockReturnValue({ isSignedIn: false });
-    mockUseSignUp.mockReturnValue({ signUp, errors: { fields: {} }, fetchStatus: 'idle' });
-    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/789' });
-    mockUseRouter.mockReturnValue({ replace: mockReplace, push: jest.fn() });
-
-    const { getByTestId } = await render(<SignUpScreen />);
-
-    await act(async () => {
-      fireEvent.changeText(getByTestId('code-input'), '111222');
-    });
-    await act(async () => {
-      fireEvent.press(getByTestId('verify-button'));
-    });
-
-    await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith('/title/789');
-    });
-    expect(mockReplace).not.toHaveBeenCalledWith('/');
-  });
-
-  it('skips navigation when session.currentTask is set (Clerk bot-check gate)', async () => {
-    mockReplace = jest.fn();
-    const verifyEmailCode = jest.fn();
-    const finalize = jest.fn();
-    const signUp = makeSignUpMock({ verifyEmailCode, finalize });
-
-    verifyEmailCode.mockImplementation(async () => {
-      signUp.status = 'complete';
-    });
-    // Clerk sets currentTask when a bot-protection step is pending
-    finalize.mockImplementation(async ({ navigate }: any) => {
-      navigate({
-        session: { currentTask: 'captcha' },
-        decorateUrl: (url: string) => url,
-      });
-    });
-
-    mockUseAuth.mockReturnValue({ isSignedIn: false });
-    mockUseSignUp.mockReturnValue({ signUp, errors: { fields: {} }, fetchStatus: 'idle' });
-    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
-    mockUseRouter.mockReturnValue({ replace: mockReplace, push: jest.fn() });
-
-    const { getByTestId } = await render(<SignUpScreen />);
-
-    await act(async () => {
-      fireEvent.changeText(getByTestId('code-input'), '999888');
-    });
-    await act(async () => {
-      fireEvent.press(getByTestId('verify-button'));
-    });
-
-    await waitFor(() => {
-      expect(finalize).toHaveBeenCalled();
-    });
-
-    // navigate must return early — router.replace must NOT be called
-    expect(mockReplace).not.toHaveBeenCalled();
   });
 });

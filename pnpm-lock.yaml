@@ -556,6 +556,9 @@ importers:
       '@workspace/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
+      '@workspace/dev-auth':
+        specifier: workspace:*
+        version: link:../../lib/dev-auth
       class-variance-authority:
         specifier: 'catalog:'
         version: 0.7.1
@@ -676,6 +679,9 @@ importers:
       '@workspace/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
+      '@workspace/dev-auth':
+        specifier: workspace:*
+        version: link:../../lib/dev-auth
       babel-plugin-react-compiler:
         specifier: ^19.0.0-beta-e993439-20250117
         version: 19.0.0-beta-ebf51a3-20250411
@@ -839,6 +845,8 @@ importers:
       drizzle-kit:
         specifier: ^0.31.10
         version: 0.31.10
+
+  lib/dev-auth: {}
 
   scripts:
     devDependencies:
