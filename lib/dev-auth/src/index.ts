@@ -8,6 +8,16 @@
 export const DEV_DEMO_EMAIL = "demo@watchtime.local";
 export const DEV_DEMO_PASSWORD = "watchtime-demo";
 
+export type AuthEnvironment = "development" | "production";
+
+/**
+ * Keep the local demo contract behind an explicit build-environment boundary.
+ * Production callers must use the real Clerk flow instead.
+ */
+export function isDevelopmentAuthEnabled(environment: AuthEnvironment): boolean {
+  return environment === "development";
+}
+
 export function isValidDevDemoCredentials(
   email: string,
   password: string,

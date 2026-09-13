@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { ClerkProvider, Show } from '@clerk/react';
+import { ClerkProvider, SignIn, SignUp, Show } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
 import NotFound from '@/pages/not-found';
@@ -27,6 +27,7 @@ import ProfilePage from '@/pages/profile';
 import FeedbackPage from '@/pages/feedback';
 import AdminPage from '@/pages/admin';
 import { DevAuthPage } from '@/components/auth/DevAuthPage';
+import { isDevelopmentAuthEnabled } from '@workspace/dev-auth';
 
 const queryClient = new QueryClient();
 
@@ -37,6 +38,9 @@ const clerkPubKey = publishableKeyFromHost(
 
 const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+const isDevelopmentBuild = isDevelopmentAuthEnabled(
+  import.meta.env.PROD ? "production" : "development",
+);
 
 function stripBase(path: string): string {
   return basePath && path.startsWith(basePath)
@@ -116,7 +120,15 @@ function SignInPage() {
     <div className="flex min-h-[100dvh] flex-col bg-background">
       <Navbar />
       <div className="flex flex-1 items-center justify-center px-4 py-12">
-        <DevAuthPage mode="sign-in" />
+        {isDevelopmentBuild ? (
+          <DevAuthPage mode="sign-in" />
+        ) : (
+          <SignIn
+            routing="path"
+            path={`${basePath}/sign-in`}
+            signUpUrl={`${basePath}/sign-up`}
+          />
+        )}
       </div>
     </div>
   );
@@ -127,7 +139,15 @@ function SignUpPage() {
     <div className="flex min-h-[100dvh] flex-col bg-background">
       <Navbar />
       <div className="flex flex-1 items-center justify-center px-4 py-12">
-        <DevAuthPage mode="sign-up" />
+        {isDevelopmentBuild ? (
+          <DevAuthPage mode="sign-up" />
+        ) : (
+          <SignUp
+            routing="path"
+            path={`${basePath}/sign-up`}
+            signInUrl={`${basePath}/sign-in`}
+          />
+        )}
       </div>
     </div>
   );
