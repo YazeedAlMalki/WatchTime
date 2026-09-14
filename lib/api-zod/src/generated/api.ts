@@ -29,7 +29,7 @@ export const GetMeResponse = zod.object({
   "episodesWatched": zod.int(),
   "moviesWatched": zod.int(),
   "timeWatchedMinutes": zod.int().optional(),
-  "preferredRatingRegion": zod.enum(['US', 'GB', 'DE', 'FR'])
+  "preferredRatingRegion": zod.enum(['US', 'GB', 'DE', 'FR', 'AU', 'BR'])
 })
 
 
@@ -37,11 +37,11 @@ export const GetMeResponse = zod.object({
  * @summary Update current user preferences
  */
 export const UpdateMeBody = zod.object({
-  "preferredRatingRegion": zod.enum(['US', 'GB', 'DE', 'FR'])
+  "preferredRatingRegion": zod.enum(['US', 'GB', 'DE', 'FR', 'AU', 'BR'])
 })
 
 export const UpdateMeResponse = zod.object({
-  "preferredRatingRegion": zod.enum(['US', 'GB', 'DE', 'FR'])
+  "preferredRatingRegion": zod.enum(['US', 'GB', 'DE', 'FR', 'AU', 'BR'])
 })
 
 
@@ -241,9 +241,9 @@ export const GetTitleSafetyResponse = zod.object({
   "description": zod.string().nullish()
 }))
 })),
-  "preferredRatingRegion": zod.enum(['US', 'GB', 'DE', 'FR']),
+  "preferredRatingRegion": zod.enum(['US', 'GB', 'DE', 'FR', 'AU', 'BR']),
   "preferredRating": zod.union([zod.object({
-  "region": zod.enum(['US', 'GB', 'DE', 'FR']),
+  "region": zod.enum(['US', 'GB', 'DE', 'FR', 'AU', 'BR']),
   "countryName": zod.string(),
   "system": zod.string(),
   "label": zod.string(),

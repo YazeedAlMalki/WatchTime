@@ -40,6 +40,8 @@ describe("Wikidata SPARQL adapter", () => {
       const query = decodeURIComponent(new URL(String(input)).searchParams.get("query") ?? "");
       expect(query).toContain('VALUES ?imdbId { "tt1234567" }');
       expect(query).toContain("?item wdt:P345 ?imdbId");
+      expect(query).toContain("OPTIONAL { ?item wdt:P3156 ?P3156 . }");
+      expect(query).toContain("OPTIONAL { ?item wdt:P3216 ?P3216 . }");
       return jsonResponse({
         head: { vars: ["item", "imdbId", "P1657", "P1657Label"] },
         results: {
@@ -62,6 +64,41 @@ describe("Wikidata SPARQL adapter", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const init = fetchFn.mock.calls[0]?.[1];
     expect(new Headers(init?.headers).get("Authorization")).toBeNull();
+  });
+
+  it("parses Australia and Brazil classifications as independent sourced values", async () => {
+    const client = createWikidataClient({
+      retries: 0,
+      fetchFn: async () => jsonResponse({
+        results: {
+          bindings: [{
+            item: { value: "https://www.wikidata.org/entity/Q42" },
+            imdbId: { value: "tt1234567" },
+            P3156: { value: "https://www.wikidata.org/entity/Q100" },
+            P3156Label: { value: "M" },
+            P3216: { value: "14" },
+            P3216Label: { value: "14" },
+          }],
+        },
+      }),
+    });
+
+    await expect(client.queryByImdbId("tt1234567")).resolves.toMatchObject({
+      classifications: [
+        {
+          property: "P3156",
+          propertyName: "Australian Classification",
+          label: "M",
+          valueId: "Q100",
+        },
+        {
+          property: "P3216",
+          propertyName: "ClassInd",
+          label: "14",
+          valueId: "14",
+        },
+      ],
+    });
   });
 
   it("rejects a response whose IMDb identity does not exactly match", async () => {

@@ -32,6 +32,8 @@ export const WIKIDATA_CLASSIFICATION_PROPERTIES = {
   P1981: "FSK",
   P2629: "BBFC",
   P2758: "CNC",
+  P3156: "Australian Classification",
+  P3216: "ClassInd",
 } as const;
 
 export const WIKIDATA_CLASSIFICATION_REGIONS = {
@@ -39,6 +41,8 @@ export const WIKIDATA_CLASSIFICATION_REGIONS = {
   P1981: "DE",
   P2629: "GB",
   P2758: "FR",
+  P3156: "AU",
+  P3216: "BR",
 } as const;
 
 type ClassificationProperty = keyof typeof WIKIDATA_CLASSIFICATION_PROPERTIES;
@@ -210,6 +214,8 @@ function buildQuery(imdbId: string): string {
       ?P1981 ?P1981Label
       ?P2629 ?P2629Label
       ?P2758 ?P2758Label
+      ?P3156 ?P3156Label
+      ?P3216 ?P3216Label
     WHERE {
       VALUES ?imdbId { "${imdbId}" }
       ?item wdt:P345 ?imdbId .
@@ -217,6 +223,8 @@ function buildQuery(imdbId: string): string {
       OPTIONAL { ?item wdt:P1981 ?P1981 . }
       OPTIONAL { ?item wdt:P2629 ?P2629 . }
       OPTIONAL { ?item wdt:P2758 ?P2758 . }
+      OPTIONAL { ?item wdt:P3156 ?P3156 . }
+      OPTIONAL { ?item wdt:P3216 ?P3216 . }
       SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
     }
   `;

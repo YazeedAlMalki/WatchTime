@@ -13,7 +13,11 @@ const RATING_REGIONS = [
   { value: "GB", label: "United Kingdom (BBFC)" },
   { value: "DE", label: "Germany (FSK)" },
   { value: "FR", label: "France (CNC)" },
+  { value: "AU", label: "Australia (Australian Classification)" },
+  { value: "BR", label: "Brazil (ClassInd)" },
 ] as const;
+
+type RatingRegion = (typeof RATING_REGIONS)[number]["value"];
 
 export default function ProfilePage() {
   const { data: me, isLoading } = useGetMe();
@@ -89,7 +93,7 @@ export default function ProfilePage() {
           <Select
             value={me.preferredRatingRegion}
             disabled={updateMe.isPending}
-            onValueChange={(preferredRatingRegion: "US" | "GB" | "DE" | "FR") => {
+            onValueChange={(preferredRatingRegion: RatingRegion) => {
               updateMe.mutate({ data: { preferredRatingRegion } }, {
                 onSuccess: async () => {
                   await Promise.all([

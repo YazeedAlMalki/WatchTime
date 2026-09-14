@@ -23,6 +23,8 @@ const RATING_REGIONS = [
   { value: 'GB', label: 'United Kingdom', system: 'BBFC' },
   { value: 'DE', label: 'Germany', system: 'FSK' },
   { value: 'FR', label: 'France', system: 'CNC' },
+  { value: 'AU', label: 'Australia', system: 'Australian Classification' },
+  { value: 'BR', label: 'Brazil', system: 'ClassInd' },
 ] as const;
 
 function Stat({ label, value }: { label: string; value: string | number }) {

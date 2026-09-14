@@ -199,6 +199,8 @@ export const UserProfilePreferredRatingRegion = {
   GB: 'GB',
   DE: 'DE',
   FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
 } as const;
 
 export interface UserProfile {
@@ -223,6 +225,8 @@ export const UserPreferencesPreferredRatingRegion = {
   GB: 'GB',
   DE: 'DE',
   FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
 } as const;
 
 export interface UserPreferences {
@@ -237,6 +241,8 @@ export const UserPreferencesUpdatePreferredRatingRegion = {
   GB: 'GB',
   DE: 'DE',
   FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
 } as const;
 
 export interface UserPreferencesUpdate {
@@ -447,6 +453,8 @@ export const SafetyInfoPreferredRatingRegion = {
   GB: 'GB',
   DE: 'DE',
   FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
 } as const;
 
 export type RegionalRatingRegion = typeof RegionalRatingRegion[keyof typeof RegionalRatingRegion];
@@ -457,6 +465,8 @@ export const RegionalRatingRegion = {
   GB: 'GB',
   DE: 'DE',
   FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
 } as const;
 
 export interface RegionalRating {

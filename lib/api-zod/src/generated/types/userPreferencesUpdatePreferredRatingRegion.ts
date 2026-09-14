@@ -14,4 +14,6 @@ export const UserPreferencesUpdatePreferredRatingRegion = {
   GB: 'GB',
   DE: 'DE',
   FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
 } as const;

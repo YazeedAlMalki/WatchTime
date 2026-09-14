@@ -1049,14 +1049,14 @@ components:
         timeWatchedMinutes: { type: integer }
         preferredRatingRegion:
           type: string
-          enum: [US, GB, DE, FR]
+          enum: [US, GB, DE, FR, AU, BR]
     UserPreferences:
       type: object
       required: [preferredRatingRegion]
       properties:
         preferredRatingRegion:
           type: string
-          enum: [US, GB, DE, FR]
+          enum: [US, GB, DE, FR, AU, BR]
     UserPreferencesUpdate:
       type: object
       required: [preferredRatingRegion]
@@ -1064,7 +1064,7 @@ components:
       properties:
         preferredRatingRegion:
           type: string
-          enum: [US, GB, DE, FR]
+          enum: [US, GB, DE, FR, AU, BR]
     Title:
       type: object
       required: [id, type, name, posterUrl, year, genres]
@@ -1237,7 +1237,7 @@ components:
             $ref: "#/components/schemas/SafetySource"
         preferredRatingRegion:
           type: string
-          enum: [US, GB, DE, FR]
+          enum: [US, GB, DE, FR, AU, BR]
         preferredRating:
           oneOf:
             - $ref: "#/components/schemas/RegionalRating"
@@ -1246,7 +1246,7 @@ components:
       type: object
       required: [region, countryName, system, label, sourceName]
       properties:
-        region: { type: string, enum: [US, GB, DE, FR] }
+        region: { type: string, enum: [US, GB, DE, FR, AU, BR] }
         countryName: { type: string }
         system: { type: string }
         label: { type: string }

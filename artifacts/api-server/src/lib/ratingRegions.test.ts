@@ -26,6 +26,32 @@ describe("resolvePreferredRating", () => {
     expect(resolvePreferredRating(records, "DE")).toBeNull();
   });
 
+  it("selects newly supported official systems without inferring missing data", () => {
+    const expandedRecords = [{
+      sourceName: "Wikidata",
+      isCommunity: false,
+      status: "available",
+      items: [
+        { category: "Australian Classification", label: "M" },
+        { category: "ClassInd", label: "14" },
+      ],
+    }];
+
+    expect(resolvePreferredRating(expandedRecords, "AU")).toMatchObject({
+      region: "AU",
+      countryName: "Australia",
+      system: "Australian Classification",
+      label: "M",
+    });
+    expect(resolvePreferredRating(expandedRecords, "BR")).toMatchObject({
+      region: "BR",
+      countryName: "Brazil",
+      system: "ClassInd",
+      label: "14",
+    });
+    expect(resolvePreferredRating([], "AU")).toBeNull();
+  });
+
   it("ignores a colliding free-form community category", () => {
     const communityCollision = {
       sourceName: "WatchTime Community",

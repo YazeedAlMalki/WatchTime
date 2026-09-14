@@ -3,6 +3,8 @@ export const RATING_REGIONS = {
   GB: { countryName: "United Kingdom", system: "BBFC" },
   DE: { countryName: "Germany", system: "FSK" },
   FR: { countryName: "France", system: "CNC" },
+  AU: { countryName: "Australia", system: "Australian Classification" },
+  BR: { countryName: "Brazil", system: "ClassInd" },
 } as const;
 
 export type RatingRegion = keyof typeof RATING_REGIONS;
