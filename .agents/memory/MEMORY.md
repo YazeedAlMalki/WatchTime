@@ -8,3 +8,5 @@
 - [Physical mobile validation](physical-mobile-validation.md) — native iOS/Android cold-start evidence requires an external device; this workspace only exposes Expo web preview tooling.
 - [Import safety boundaries](import-safety.md) — source exports need explicit contracts; overlapping export columns must never imply watched history.
 - [Workflow database schema pushes](workflow-database-schema-pushes.md) — shell tests and managed workflows may use different DB endpoints; update both before preview verification.
+- [Expo startup contract mocks](expo-startup-contract-mocks.md) — isolate module-level splash rejection tests with a fresh doMock; static Expo mocks can otherwise hide missing methods.
+- [Workspace link and schema recovery](workspace-link-schema-recovery.md) — after merges, reinstall workspace links and apply the dev Drizzle schema before diagnosing app data failures.

@@ -42,7 +42,7 @@ jest.mock('@expo-google-fonts/inter', () => ({
 
 jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
-  preventAutoHideAsync: jest.fn(),
+  preventAutoHideAsync: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('expo-router', () => {
@@ -234,6 +234,24 @@ describe('mobile startup contracts', () => {
     expect(mockMarkStartup).toHaveBeenCalledWith('splash-recovery-error', {
       error: 'splash cleanup failed',
     });
+  });
+
+  it('keeps root navigation mounted when splash setup fails', async () => {
+    jest.isolateModules(() => {
+      jest.doMock('expo-splash-screen', () => ({
+        hideAsync: jest.fn(() => Promise.resolve()),
+        preventAutoHideAsync: jest.fn(() => Promise.reject(new Error('splash setup failed'))),
+      }));
+      require('../app/_layout');
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const { getByTestId } = await render(<RootLayout />);
+
+    expect(getByTestId('root-navigation')).toBeTruthy();
   });
 
   it('keeps home data quiet while Clerk auth is loading, then loads the ready branch', async () => {
