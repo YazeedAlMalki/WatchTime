@@ -15,6 +15,7 @@ import {
   parseArgs,
   runCatalogSync,
   sourceItems,
+  TVMAZE_MANIFEST,
   validateTvMazeResponse,
   type SourceItem,
 } from "./seed-real";
@@ -102,6 +103,15 @@ afterEach(async () => {
 });
 
 describe("real catalog sync", () => {
+  it("includes sourced original-language aliases for the remaining popular anime", () => {
+    const aliases = new Map(TVMAZE_MANIFEST.map((entry) => [entry.name, entry.aliases ?? []]));
+    expect(aliases.get("Cowboy Bebop")).toContain("カウボーイビバップ");
+    expect(aliases.get("Neon Genesis Evangelion")).toContain("新世紀エヴァンゲリオン");
+    expect(aliases.get("Sailor Moon")).toContain("美少女戦士セーラームーン");
+    expect(aliases.get("Pokémon")).toContain("ポケットモンスター");
+    expect(aliases.get("Code Geass")).toContain("コードギアス 反逆のルルーシュ");
+  });
+
   it("validates manifest identity and rejects a collision before writes", () => {
     expect(() => validateTvMazeResponse(testItem, { ...showPayload, id: testId + 1 })).toThrow(/identity mismatch/);
     expect(() => validateTvMazeResponse(testItem, { ...showPayload, name: "Wrong Series" })).toThrow(/title mismatch/);
