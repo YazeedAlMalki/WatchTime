@@ -167,18 +167,20 @@ import RootLayout from '../app/_layout';
 import HomeScreen from '../app/(tabs)/index';
 
 describe('mobile startup contracts', () => {
-  let pendingInteraction: (() => void) | undefined;
-  let pendingFrame: ((time: number) => void) | undefined;
+  let pendingInteractions: Array<() => void> = [];
+  let pendingFrames: Array<(time: number) => void> = [];
 
   beforeEach(() => {
     mockUseFonts.mockReturnValue([true, null]);
     mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
     jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation((task?: any) => {
-      pendingInteraction = typeof task === 'function' ? task : undefined;
+      if (typeof task === 'function') {
+        pendingInteractions.push(task);
+      }
       return { cancel: jest.fn() } as any;
     });
     mockRequestAnimationFrame.mockImplementation((callback: (time: number) => void) => {
-      pendingFrame = callback;
+      pendingFrames.push(callback);
       return 1;
     });
 
@@ -191,8 +193,8 @@ describe('mobile startup contracts', () => {
   afterEach(() => {
     cleanup();
     jest.restoreAllMocks();
-    pendingInteraction = undefined;
-    pendingFrame = undefined;
+    pendingInteractions = [];
+    pendingFrames = [];
     mockQueryEnabled.shows.length = 0;
     mockQueryEnabled.watchlist.length = 0;
     mockQueryEnabled.recommendations.length = 0;
@@ -262,7 +264,7 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.recommendations).toEqual([false]);
 
     await act(async () => {
-      pendingInteraction?.();
+      pendingInteractions[0]?.();
     });
 
     expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
@@ -271,7 +273,7 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.recommendations).toEqual([false]);
 
     await act(async () => {
-      pendingFrame?.(0);
+      pendingFrames[0]?.(0);
     });
 
     await waitFor(() => {
@@ -290,18 +292,67 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.trending).toEqual([false]);
 
     await act(async () => {
-      pendingInteraction?.();
+      pendingInteractions[0]?.();
     });
 
     expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
     expect(mockQueryEnabled.trending).toEqual([false]);
 
     await act(async () => {
-      pendingFrame?.(0);
+      pendingFrames[0]?.(0);
     });
 
     await waitFor(() => {
       expect(mockQueryEnabled.trending.at(-1)).toBe(true);
+    });
+  });
+
+  it('does not enable remounted signed-in home queries from a stale startup frame', async () => {
+    const firstHome = await render(<HomeScreen />);
+
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
+
+    await act(async () => {
+      pendingInteractions[0]?.();
+    });
+
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
+
+    firstHome.unmount();
+    await render(<HomeScreen />);
+
+    expect(InteractionManager.runAfterInteractions).toHaveBeenCalledTimes(2);
+    expect(mockQueryEnabled.shows).toEqual([false, false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false, false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false, false]);
+
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+
+    expect(mockQueryEnabled.shows).toEqual([false, false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false, false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false, false]);
+
+    await act(async () => {
+      pendingInteractions[1]?.();
+    });
+
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(mockQueryEnabled.shows).toEqual([false, false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false, false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false, false]);
+
+    await act(async () => {
+      pendingFrames[1]?.(0);
+    });
+
+    await waitFor(() => {
+      expect(mockQueryEnabled.shows).toEqual([false, false, true]);
+      expect(mockQueryEnabled.watchlist).toEqual([false, false, true]);
+      expect(mockQueryEnabled.recommendations).toEqual([false, false, true]);
     });
   });
 });
