@@ -193,6 +193,9 @@ importers:
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@workspace/rating-regions':
+        specifier: workspace:*
+        version: link:../../lib/rating-regions
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
@@ -570,6 +573,9 @@ importers:
       '@workspace/dev-auth':
         specifier: workspace:*
         version: link:../../lib/dev-auth
+      '@workspace/rating-regions':
+        specifier: workspace:*
+        version: link:../../lib/rating-regions
       class-variance-authority:
         specifier: 'catalog:'
         version: 0.7.1
@@ -699,6 +705,9 @@ importers:
       '@workspace/dev-auth':
         specifier: workspace:*
         version: link:../../lib/dev-auth
+      '@workspace/rating-regions':
+        specifier: workspace:*
+        version: link:../../lib/rating-regions
       babel-plugin-react-compiler:
         specifier: ^19.0.0-beta-e993439-20250117
         version: 19.0.0-beta-ebf51a3-20250411
@@ -864,6 +873,8 @@ importers:
         version: 0.31.10
 
   lib/dev-auth: {}
+
+  lib/rating-regions: {}
 
   scripts:
     devDependencies:

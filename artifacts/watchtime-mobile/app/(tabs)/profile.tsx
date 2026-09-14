@@ -17,15 +17,7 @@ import { getGetMeQueryKey, useGetMe, useUpdateMe } from '@workspace/api-client-r
 import { EmptyState, ErrorState, Loading } from '@/components/ui';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
-
-const RATING_REGIONS = [
-  { value: 'US', label: 'United States', system: 'MPAA' },
-  { value: 'GB', label: 'United Kingdom', system: 'BBFC' },
-  { value: 'DE', label: 'Germany', system: 'FSK' },
-  { value: 'FR', label: 'France', system: 'CNC' },
-  { value: 'AU', label: 'Australia', system: 'Australian Classification' },
-  { value: 'BR', label: 'Brazil', system: 'ClassInd' },
-] as const;
+import { RATING_REGIONS } from '@workspace/rating-regions';
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   const c = useColors();
@@ -164,13 +156,13 @@ export default function ProfileScreen() {
         </Text>
         <View style={{ gap: 8, marginTop: 14 }}>
           {RATING_REGIONS.map((region) => {
-            const selected = profile?.preferredRatingRegion === region.value;
+            const selected = profile?.preferredRatingRegion === region.code;
             return (
               <Pressable
-                key={region.value}
-                testID={`rating-region-${region.value}`}
+                key={region.code}
+                testID={`rating-region-${region.code}`}
                 disabled={updateMe.isPending}
-                onPress={() => updateMe.mutate({ data: { preferredRatingRegion: region.value } })}
+                onPress={() => updateMe.mutate({ data: { preferredRatingRegion: region.code } })}
                 style={({ pressed }) => [
                   styles.regionOption,
                   {
@@ -180,7 +172,7 @@ export default function ProfileScreen() {
                   },
                 ]}
               >
-                <Text style={{ color: c.foreground, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>{region.label}</Text>
+                <Text style={{ color: c.foreground, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>{region.countryName}</Text>
                 <Text style={{ color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular' }}>{region.system}</Text>
                 {selected ? <Feather name="check-circle" size={18} color={c.primary} /> : null}
               </Pressable>

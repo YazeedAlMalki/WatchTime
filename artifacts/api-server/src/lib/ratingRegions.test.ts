@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { RATING_REGIONS } from "@workspace/rating-regions";
 import { resolvePreferredRating } from "./ratingRegions";
 
 const records = [{
@@ -12,6 +15,20 @@ const records = [{
 }];
 
 describe("resolvePreferredRating", () => {
+  it("covers every rating region accepted by the API contract", () => {
+    const specPath = fileURLToPath(
+      new URL("../../../../lib/api-spec/openapi.yaml", import.meta.url),
+    );
+    const spec = readFileSync(specPath, "utf8");
+    const updateSchema = spec.match(
+      /UserPreferencesUpdate:[\s\S]*?preferredRatingRegion:\s*\n\s*type: string\s*\n\s*enum: \[([^\]]+)\]/,
+    );
+
+    expect(updateSchema, "UserPreferencesUpdate rating-region enum").not.toBeNull();
+    const apiRegions = updateSchema![1].split(",").map((region) => region.trim());
+    expect(RATING_REGIONS.map((region) => region.code)).toEqual(apiRegions);
+  });
+
   it("returns only the selected country's sourced classification", () => {
     expect(resolvePreferredRating(records, "GB")).toEqual({
       region: "GB",

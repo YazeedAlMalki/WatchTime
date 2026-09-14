@@ -1,13 +1,9 @@
-export const RATING_REGIONS = {
-  US: { countryName: "United States", system: "MPAA" },
-  GB: { countryName: "United Kingdom", system: "BBFC" },
-  DE: { countryName: "Germany", system: "FSK" },
-  FR: { countryName: "France", system: "CNC" },
-  AU: { countryName: "Australia", system: "Australian Classification" },
-  BR: { countryName: "Brazil", system: "ClassInd" },
-} as const;
+import {
+  RATING_REGIONS_BY_CODE,
+  type RatingRegion,
+} from "@workspace/rating-regions";
 
-export type RatingRegion = keyof typeof RATING_REGIONS;
+export type { RatingRegion } from "@workspace/rating-regions";
 
 type RatingRecord = {
   sourceName: string;
@@ -17,7 +13,7 @@ type RatingRecord = {
 };
 
 export function resolvePreferredRating(records: RatingRecord[], region: RatingRegion) {
-  const preferredSystem = RATING_REGIONS[region];
+  const preferredSystem = RATING_REGIONS_BY_CODE[region];
   const match = records
     .filter(
       (record) =>

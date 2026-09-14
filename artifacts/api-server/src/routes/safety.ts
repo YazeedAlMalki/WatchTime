@@ -19,10 +19,13 @@ import {
 import { requireAuth, optionalAuth } from "../middlewares/auth";
 import { safetyReportRateLimit, safetyContributionRateLimit } from "../middlewares/rateLimiters";
 import {
-  RATING_REGIONS,
   resolvePreferredRating,
   type RatingRegion,
 } from "../lib/ratingRegions";
+import {
+  RATING_REGIONS,
+  RATING_REGIONS_BY_CODE,
+} from "@workspace/rating-regions";
 
 const router: IRouter = Router();
 
@@ -57,7 +60,7 @@ router.get("/safety", optionalAuth, async (req, res) => {
       .select({ preferredRatingRegion: usersTable.preferredRatingRegion })
       .from(usersTable)
       .where(eq(usersTable.id, req.userId));
-    if (user?.preferredRatingRegion in RATING_REGIONS) {
+    if (user?.preferredRatingRegion in RATING_REGIONS_BY_CODE) {
       preferredRatingRegion = user.preferredRatingRegion as RatingRegion;
     }
   }
@@ -121,7 +124,7 @@ router.get("/safety", optionalAuth, async (req, res) => {
       isNull(safetyRecordsTable.seasonNumber),
       isNull(safetyRecordsTable.episodeNumber),
     ));
-  const ratingSystems = new Set<string>(Object.values(RATING_REGIONS).map(({ system }) => system));
+  const ratingSystems = new Set<string>(RATING_REGIONS.map(({ system }) => system));
   const displayRecords = [
     ...records,
     ...titleLevelRecords.filter(

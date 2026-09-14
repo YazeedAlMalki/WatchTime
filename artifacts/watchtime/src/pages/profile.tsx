@@ -7,17 +7,7 @@ import { LogOut, Tv, Film, Clock, Mail, ShieldAlert, Upload } from "lucide-react
 import { Link } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-
-const RATING_REGIONS = [
-  { value: "US", label: "United States (MPAA)" },
-  { value: "GB", label: "United Kingdom (BBFC)" },
-  { value: "DE", label: "Germany (FSK)" },
-  { value: "FR", label: "France (CNC)" },
-  { value: "AU", label: "Australia (Australian Classification)" },
-  { value: "BR", label: "Brazil (ClassInd)" },
-] as const;
-
-type RatingRegion = (typeof RATING_REGIONS)[number]["value"];
+import { RATING_REGIONS, type RatingRegion } from "@workspace/rating-regions";
 
 export default function ProfilePage() {
   const { data: me, isLoading } = useGetMe();
@@ -112,7 +102,9 @@ export default function ProfilePage() {
             </SelectTrigger>
             <SelectContent>
               {RATING_REGIONS.map((region) => (
-                <SelectItem key={region.value} value={region.value}>{region.label}</SelectItem>
+                <SelectItem key={region.code} value={region.code}>
+                  {region.countryName} ({region.system})
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
