@@ -351,43 +351,32 @@ async function updateIntegrationHealth(values: {
   lastSuccessAt?: Date;
   lastError: string | null;
 }) {
-  const mappedCounts = await db
-    .select({
-      mapped: sql<number>`count(*) filter (where ${providerMappingsTable.status} = 'mapped')::int`,
-      missing: sql<number>`count(*) filter (where ${providerMappingsTable.status} = 'missing')::int`,
-    })
-    .from(providerMappingsTable)
-    .where(eq(providerMappingsTable.provider, DOES_THE_DOG_DIE_PROVIDER));
-  const counts = mappedCounts[0] ?? { mapped: 0, missing: 0 };
-  const [existing] = await db
-    .select()
-    .from(integrationHealthTable)
-    .where(eq(integrationHealthTable.provider, DOES_THE_DOG_DIE_PROVIDER));
-  if (existing) {
-    await db
-      .update(integrationHealthTable)
-      .set({
-        status: values.status,
-        lastSyncAt: values.lastSyncAt,
-        ...(values.lastSuccessAt ? { lastSuccessAt: values.lastSuccessAt } : {}),
-        lastError: values.lastError,
-        successRatePercent: values.status === "healthy" ? 100 : 0,
-        mappedTitles: counts.mapped,
-        missingMappings: counts.missing,
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:catalog-sync'))`);
+    const mappedCounts = await tx
+      .select({
+        mapped: sql<number>`count(*) filter (where ${providerMappingsTable.status} = 'mapped')::int`,
+        missing: sql<number>`count(*) filter (where ${providerMappingsTable.status} = 'missing')::int`,
       })
-      .where(eq(integrationHealthTable.id, existing.id));
-  } else {
-    await db.insert(integrationHealthTable).values({
-      provider: DOES_THE_DOG_DIE_PROVIDER,
+      .from(providerMappingsTable)
+      .where(eq(providerMappingsTable.provider, DOES_THE_DOG_DIE_PROVIDER));
+    const counts = mappedCounts[0] ?? { mapped: 0, missing: 0 };
+    const [existing] = await tx
+      .select()
+      .from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, DOES_THE_DOG_DIE_PROVIDER));
+    const healthValues = {
       status: values.status,
       lastSyncAt: values.lastSyncAt,
-      lastSuccessAt: values.lastSuccessAt ?? null,
+      ...(values.lastSuccessAt ? { lastSuccessAt: values.lastSuccessAt } : {}),
       lastError: values.lastError,
       successRatePercent: values.status === "healthy" ? 100 : 0,
       mappedTitles: counts.mapped,
       missingMappings: counts.missing,
-    });
-  }
+    };
+    if (existing) await tx.update(integrationHealthTable).set(healthValues).where(eq(integrationHealthTable.id, existing.id));
+    else await tx.insert(integrationHealthTable).values({ provider: DOES_THE_DOG_DIE_PROVIDER, ...healthValues });
+  });
 }
 
 async function updateMappingStatus(
@@ -450,7 +439,18 @@ export async function refreshDoesTheDogDieTitle(
     const stats = normalizeDoesTheDogDieTopicStats(details.topicItemStats);
     const items = normalizeDoesTheDogDieSafetyItems(stats);
     await db.transaction(async (tx) => {
-      if (currentMapping) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:catalog-sync'))`);
+      const [lockedMapping] = await tx
+        .select()
+        .from(providerMappingsTable)
+        .where(
+          and(
+            eq(providerMappingsTable.titleId, titleId),
+            eq(providerMappingsTable.provider, DOES_THE_DOG_DIE_PROVIDER),
+          ),
+        )
+        .limit(1);
+      if (lockedMapping) {
         await tx
           .update(providerMappingsTable)
           .set({
@@ -458,7 +458,7 @@ export async function refreshDoesTheDogDieTitle(
             status: "mapped",
             lastRefreshedAt: now,
           })
-          .where(eq(providerMappingsTable.id, currentMapping.id));
+          .where(eq(providerMappingsTable.id, lockedMapping.id));
       } else {
         await tx.insert(providerMappingsTable).values({
           titleId,

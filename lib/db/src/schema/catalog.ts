@@ -6,6 +6,7 @@ import {
   real,
   timestamp,
   pgEnum,
+  index,
 } from "drizzle-orm/pg-core";
 
 export const contentTypeEnum = pgEnum("content_type", [
@@ -33,7 +34,10 @@ export const titlesTable = pgTable("titles", {
   tmdbId: integer("tmdb_id"),
   imdbId: text("imdb_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => [
+  index("titles_name_search_idx").on(table.name),
+  index("titles_type_popularity_idx").on(table.type, table.popularity),
+]);
 
 export const seasonsTable = pgTable("seasons", {
   id: serial("id").primaryKey(),
@@ -43,7 +47,7 @@ export const seasonsTable = pgTable("seasons", {
   seasonNumber: integer("season_number").notNull(),
   name: text("name").notNull(),
   overview: text("overview"),
-});
+}, (table) => [index("seasons_title_order_idx").on(table.titleId, table.seasonNumber)]);
 
 export const episodesTable = pgTable("episodes", {
   id: serial("id").primaryKey(),
@@ -57,7 +61,9 @@ export const episodesTable = pgTable("episodes", {
   airDate: text("air_date"),
   runtimeMinutes: integer("runtime_minutes"),
   stillUrl: text("still_url"),
-});
+}, (table) => [
+  index("episodes_title_order_idx").on(table.titleId, table.seasonNumber, table.episodeNumber),
+]);
 
 export const castMembersTable = pgTable("cast_members", {
   id: serial("id").primaryKey(),
@@ -68,7 +74,7 @@ export const castMembersTable = pgTable("cast_members", {
   character: text("character").notNull(),
   photoUrl: text("photo_url"),
   ord: integer("ord").notNull().default(0),
-});
+}, (table) => [index("cast_title_order_idx").on(table.titleId, table.ord)]);
 
 export const watchProvidersTable = pgTable("watch_providers", {
   id: serial("id").primaryKey(),
@@ -78,7 +84,7 @@ export const watchProvidersTable = pgTable("watch_providers", {
   name: text("name").notNull(),
   kind: text("kind").notNull(), // stream | rent | buy
   logoUrl: text("logo_url"),
-});
+}, (table) => [index("watch_providers_title_name_idx").on(table.titleId, table.name)]);
 
 export type Title = typeof titlesTable.$inferSelect;
 export type Season = typeof seasonsTable.$inferSelect;

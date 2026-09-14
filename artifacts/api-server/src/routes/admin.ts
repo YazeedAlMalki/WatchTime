@@ -139,6 +139,7 @@ router.patch("/contributions/:contributionId", async (req, res) => {
 
     if (prev.status === parsed.data.status) return row;
 
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:catalog-sync'))`);
     const recordScope = and(
       eq(safetyRecordsTable.titleId, row.titleId),
       eq(safetyRecordsTable.sourceName, "WatchTime Community"),

@@ -8,6 +8,7 @@ import {
   timestamp,
   jsonb,
   pgEnum,
+  index,
 } from "drizzle-orm/pg-core";
 import { titlesTable } from "./catalog";
 import { usersTable } from "./users";
@@ -87,7 +88,10 @@ export const providerMappingsTable = pgTable("provider_mappings", {
   externalId: text("external_id"),
   status: text("status").notNull().default("mapped"), // mapped | missing | error
   lastRefreshedAt: timestamp("last_refreshed_at"),
-});
+}, (table) => [
+  index("provider_mappings_title_provider_idx").on(table.titleId, table.provider),
+  index("provider_mappings_provider_external_idx").on(table.provider, table.externalId),
+]);
 
 export const adminAuditLogTable = pgTable("admin_audit_log", {
   id: serial("id").primaryKey(),
@@ -111,4 +115,4 @@ export const integrationHealthTable = pgTable("integration_health", {
   successRatePercent: real("success_rate_percent").notNull().default(100),
   mappedTitles: integer("mapped_titles").notNull().default(0),
   missingMappings: integer("missing_mappings").notNull().default(0),
-});
+}, (table) => [index("integration_health_provider_idx").on(table.provider)]);
