@@ -822,6 +822,73 @@ paths:
                   $ref: "#/components/schemas/ContentMapping"
         "403":
           description: Forbidden
+  /admin/content-aliases:
+    get:
+      operationId: listAdminContentAliases
+      tags: [admin]
+      summary: Review alternate-title provenance and collisions
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Alternate titles with provenance and collision counts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminContentAlias"
+        "403":
+          description: Forbidden
+  /admin/content-aliases/{id}:
+    patch:
+      operationId: updateAdminContentAlias
+      tags: [admin]
+      summary: Correct an alternate title without changing catalog identity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminContentAliasUpdate"
+      responses:
+        "200":
+          description: Updated alternate title
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminContentAliasRecord"
+        "400":
+          description: Invalid alias
+        "404":
+          description: Alias not found
+        "409":
+          description: Duplicate or canonical title conflict
+        "403":
+          description: Forbidden
+    delete:
+      operationId: deleteAdminContentAlias
+      tags: [admin]
+      summary: Remove an alternate title without changing catalog identity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Alternate title removed
+        "404":
+          description: Alias not found
+        "403":
+          description: Forbidden
   /admin/content/{id}/refresh:
     post:
       operationId: refreshAdminContent
@@ -1378,6 +1445,44 @@ components:
           type: string
           enum: [does_the_dog_die, wikidata]
           default: does_the_dog_die
+    AdminContentAlias:
+      type: object
+      required: [id, titleId, titleName, titleType, alias, sourceName, isEditorial, collision, collisionTitleCount, updatedAt]
+      properties:
+        id: { type: integer }
+        titleId: { type: integer }
+        titleName: { type: string }
+        titleType: { type: string, enum: [movie, tv, anime, documentary] }
+        titleYear: { type: ["integer", "null"] }
+        alias: { type: string }
+        language: { type: ["string", "null"] }
+        sourceName: { type: string }
+        sourceUrl: { type: ["string", "null"] }
+        isEditorial: { type: boolean }
+        collision: { type: boolean }
+        collisionTitleCount: { type: integer }
+        updatedAt: { type: string, format: date-time }
+    AdminContentAliasUpdate:
+      type: object
+      required: [alias]
+      properties:
+        alias: { type: string, minLength: 1, maxLength: 300 }
+        language: { type: ["string", "null"] }
+        sourceUrl: { type: ["string", "null"], format: uri }
+    AdminContentAliasRecord:
+      type: object
+      required: [id, titleId, alias, normalizedAlias, sourceName, isEditorial, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        titleId: { type: integer }
+        alias: { type: string }
+        normalizedAlias: { type: string }
+        language: { type: ["string", "null"] }
+        sourceName: { type: string }
+        sourceUrl: { type: ["string", "null"] }
+        isEditorial: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     AdminContentRefreshResult:
       type: object
       required: [ok, titleId, titleName]

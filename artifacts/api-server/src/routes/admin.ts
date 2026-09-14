@@ -14,6 +14,7 @@ import {
   adminAuditLogTable,
   catalogSyncRunsTable,
   catalogSyncItemsTable,
+  titleAliasesTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, gte, lte, ilike, inArray } from "drizzle-orm";
 import {
@@ -454,6 +455,130 @@ router.get("/content", async (req, res) => {
         })),
     })),
   );
+});
+
+const normalizeAlias = (value: string) =>
+  value.normalize("NFKD").replace(/\p{M}+/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+async function refreshTitleAliasSearchList(tx: any, titleId: number) {
+  const aliases = await tx.select({ alias: titleAliasesTable.alias }).from(titleAliasesTable)
+    .where(eq(titleAliasesTable.titleId, titleId))
+    .orderBy(titleAliasesTable.id);
+  await tx.update(titlesTable).set({ altTitles: aliases.map((row: any) => row.alias) })
+    .where(eq(titlesTable.id, titleId));
+}
+
+router.get("/content-aliases", async (req, res) => {
+  const q = String(req.query.q ?? "").trim();
+  const rows = await db.select({
+    alias: titleAliasesTable,
+    titleName: titlesTable.name,
+    titleType: titlesTable.type,
+    titleYear: titlesTable.year,
+  }).from(titleAliasesTable)
+    .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+    .where(q ? ilike(titleAliasesTable.alias, `%${q}%`) : undefined)
+    .orderBy(titleAliasesTable.normalizedAlias, titlesTable.name)
+    .limit(200);
+  const normalized = [...new Set(rows.map((row) => row.alias.normalizedAlias))];
+  const collisions = normalized.length
+    ? await db.select({
+        normalizedAlias: titleAliasesTable.normalizedAlias,
+        titleCount: sql<number>`count(distinct ${titleAliasesTable.titleId})::int`,
+      }).from(titleAliasesTable)
+        .where(inArray(titleAliasesTable.normalizedAlias, normalized))
+        .groupBy(titleAliasesTable.normalizedAlias)
+    : [];
+  const collisionCount = new Map(collisions.map((row) => [row.normalizedAlias, row.titleCount]));
+  return res.json(rows.map(({ alias, titleName, titleType, titleYear }) => ({
+    id: alias.id,
+    titleId: alias.titleId,
+    titleName,
+    titleType,
+    titleYear,
+    alias: alias.alias,
+    language: alias.language,
+    sourceName: alias.sourceName,
+    sourceUrl: alias.sourceUrl,
+    isEditorial: Boolean(alias.isEditorial),
+    collision: (collisionCount.get(alias.normalizedAlias) ?? 0) > 1,
+    collisionTitleCount: collisionCount.get(alias.normalizedAlias) ?? 1,
+    updatedAt: alias.updatedAt.toISOString(),
+  })));
+});
+
+router.patch("/content-aliases/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const alias = typeof req.body?.alias === "string" ? req.body.alias.trim() : "";
+  const language = typeof req.body?.language === "string" ? req.body.language.trim() || null : null;
+  const sourceUrl = typeof req.body?.sourceUrl === "string" ? req.body.sourceUrl.trim() || null : null;
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid alias id" });
+  if (!alias || alias.length > 300) return res.status(400).json({ error: "Alias must be 1 to 300 characters" });
+  if (sourceUrl) {
+    try {
+      const url = new URL(sourceUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
+    } catch {
+      return res.status(400).json({ error: "Source URL must be an HTTP or HTTPS URL" });
+    }
+  }
+  const updated = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.id, id)).for("update");
+    if (!current) return null;
+    const [title] = await tx.select({ name: titlesTable.name }).from(titlesTable)
+      .where(eq(titlesTable.id, current.titleId));
+    const normalizedAlias = normalizeAlias(alias);
+    if (!normalizedAlias || normalizedAlias === normalizeAlias(title.name)) {
+      return { error: "Alias must differ from the canonical title" } as const;
+    }
+    const [duplicate] = await tx.select({ id: titleAliasesTable.id }).from(titleAliasesTable).where(and(
+      eq(titleAliasesTable.titleId, current.titleId),
+      eq(titleAliasesTable.normalizedAlias, normalizedAlias),
+    )).limit(1);
+    if (duplicate && duplicate.id !== id) return { error: "This title already has that alias" } as const;
+    const [row] = await tx.update(titleAliasesTable).set({
+      alias,
+      normalizedAlias,
+      language,
+      sourceUrl,
+      isEditorial: true,
+      sourceName: "Admin editorial",
+      updatedAt: new Date(),
+    }).where(eq(titleAliasesTable.id, id)).returning();
+    await refreshTitleAliasSearchList(tx, current.titleId);
+    await tx.insert(adminAuditLogTable).values({
+      adminId: req.userId!,
+      action: "update_title_alias",
+      entityType: "title_alias",
+      entityId: id,
+      details: { titleId: current.titleId, previousAlias: current.alias, alias },
+    });
+    return { row } as const;
+  });
+  if (!updated) return res.status(404).json({ error: "Not found" });
+  if ("error" in updated) return res.status(409).json({ error: updated.error });
+  return res.json(updated.row);
+});
+
+router.delete("/content-aliases/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid alias id" });
+  const removed = await db.transaction(async (tx) => {
+    const [current] = await tx.delete(titleAliasesTable).where(eq(titleAliasesTable.id, id)).returning();
+    if (!current) return null;
+    await refreshTitleAliasSearchList(tx, current.titleId);
+    await tx.insert(adminAuditLogTable).values({
+      adminId: req.userId!,
+      action: "delete_title_alias",
+      entityType: "title_alias",
+      entityId: id,
+      details: { titleId: current.titleId, alias: current.alias },
+    });
+    return current;
+  });
+  if (!removed) return res.status(404).json({ error: "Not found" });
+  return res.status(204).send();
 });
 
 router.post("/content/:id/refresh", async (req, res) => {

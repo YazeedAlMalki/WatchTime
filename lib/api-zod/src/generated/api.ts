@@ -1046,6 +1046,72 @@ export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseIt
 
 
 /**
+ * @summary Review alternate-title provenance and collisions
+ */
+export const ListAdminContentAliasesQueryParams = zod.object({
+  "q": zod.coerce.string().optional()
+})
+
+export const ListAdminContentAliasesResponseItem = zod.object({
+  "id": zod.int(),
+  "titleId": zod.int(),
+  "titleName": zod.string(),
+  "titleType": zod.enum(['movie', 'tv', 'anime', 'documentary']),
+  "titleYear": zod.int().nullish(),
+  "alias": zod.string(),
+  "language": zod.string().nullish(),
+  "sourceName": zod.string(),
+  "sourceUrl": zod.string().nullish(),
+  "isEditorial": zod.boolean(),
+  "collision": zod.boolean(),
+  "collisionTitleCount": zod.int(),
+  "updatedAt": zod.coerce.date()
+})
+export const ListAdminContentAliasesResponse = zod.array(ListAdminContentAliasesResponseItem)
+
+
+/**
+ * @summary Correct an alternate title without changing catalog identity
+ */
+export const UpdateAdminContentAliasParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const updateAdminContentAliasBodyAliasMax = 300;
+
+
+
+export const UpdateAdminContentAliasBody = zod.object({
+  "alias": zod.string().min(1).max(updateAdminContentAliasBodyAliasMax),
+  "language": zod.string().nullish(),
+  "sourceUrl": zod.url().nullish()
+})
+
+export const UpdateAdminContentAliasResponse = zod.object({
+  "id": zod.int(),
+  "titleId": zod.int(),
+  "alias": zod.string(),
+  "normalizedAlias": zod.string(),
+  "language": zod.string().nullish(),
+  "sourceName": zod.string(),
+  "sourceUrl": zod.string().nullish(),
+  "isEditorial": zod.boolean(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove an alternate title without changing catalog identity
+ */
+export const DeleteAdminContentAliasParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DeleteAdminContentAliasResponse = zod.void()
+
+
+/**
  * @summary Force refresh safety data for a content item
  */
 export const RefreshAdminContentParams = zod.object({

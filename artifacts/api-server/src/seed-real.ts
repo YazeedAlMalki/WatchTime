@@ -24,6 +24,7 @@ import {
   db,
   pool,
   titlesTable,
+  titleAliasesTable,
   seasonsTable,
   episodesTable,
   castMembersTable,
@@ -34,6 +35,12 @@ import {
 import { pathToFileURL } from "node:url";
 
 export type CatalogType = "movie" | "tv" | "anime" | "documentary";
+export type AliasSource = {
+  alias: string;
+  language: string;
+  sourceName: string;
+  sourceUrl: string;
+};
 type TvManifestEntry = {
   name: string;
   id: number;
@@ -43,7 +50,7 @@ type TvManifestEntry = {
   imdbId: string | null;
   canonicalName?: string;
   sourceYear?: number;
-  aliases?: readonly string[];
+  aliases?: readonly AliasSource[];
 };
 export type SourceItem = {
   key: string;
@@ -56,7 +63,7 @@ export type SourceItem = {
   expectedYear?: number;
   expectedImdbId?: string | null;
   sourceYear?: number;
-  aliases?: readonly string[];
+  aliases?: readonly AliasSource[];
   popularity: number;
   wikiPage?: string;
 };
@@ -71,6 +78,19 @@ const SAFETY_SOURCES = [
   ["CringeMDb", 2, "https://cringemdb.com"],
 ] as const;
 
+const wikipediaAlias = (language: string, alias: string, page: string): AliasSource => ({
+  alias,
+  language,
+  sourceName: `${language.toUpperCase()} Wikipedia`,
+  sourceUrl: `https://${language}.wikipedia.org/wiki/${encodeURIComponent(page.replace(/ /g, "_"))}`,
+});
+const tvMazeAlias = (language: string, alias: string, showId: number): AliasSource => ({
+  alias,
+  language,
+  sourceName: "TVMaze",
+  sourceUrl: `https://www.tvmaze.com/shows/${showId}`,
+});
+
 /*
  * Checked-in TVMaze manifest. IDs are never discovered at sync time. The
  * expected fields are checked before any database transaction starts. The
@@ -84,10 +104,10 @@ const SAFETY_SOURCES = [
 export const TVMAZE_MANIFEST: TvManifestEntry[] = [
   // Localized names below are verified against the corresponding Arabic
   // Wikipedia article; original-language names use the work's Wikipedia page.
-  { name: "Breaking Bad", id: 169, type: "tv", expectedTitle: "Breaking Bad", year: 2008, imdbId: "tt0903747", aliases: ["اختلال ضال"] },
-  { name: "Stranger Things", id: 2993, type: "tv", expectedTitle: "Stranger Things", year: 2016, imdbId: "tt4574334", aliases: ["أشياء غريبة"] },
+  { name: "Breaking Bad", id: 169, type: "tv", expectedTitle: "Breaking Bad", year: 2008, imdbId: "tt0903747", aliases: [wikipediaAlias("ar", "اختلال ضال", "اختلال ضال")] },
+  { name: "Stranger Things", id: 2993, type: "tv", expectedTitle: "Stranger Things", year: 2016, imdbId: "tt4574334", aliases: [wikipediaAlias("ar", "أشياء غريبة", "أشياء غريبة")] },
   { name: "The Office", id: 526, type: "tv", expectedTitle: "The Office", year: 2005, imdbId: "tt0386676" },
-  { name: "Game of Thrones", id: 82, type: "tv", expectedTitle: "Game of Thrones", year: 2011, imdbId: "tt0944947", aliases: ["صراع العروش"] },
+  { name: "Game of Thrones", id: 82, type: "tv", expectedTitle: "Game of Thrones", year: 2011, imdbId: "tt0944947", aliases: [wikipediaAlias("ar", "صراع العروش", "صراع العروش")] },
   { name: "The Wire", id: 179, type: "tv", expectedTitle: "The Wire", year: 2002, imdbId: "tt0306414" },
   { name: "Succession", id: 23470, type: "tv", expectedTitle: "Succession", year: 2018, imdbId: "tt7660850" },
   { name: "The Sopranos", id: 527, type: "tv", expectedTitle: "The Sopranos", year: 1999, imdbId: "tt0141842" },
@@ -101,9 +121,9 @@ export const TVMAZE_MANIFEST: TvManifestEntry[] = [
   { name: "Wednesday", id: 53647, type: "tv", expectedTitle: "Wednesday", year: 2022, imdbId: "tt13443470" },
   { name: "The Boys", id: 15299, type: "tv", expectedTitle: "The Boys", year: 2019, imdbId: "tt1190634" },
   { name: "Ozark", id: 13417, type: "tv", expectedTitle: "Ozark", year: 2017, imdbId: "tt5071412" },
-  { name: "The Walking Dead", id: 73, type: "tv", expectedTitle: "The Walking Dead", year: 2010, imdbId: "tt1520211", aliases: ["الموتى السائرون"] },
+  { name: "The Walking Dead", id: 73, type: "tv", expectedTitle: "The Walking Dead", year: 2010, imdbId: "tt1520211", aliases: [wikipediaAlias("ar", "الموتى السائرون", "الموتى السائرون")] },
   { name: "Lost", id: 123, type: "tv", expectedTitle: "Lost", year: 2004, imdbId: "tt0411008" },
-  { name: "Friends", id: 431, type: "tv", expectedTitle: "Friends", year: 1994, imdbId: "tt0108778", aliases: ["فريندز"] },
+  { name: "Friends", id: 431, type: "tv", expectedTitle: "Friends", year: 1994, imdbId: "tt0108778", aliases: [wikipediaAlias("ar", "فريندز", "فريندز")] },
   { name: "Seinfeld", id: 530, type: "tv", expectedTitle: "Seinfeld", year: 1989, imdbId: "tt0098904" },
   { name: "Parks and Recreation", id: 174, type: "tv", expectedTitle: "Parks and Recreation", year: 2009, imdbId: "tt1266020" },
   { name: "Brooklyn Nine-Nine", id: 49, type: "tv", expectedTitle: "Brooklyn Nine-Nine", year: 2013, imdbId: "tt2467372" },
@@ -133,33 +153,33 @@ export const TVMAZE_MANIFEST: TvManifestEntry[] = [
   { name: "Friday Night Dinner", id: 1789, type: "tv", expectedTitle: "Friday Night Dinner", year: 2011, imdbId: "tt1844923" },
   { name: "Mr. Robot", id: 1871, type: "tv", expectedTitle: "Mr. Robot", year: 2015, imdbId: "tt4158110" },
 
-  { name: "Attack on Titan", id: 919, type: "anime", expectedTitle: "Attack on Titan", year: 2013, imdbId: "tt2560140", aliases: ["Shingeki no Kyojin", "進撃の巨人", "هجوم العمالقة"] },
-  { name: "Death Note", id: 40, type: "anime", expectedTitle: "Death Note", year: 2006, imdbId: "tt0877057", aliases: ["デスノート", "مذكرة الموت"] },
-  { name: "Fullmetal Alchemist: Brotherhood", id: 2071, type: "anime", expectedTitle: "Fullmetal Alchemist: Brotherhood", year: 2009, imdbId: "tt1355642", aliases: ["Hagane no Renkinjutsushi", "鋼の錬金術師"] },
-  { name: "One Piece", id: 1505, type: "anime", expectedTitle: "One Piece", year: 1999, imdbId: "tt0388629", aliases: ["ワンピース", "ون بيس"] },
-  { name: "Naruto", id: 495, type: "anime", expectedTitle: "Naruto", year: 2002, imdbId: "tt0409591", aliases: ["ナルト", "ناروتو"] },
-  { name: "Naruto: Shippuden", id: 488, type: "anime", expectedTitle: "Naruto: Shippūden", year: 2007, imdbId: "tt0988824", aliases: ["Naruto Shippūden", "ナルト 疾風伝", "ناروتو شيبودن"] },
-  { name: "Dragon Ball Z", id: 2103, type: "anime", expectedTitle: "Dragon Ball Z", year: 1989, imdbId: "tt0121220", aliases: ["ドラゴンボールZ", "دراغون بول زد"] },
-  { name: "Demon Slayer", id: 41469, type: "anime", expectedTitle: "Demon Slayer", year: 2019, imdbId: "tt9335498", aliases: ["Demon Slayer: Kimetsu no Yaiba", "Kimetsu no Yaiba", "鬼滅の刃", "قاتل الشياطين"] },
-  { name: "Jujutsu Kaisen", id: 48450, type: "anime", expectedTitle: "Jujutsu Kaisen", year: 2020, imdbId: "tt12343534", aliases: ["呪術廻戦", "جوجوتسو كايسن"] },
-  { name: "My Hero Academia", id: 13615, type: "anime", expectedTitle: "My Hero Academia", year: 2016, imdbId: "tt5626028", aliases: ["Boku no Hero Academia", "僕のヒーローアカデミア", "أكاديمية بطلي"] },
+  { name: "Attack on Titan", id: 919, type: "anime", expectedTitle: "Attack on Titan", year: 2013, imdbId: "tt2560140", aliases: [wikipediaAlias("en", "Shingeki no Kyojin", "Attack on Titan"), wikipediaAlias("ja", "進撃の巨人", "進撃の巨人"), wikipediaAlias("ar", "هجوم العمالقة", "هجوم العمالقة")] },
+  { name: "Death Note", id: 40, type: "anime", expectedTitle: "Death Note", year: 2006, imdbId: "tt0877057", aliases: [wikipediaAlias("ja", "デスノート", "DEATH NOTE"), wikipediaAlias("ar", "مذكرة الموت", "مذكرة الموت")] },
+  { name: "Fullmetal Alchemist: Brotherhood", id: 2071, type: "anime", expectedTitle: "Fullmetal Alchemist: Brotherhood", year: 2009, imdbId: "tt1355642", aliases: [wikipediaAlias("en", "Hagane no Renkinjutsushi", "Fullmetal Alchemist"), wikipediaAlias("ja", "鋼の錬金術師", "鋼の錬金術師")] },
+  { name: "One Piece", id: 1505, type: "anime", expectedTitle: "One Piece", year: 1999, imdbId: "tt0388629", aliases: [wikipediaAlias("ja", "ワンピース", "ONE PIECE"), wikipediaAlias("ar", "ون بيس", "ون بيس")] },
+  { name: "Naruto", id: 495, type: "anime", expectedTitle: "Naruto", year: 2002, imdbId: "tt0409591", aliases: [wikipediaAlias("ja", "ナルト", "NARUTO_-ナルト-"), wikipediaAlias("ar", "ناروتو", "ناروتو")] },
+  { name: "Naruto: Shippuden", id: 488, type: "anime", expectedTitle: "Naruto: Shippūden", year: 2007, imdbId: "tt0988824", aliases: [wikipediaAlias("en", "Naruto Shippūden", "Naruto: Shippuden"), wikipediaAlias("ja", "ナルト 疾風伝", "NARUTO_-ナルト-_疾風伝"), wikipediaAlias("ar", "ناروتو شيبودن", "ناروتو شيبودن")] },
+  { name: "Dragon Ball Z", id: 2103, type: "anime", expectedTitle: "Dragon Ball Z", year: 1989, imdbId: "tt0121220", aliases: [wikipediaAlias("ja", "ドラゴンボールZ", "ドラゴンボールZ"), wikipediaAlias("ar", "دراغون بول زد", "دراغون بول زد")] },
+  { name: "Demon Slayer", id: 41469, type: "anime", expectedTitle: "Demon Slayer", year: 2019, imdbId: "tt9335498", aliases: [wikipediaAlias("en", "Demon Slayer: Kimetsu no Yaiba", "Demon Slayer: Kimetsu no Yaiba"), wikipediaAlias("en", "Kimetsu no Yaiba", "Demon Slayer: Kimetsu no Yaiba"), wikipediaAlias("ja", "鬼滅の刃", "鬼滅の刃"), wikipediaAlias("ar", "قاتل الشياطين", "قاتل الشياطين")] },
+  { name: "Jujutsu Kaisen", id: 48450, type: "anime", expectedTitle: "Jujutsu Kaisen", year: 2020, imdbId: "tt12343534", aliases: [wikipediaAlias("ja", "呪術廻戦", "呪術廻戦"), wikipediaAlias("ar", "جوجوتسو كايسن", "جوجوتسو كايسن")] },
+  { name: "My Hero Academia", id: 13615, type: "anime", expectedTitle: "My Hero Academia", year: 2016, imdbId: "tt5626028", aliases: [wikipediaAlias("en", "Boku no Hero Academia", "My Hero Academia"), wikipediaAlias("ja", "僕のヒーローアカデミア", "僕のヒーローアカデミア"), wikipediaAlias("ar", "أكاديمية بطلي", "أكاديمية بطلي")] },
   // Original Japanese titles below are the native titles in each work's
   // Japanese Wikipedia article (ja.wikipedia.org/wiki/<encoded alias>).
-  { name: "Cowboy Bebop", id: 1121, type: "anime", expectedTitle: "Cowboy Bebop", year: 1998, imdbId: "tt0213338", aliases: ["カウボーイビバップ"] },
-  { name: "Neon Genesis Evangelion", id: 1925, type: "anime", expectedTitle: "Neon Genesis Evangelion", year: 1995, imdbId: "tt0112159", aliases: ["新世紀エヴァンゲリオン"] },
-  { name: "Sailor Moon", id: 5476, type: "anime", expectedTitle: "Bishoujo Senshi Sailor Moon", year: 1992, imdbId: "tt0103369", aliases: ["Bishōjo Senshi Sailor Moon", "美少女戦士セーラームーン"] },
-  { name: "Pokémon", id: 590, type: "anime", expectedTitle: "Pokémon", year: 1997, imdbId: "tt0168366", aliases: ["Pocket Monsters", "ポケットモンスター"] },
-  { name: "Bleach", id: 1905, type: "anime", expectedTitle: "Bleach", year: 2004, imdbId: "tt0434665", aliases: ["ブリーチ"] },
+  { name: "Cowboy Bebop", id: 1121, type: "anime", expectedTitle: "Cowboy Bebop", year: 1998, imdbId: "tt0213338", aliases: [wikipediaAlias("ja", "カウボーイビバップ", "カウボーイビバップ")] },
+  { name: "Neon Genesis Evangelion", id: 1925, type: "anime", expectedTitle: "Neon Genesis Evangelion", year: 1995, imdbId: "tt0112159", aliases: [wikipediaAlias("ja", "新世紀エヴァンゲリオン", "新世紀エヴァンゲリオン")] },
+  { name: "Sailor Moon", id: 5476, type: "anime", expectedTitle: "Bishoujo Senshi Sailor Moon", year: 1992, imdbId: "tt0103369", aliases: [wikipediaAlias("en", "Bishōjo Senshi Sailor Moon", "Sailor Moon"), wikipediaAlias("ja", "美少女戦士セーラームーン", "美少女戦士セーラームーン")] },
+  { name: "Pokémon", id: 590, type: "anime", expectedTitle: "Pokémon", year: 1997, imdbId: "tt0168366", aliases: [wikipediaAlias("en", "Pocket Monsters", "Pokémon (TV series)"), wikipediaAlias("ja", "ポケットモンスター", "ポケットモンスター")] },
+  { name: "Bleach", id: 1905, type: "anime", expectedTitle: "Bleach", year: 2004, imdbId: "tt0434665", aliases: [wikipediaAlias("ja", "ブリーチ", "BLEACH")] },
   { name: "Hunter x Hunter", id: 1536, type: "anime", expectedTitle: "Hunter x Hunter", year: 2011, imdbId: "tt2098220" },
-  { name: "One-Punch Man", id: 4201, type: "anime", expectedTitle: "One-Punch Man", year: 2015, imdbId: "tt4508902", aliases: ["ワンパンマン"] },
-  { name: "Spy x Family", id: 59698, type: "anime", expectedTitle: "Spy×Family", year: 2022, imdbId: "tt13706018", aliases: ["SPY×FAMILY"] },
-  { name: "JoJo's Bizarre Adventure", id: 8287, type: "anime", expectedTitle: "JoJo's Bizarre Adventure", year: 2012, imdbId: "tt2359704", aliases: ["ジョジョの奇妙な冒険"] },
-  { name: "Haikyu!!", id: 5193, type: "anime", expectedTitle: "Haikyuu!!", year: 2014, imdbId: "tt3398540", aliases: ["ハイキュー!!"] },
-  { name: "Fairy Tail", id: 2069, type: "anime", expectedTitle: "Fairy Tail", year: 2009, imdbId: "tt1528406", aliases: ["フェアリーテイル"] },
-  { name: "Mob Psycho 100", id: 18260, type: "anime", expectedTitle: "Mob Psycho 100", year: 2016, imdbId: "tt5897304", aliases: ["モブサイコ100"] },
-  { name: "Vinland Saga", id: 42155, type: "anime", expectedTitle: "Vinland Saga", year: 2019, imdbId: "tt10233448", aliases: ["ヴィンランド・サガ"] },
-  { name: "Steins;Gate", id: 2051, type: "anime", expectedTitle: "Steins;Gate", year: 2011, imdbId: "tt1910272", aliases: ["シュタインズ・ゲート"] },
-  { name: "Code Geass", id: 5276, type: "anime", expectedTitle: "Code Geass: Hangyaku no Lelouch", year: 2006, imdbId: "tt0994314", aliases: ["Code Geass: Hangyaku no Lelouch", "コードギアス 反逆のルルーシュ"] },
+  { name: "One-Punch Man", id: 4201, type: "anime", expectedTitle: "One-Punch Man", year: 2015, imdbId: "tt4508902", aliases: [wikipediaAlias("ja", "ワンパンマン", "ワンパンマン")] },
+  { name: "Spy x Family", id: 59698, type: "anime", expectedTitle: "Spy×Family", year: 2022, imdbId: "tt13706018", aliases: [wikipediaAlias("ja", "SPY×FAMILY", "SPY×FAMILY")] },
+  { name: "JoJo's Bizarre Adventure", id: 8287, type: "anime", expectedTitle: "JoJo's Bizarre Adventure", year: 2012, imdbId: "tt2359704", aliases: [wikipediaAlias("ja", "ジョジョの奇妙な冒険", "ジョジョの奇妙な冒険")] },
+  { name: "Haikyu!!", id: 5193, type: "anime", expectedTitle: "Haikyuu!!", year: 2014, imdbId: "tt3398540", aliases: [wikipediaAlias("ja", "ハイキュー!!", "ハイキュー!!")] },
+  { name: "Fairy Tail", id: 2069, type: "anime", expectedTitle: "Fairy Tail", year: 2009, imdbId: "tt1528406", aliases: [wikipediaAlias("ja", "フェアリーテイル", "FAIRY TAIL")] },
+  { name: "Mob Psycho 100", id: 18260, type: "anime", expectedTitle: "Mob Psycho 100", year: 2016, imdbId: "tt5897304", aliases: [wikipediaAlias("ja", "モブサイコ100", "モブサイコ100")] },
+  { name: "Vinland Saga", id: 42155, type: "anime", expectedTitle: "Vinland Saga", year: 2019, imdbId: "tt10233448", aliases: [wikipediaAlias("ja", "ヴィンランド・サガ", "ヴィンランド・サガ")] },
+  { name: "Steins;Gate", id: 2051, type: "anime", expectedTitle: "Steins;Gate", year: 2011, imdbId: "tt1910272", aliases: [wikipediaAlias("ja", "シュタインズ・ゲート", "STEINS;GATE")] },
+  { name: "Code Geass", id: 5276, type: "anime", expectedTitle: "Code Geass: Hangyaku no Lelouch", year: 2006, imdbId: "tt0994314", aliases: [wikipediaAlias("en", "Code Geass: Hangyaku no Lelouch", "Code Geass"), wikipediaAlias("ja", "コードギアス 反逆のルルーシュ", "コードギアス 反逆のルルーシュ")] },
 
   { name: "Planet Earth", id: 768, type: "documentary", expectedTitle: "Planet Earth", year: 2006, imdbId: "tt0795176" },
   { name: "Planet Earth II", id: 22036, type: "documentary", expectedTitle: "Planet Earth II", year: 2016, imdbId: "tt5491994" },
@@ -176,7 +196,7 @@ export const TVMAZE_MANIFEST: TvManifestEntry[] = [
   { name: "Life", id: 1280, type: "documentary", expectedTitle: "Life", year: 2009, imdbId: "tt1533395" },
   { name: "The World at War", id: 3291, type: "documentary", expectedTitle: "The World at War", year: 1973, imdbId: "tt0071075" },
   { name: "The Civil War", id: 8246, type: "documentary", expectedTitle: "The Civil War", year: 1990, imdbId: "tt0098769" },
-  { name: "The Staircase", id: 13645, type: "documentary", expectedTitle: "Soupçons", year: 2004, imdbId: "tt0388644", canonicalName: "The Staircase", aliases: ["Soupçons"] },
+  { name: "The Staircase", id: 13645, type: "documentary", expectedTitle: "Soupçons", year: 2004, imdbId: "tt0388644", canonicalName: "The Staircase", aliases: [tvMazeAlias("fr", "Soupçons", 13645)] },
   { name: "The Keepers", id: 27435, type: "documentary", expectedTitle: "The Keepers", year: 2017, imdbId: "tt6792200" },
   { name: "Chef's Table", id: 3252, type: "documentary", expectedTitle: "Chef's Table", year: 2015, imdbId: "tt4295140" },
   { name: "Abstract: The Art of Design", id: 24260, type: "documentary", expectedTitle: "Abstract: The Art of Design", year: 2017, imdbId: "tt6333098" },
@@ -189,17 +209,17 @@ export const TVMAZE_MANIFEST: TvManifestEntry[] = [
  * Wikipedia page at sync time; volatile scores and providers are intentionally
  * left empty.
  */
-const MOVIES: Array<[string, string, string, string[]?]> = [
+const MOVIES: Array<[string, string, string, AliasSource[]?]> = [
   // Arabic titles: ar.wikipedia article titles. Original-language titles:
   // each film's en.wikipedia article and its cited native title.
-  ["Inception", "Inception", "tt1375666", ["استهلال"]], ["The Dark Knight", "The Dark Knight", "tt0468569", ["فارس الظلام"]],
-  ["Interstellar", "Interstellar (film)", "tt0816692", ["بين النجوم"]], ["Spirited Away", "Spirited Away", "tt0245429", ["Sen to Chihiro no Kamikakushi", "千と千尋の神隠し", "المخطوفة"]],
+  ["Inception", "Inception", "tt1375666", [wikipediaAlias("ar", "استهلال", "استهلال (فيلم)")]], ["The Dark Knight", "The Dark Knight", "tt0468569", [wikipediaAlias("ar", "فارس الظلام", "فارس الظلام (فيلم)")]],
+  ["Interstellar", "Interstellar (film)", "tt0816692", [wikipediaAlias("ar", "بين النجوم", "بين النجوم (فيلم)")]], ["Spirited Away", "Spirited Away", "tt0245429", [wikipediaAlias("en", "Sen to Chihiro no Kamikakushi", "Spirited Away"), wikipediaAlias("ja", "千と千尋の神隠し", "千と千尋の神隠し"), wikipediaAlias("ar", "المخطوفة", "المخطوفة")]],
   ["The Shawshank Redemption", "The Shawshank Redemption", "tt0111161"],
   ["The Godfather", "The Godfather", "tt0068646"], ["Pulp Fiction", "Pulp Fiction", "tt0110912"],
   ["The Lord of the Rings: The Fellowship of the Ring", "The Lord of the Rings: The Fellowship of the Ring", "tt0120737"],
   ["The Lord of the Rings: The Two Towers", "The Lord of the Rings: The Two Towers", "tt0167261"],
   ["The Lord of the Rings: The Return of the King", "The Lord of the Rings: The Return of the King", "tt0167260"],
-  ["The Matrix", "The Matrix", "tt0133093", ["المصفوفة"]], ["Parasite", "Parasite (2019 film)", "tt6751668", ["Gisaengchung", "기생충", "طفيلي"]],
+  ["The Matrix", "The Matrix", "tt0133093", [wikipediaAlias("ar", "المصفوفة", "المصفوفة (فيلم)")]], ["Parasite", "Parasite (2019 film)", "tt6751668", [wikipediaAlias("en", "Gisaengchung", "Parasite (2019 film)"), wikipediaAlias("ko", "기생충", "기생충 (영화)"), wikipediaAlias("ar", "طفيلي", "طفيلي (فيلم)")]],
   ["Everything Everywhere All at Once", "Everything Everywhere All at Once", "tt6710474"],
   ["Get Out", "Get Out", "tt5052448"], ["Mad Max: Fury Road", "Mad Max: Fury Road", "tt1392190"],
   ["The Grand Budapest Hotel", "The Grand Budapest Hotel", "tt2278388"],
@@ -255,6 +275,12 @@ const normalizeTitle = (value: string) =>
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "");
 
+const aliasLanguage = (alias: string) => {
+  if (/\p{Script=Arabic}/u.test(alias)) return "ar";
+  if (/\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}/u.test(alias)) return "ja";
+  if (/\p{Script=Hangul}/u.test(alias)) return "ko";
+  return "en";
+};
 export function validateTvMazeResponse(item: SourceItem, show: any) {
   if (!item.tvmazeId || show.id !== item.tvmazeId) {
     throw new Error(`TVMaze identity mismatch for ${item.name}: expected id ${item.tvmazeId}, received ${show?.id}`);
@@ -553,7 +579,7 @@ async function ingestShow(item: SourceItem, show: any) {
       backdropUrl: show.image?.original ?? null,
       year: item.expectedYear ?? (show.premiered ? Number(String(show.premiered).slice(0, 4)) || null : null),
       genres: Array.isArray(show.genres) ? show.genres : [],
-      altTitles: item.aliases ? [...item.aliases] : [],
+      altTitles: item.aliases?.map((alias) => alias.alias) ?? [],
       imdbRating: null,
       rottenTomatoesScore: null,
       runtimeMinutes: show.averageRuntime ?? show.runtime ?? null,
@@ -571,6 +597,7 @@ async function ingestShow(item: SourceItem, show: any) {
       const [inserted] = await tx.insert(titlesTable).values(merged).returning({ id: titlesTable.id });
       id = inserted.id;
     }
+    await syncAliases(tx, id, item.name, item, existing?.altTitles ?? []);
     await upsertMapping(tx, id, "TVMaze", externalId);
     await upsertMapping(tx, id, "IMDb", item.expectedImdbId ?? show.externals?.imdb ?? null);
     await upsertSafety(tx, id);
@@ -662,7 +689,7 @@ async function ingestMovie(item: SourceItem, wiki: any) {
     const titleId = await findTitle(tx, item, null, item.imdbId!);
     const values = {
       type: item.type, name: item.name, overview, posterUrl, backdropUrl: null,
-      year: null, genres: [], altTitles: item.aliases ? [...item.aliases] : [], imdbRating: null,
+      year: null, genres: [], altTitles: item.aliases?.map((alias) => alias.alias) ?? [], imdbRating: null,
       rottenTomatoesScore: null, runtimeMinutes: null, status: null,
       popularity: item.popularity, imdbId: item.imdbId!,
     };
@@ -676,6 +703,7 @@ async function ingestMovie(item: SourceItem, wiki: any) {
       const [inserted] = await tx.insert(titlesTable).values(merged).returning({ id: titlesTable.id });
       id = inserted.id;
     }
+    await syncAliases(tx, id, item.name, item, existing?.altTitles ?? []);
     await upsertMapping(tx, id, "IMDb", item.imdbId!);
     await upsertSafety(tx, id);
   });
@@ -844,3 +872,61 @@ export type SyncResult = {
   episodes: number;
   failures: Array<{ key: string; title: string; provider: "TVMaze" | "Wikipedia"; error: string }>;
 };
+
+async function syncAliases(tx: any, titleId: number, canonicalName: string, item: SourceItem, legacyAliases: unknown) {
+  const existing = await tx.select().from(titleAliasesTable)
+    .where(eq(titleAliasesTable.titleId, titleId));
+  const existingNormalized = new Set(existing.map((row: any) => row.normalizedAlias));
+  const canonical = normalizeTitle(canonicalName);
+
+  // Aliases that predate structured provenance are treated as editorial so a
+  // provider refresh can never erase them.
+  for (const alias of Array.isArray(legacyAliases) ? legacyAliases : []) {
+    const trimmed = typeof alias === "string" ? alias.trim() : "";
+    const normalizedAlias = normalizeTitle(trimmed);
+    if (!trimmed || normalizedAlias === canonical || existingNormalized.has(normalizedAlias)) continue;
+    await tx.insert(titleAliasesTable).values({
+      titleId,
+      alias: trimmed,
+      normalizedAlias,
+      language: aliasLanguage(trimmed),
+      sourceName: "Existing catalog metadata",
+      sourceUrl: null,
+      isEditorial: true,
+    });
+    existingNormalized.add(normalizedAlias);
+  }
+
+  const sourceAliases = new Map<string, AliasSource>();
+  for (const source of item.aliases ?? []) {
+    const trimmed = source.alias.trim();
+    const normalizedAlias = normalizeTitle(trimmed);
+    if (!trimmed || normalizedAlias === canonical || sourceAliases.has(normalizedAlias)) continue;
+    sourceAliases.set(normalizedAlias, { ...source, alias: trimmed });
+  }
+  for (const [normalizedAlias, source] of sourceAliases) {
+    const values = {
+      alias: source.alias,
+      language: source.language,
+      sourceName: source.sourceName,
+      sourceUrl: source.sourceUrl,
+      isEditorial: true,
+      updatedAt: new Date(),
+    };
+    const [current] = await tx.select().from(titleAliasesTable).where(and(
+      eq(titleAliasesTable.titleId, titleId),
+      eq(titleAliasesTable.normalizedAlias, normalizedAlias),
+    )).limit(1);
+    if (current) {
+      await tx.update(titleAliasesTable).set(values).where(eq(titleAliasesTable.id, current.id));
+    } else {
+      await tx.insert(titleAliasesTable).values({ titleId, normalizedAlias, ...values });
+    }
+  }
+
+  const aliases = await tx.select({ alias: titleAliasesTable.alias }).from(titleAliasesTable)
+    .where(eq(titleAliasesTable.titleId, titleId))
+    .orderBy(titleAliasesTable.id);
+  await tx.update(titlesTable).set({ altTitles: aliases.map((row: any) => row.alias) })
+    .where(eq(titlesTable.id, titleId));
+}

@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './adminContentAlias';
+export * from './adminContentAliasRecord';
+export * from './adminContentAliasTitleType';
+export * from './adminContentAliasUpdate';
 export * from './adminContentRefreshBatchInput';
 export * from './adminContentRefreshBatchInputProvider';
 export * from './adminContentRefreshInput';
@@ -60,6 +64,7 @@ export * from './importNormalizedRecordKind';
 export * from './importNormalizedRecordType';
 export * from './integrationHealth';
 export * from './integrationHealthStatus';
+export * from './listAdminContentAliasesParams';
 export * from './listAdminContributionsParams';
 export * from './listAdminContributionsStatus';
 export * from './listAdminFeedbackCategory';

@@ -20,6 +20,9 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AdminContentAlias,
+  AdminContentAliasRecord,
+  AdminContentAliasUpdate,
   AdminContentRefreshBatchInput,
   AdminContentRefreshInput,
   AdminContentRefreshResult,
@@ -43,6 +46,7 @@ import type {
   ImportItemResolution,
   ImportJob,
   IntegrationHealth,
+  ListAdminContentAliasesParams,
   ListAdminContributionsParams,
   ListAdminFeedbackParams,
   ListAdminReportsParams,
@@ -3206,6 +3210,233 @@ export function useSearchAdminContent<TData = Awaited<ReturnType<typeof searchAd
 
 
 
+
+export const getListAdminContentAliasesUrl = (params?: ListAdminContentAliasesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/content-aliases?${stringifiedParams}` : `/api/admin/content-aliases`
+}
+
+/**
+ * @summary Review alternate-title provenance and collisions
+ */
+export const listAdminContentAliases = async (params?: ListAdminContentAliasesParams, options?: Parameters<typeof customFetch>[1]): Promise<AdminContentAlias[]> => {
+
+  return customFetch<AdminContentAlias[]>(getListAdminContentAliasesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminContentAliasesQueryKey = (params?: ListAdminContentAliasesParams,) => {
+    return [
+    `/api/admin/content-aliases`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAdminContentAliasesQueryOptions = <TData = Awaited<ReturnType<typeof listAdminContentAliases>>, TError = ErrorType<void>>(params?: ListAdminContentAliasesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminContentAliases>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminContentAliasesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminContentAliases>>> = ({ signal }) => listAdminContentAliases(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminContentAliases>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminContentAliasesQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminContentAliases>>>
+export type ListAdminContentAliasesQueryError = ErrorType<void>
+
+
+/**
+ * @summary Review alternate-title provenance and collisions
+ */
+
+export function useListAdminContentAliases<TData = Awaited<ReturnType<typeof listAdminContentAliases>>, TError = ErrorType<void>>(
+ params?: ListAdminContentAliasesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminContentAliases>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminContentAliasesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateAdminContentAliasUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/content-aliases/${id}`
+}
+
+/**
+ * @summary Correct an alternate title without changing catalog identity
+ */
+export const updateAdminContentAlias = async (id: number,
+    adminContentAliasUpdate: AdminContentAliasUpdate, options?: Parameters<typeof customFetch>[1]): Promise<AdminContentAliasRecord> => {
+
+  return customFetch<AdminContentAliasRecord>(getUpdateAdminContentAliasUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminContentAliasUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateAdminContentAliasMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminContentAlias>>, TError,{id: number;data: BodyType<AdminContentAliasUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAdminContentAlias>>, TError,{id: number;data: BodyType<AdminContentAliasUpdate>}, TContext> => {
+
+const mutationKey = ['updateAdminContentAlias'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAdminContentAlias>>, {id: number;data: BodyType<AdminContentAliasUpdate>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateAdminContentAlias(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAdminContentAliasMutationResult = NonNullable<Awaited<ReturnType<typeof updateAdminContentAlias>>>
+    export type UpdateAdminContentAliasMutationBody = BodyType<AdminContentAliasUpdate>
+    export type UpdateAdminContentAliasMutationError = ErrorType<void>
+
+    /**
+ * @summary Correct an alternate title without changing catalog identity
+ */
+export const useUpdateAdminContentAlias = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminContentAlias>>, TError,{id: number;data: BodyType<AdminContentAliasUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAdminContentAlias>>,
+        TError,
+        {id: number;data: BodyType<AdminContentAliasUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateAdminContentAliasMutationOptions(options));
+    }
+
+export const getDeleteAdminContentAliasUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/content-aliases/${id}`
+}
+
+/**
+ * @summary Remove an alternate title without changing catalog identity
+ */
+export const deleteAdminContentAlias = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteAdminContentAliasUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAdminContentAliasMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminContentAlias>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAdminContentAlias>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteAdminContentAlias'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAdminContentAlias>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteAdminContentAlias(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAdminContentAliasMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAdminContentAlias>>>
+
+    export type DeleteAdminContentAliasMutationError = ErrorType<void>
+
+    /**
+ * @summary Remove an alternate title without changing catalog identity
+ */
+export const useDeleteAdminContentAlias = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminContentAlias>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAdminContentAlias>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteAdminContentAliasMutationOptions(options));
+    }
 
 export const getRefreshAdminContentUrl = (id: number,) => {
 

@@ -15,6 +15,7 @@ import {
   useRetryCatalogRefresh,
   useGetAdminAnalytics,
   useSearchAdminContent,
+  useListAdminContentAliases,
   useRefreshAdminContent,
   useRefreshAdminContentBatch,
   useGetAdminAuditLog,
@@ -25,6 +26,7 @@ import {
   getSearchAdminContentQueryKey,
   getListCatalogRefreshesQueryKey,
   type RefreshAdminContentBatch200,
+  type AdminContentAlias,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Redirect } from "wouter";
@@ -934,6 +936,8 @@ function ContentTab() {
   const { data: content, isLoading } = useSearchAdminContent(
     debouncedQ ? { q: debouncedQ } : undefined,
   );
+  const { data: aliases, isLoading: aliasesLoading } =
+    useListAdminContentAliases(debouncedQ ? { q: debouncedQ } : undefined);
   const refresh = useRefreshAdminContent();
   const batchRefresh = useRefreshAdminContentBatch();
 
@@ -1278,6 +1282,106 @@ function ContentTab() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+      <AliasReview aliases={aliases} isLoading={aliasesLoading} />
+    </div>
+  );
+}
+
+function AliasReview({
+  aliases,
+  isLoading,
+}: {
+  aliases: AdminContentAlias[] | undefined;
+  isLoading: boolean;
+}) {
+  return (
+    <div className="pt-5 mt-2 border-t border-border">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <h3 className="font-display font-bold text-foreground">
+            Alternate title provenance
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            Review language, source links, and aliases shared by multiple catalog
+            titles.
+          </p>
+        </div>
+        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+          {aliases?.length ?? 0} aliases
+        </span>
+      </div>
+      {isLoading ? (
+        <div className="h-24 animate-pulse bg-secondary/30 rounded-2xl" />
+      ) : !aliases?.length ? (
+        <EmptyState
+          icon={BookOpen}
+          title="No alternate titles found"
+          desc="Try another search term or run the catalog sync to import curated aliases."
+        />
+      ) : (
+        <div className="overflow-x-auto bg-card border border-border rounded-2xl shadow-sm">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground bg-secondary/30">
+              <tr>
+                <th className="px-4 py-3">Alias</th>
+                <th className="px-4 py-3">Catalog title</th>
+                <th className="px-4 py-3">Language</th>
+                <th className="px-4 py-3">Source</th>
+                <th className="px-4 py-3">Review</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {aliases.map((alias) => (
+                <tr key={alias.id}>
+                  <td className="px-4 py-3 font-medium text-foreground">
+                    {alias.alias}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-foreground">
+                      {alias.titleName}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {alias.titleType}
+                      {alias.titleYear ? ` · ${alias.titleYear}` : ""}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {alias.language ?? "Unknown"}
+                  </td>
+                  <td className="px-4 py-3">
+                    {alias.sourceUrl ? (
+                      <a
+                        href={alias.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-primary hover:underline"
+                      >
+                        {alias.sourceName}
+                      </a>
+                    ) : (
+                      <span className="text-muted-foreground">
+                        {alias.sourceName}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {alias.collision ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 px-2.5 py-1 text-xs font-bold">
+                        <AlertTriangle className="w-3 h-3" />{" "}
+                        {alias.collisionTitleCount} titles
+                      </span>
+                    ) : (
+                      <span className="text-xs font-medium text-green-600 dark:text-green-400">
+                        Unique
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

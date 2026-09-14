@@ -713,6 +713,62 @@ export interface AdminContentRefreshInput {
   provider?: AdminContentRefreshInputProvider;
 }
 
+export type AdminContentAliasTitleType = typeof AdminContentAliasTitleType[keyof typeof AdminContentAliasTitleType];
+
+
+export const AdminContentAliasTitleType = {
+  movie: 'movie',
+  tv: 'tv',
+  anime: 'anime',
+  documentary: 'documentary',
+} as const;
+
+export interface AdminContentAlias {
+  id: number;
+  titleId: number;
+  titleName: string;
+  titleType: AdminContentAliasTitleType;
+  /** @nullable */
+  titleYear?: number | null;
+  alias: string;
+  /** @nullable */
+  language?: string | null;
+  sourceName: string;
+  /** @nullable */
+  sourceUrl?: string | null;
+  isEditorial: boolean;
+  collision: boolean;
+  collisionTitleCount: number;
+  updatedAt: string;
+}
+
+export interface AdminContentAliasUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 300
+     */
+  alias: string;
+  /** @nullable */
+  language?: string | null;
+  /** @nullable */
+  sourceUrl?: string | null;
+}
+
+export interface AdminContentAliasRecord {
+  id: number;
+  titleId: number;
+  alias: string;
+  normalizedAlias: string;
+  /** @nullable */
+  language?: string | null;
+  sourceName: string;
+  /** @nullable */
+  sourceUrl?: string | null;
+  isEditorial: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type AdminContentRefreshResultStatus = typeof AdminContentRefreshResultStatus[keyof typeof AdminContentRefreshResultStatus];
 
 
@@ -997,6 +1053,10 @@ export const ListAdminFeedbackCategory = {
 } as const;
 
 export type SearchAdminContentParams = {
+q?: string;
+};
+
+export type ListAdminContentAliasesParams = {
 q?: string;
 };
 

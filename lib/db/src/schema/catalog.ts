@@ -7,6 +7,8 @@ import {
   timestamp,
   pgEnum,
   index,
+  uniqueIndex,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 export const contentTypeEnum = pgEnum("content_type", [
@@ -37,6 +39,25 @@ export const titlesTable = pgTable("titles", {
 }, (table) => [
   index("titles_name_search_idx").on(table.name),
   index("titles_type_popularity_idx").on(table.type, table.popularity),
+]);
+
+export const titleAliasesTable = pgTable("title_aliases", {
+  id: serial("id").primaryKey(),
+  titleId: integer("title_id")
+    .notNull()
+    .references(() => titlesTable.id, { onDelete: "cascade" }),
+  alias: text("alias").notNull(),
+  normalizedAlias: text("normalized_alias").notNull(),
+  language: text("language"),
+  sourceName: text("source_name").notNull(),
+  sourceUrl: text("source_url"),
+  isEditorial: boolean("is_editorial").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  uniqueIndex("title_aliases_title_normalized_idx").on(table.titleId, table.normalizedAlias),
+  index("title_aliases_normalized_idx").on(table.normalizedAlias),
+  index("title_aliases_title_idx").on(table.titleId),
 ]);
 
 export const seasonsTable = pgTable("seasons", {
@@ -87,5 +108,6 @@ export const watchProvidersTable = pgTable("watch_providers", {
 }, (table) => [index("watch_providers_title_name_idx").on(table.titleId, table.name)]);
 
 export type Title = typeof titlesTable.$inferSelect;
+export type TitleAlias = typeof titleAliasesTable.$inferSelect;
 export type Season = typeof seasonsTable.$inferSelect;
 export type Episode = typeof episodesTable.$inferSelect;

@@ -8,6 +8,7 @@ import {
   providerMappingsTable,
   safetyRecordsTable,
   titlesTable,
+  titleAliasesTable,
   watchProvidersTable,
 } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
@@ -35,7 +36,13 @@ const testItem: SourceItem = {
   expectedTitle: "Test Identity Series",
   expectedYear: 2020,
   expectedImdbId: testImdb,
-  aliases: ["Alternate Test Title", " alternate test title ", "Test Identity Series", "テスト作品", "عمل تجريبي"],
+  aliases: [
+    { alias: "Alternate Test Title", language: "en", sourceName: "Test catalog", sourceUrl: "https://example.test/en" },
+    { alias: " alternate test title ", language: "en", sourceName: "Duplicate test catalog", sourceUrl: "https://example.test/duplicate" },
+    { alias: "Test Identity Series", language: "en", sourceName: "Test catalog", sourceUrl: "https://example.test/canonical" },
+    { alias: "テスト作品", language: "ja", sourceName: "JA Wikipedia", sourceUrl: "https://ja.wikipedia.org/wiki/テスト" },
+    { alias: "عمل تجريبي", language: "ar", sourceName: "AR Wikipedia", sourceUrl: "https://ar.wikipedia.org/wiki/عمل_تجريبي" },
+  ],
   popularity: 0,
 };
 const showPayload = {
@@ -105,11 +112,31 @@ afterEach(async () => {
 describe("real catalog sync", () => {
   it("includes sourced original-language aliases for the remaining popular anime", () => {
     const aliases = new Map(TVMAZE_MANIFEST.map((entry) => [entry.name, entry.aliases ?? []]));
-    expect(aliases.get("Cowboy Bebop")).toContain("カウボーイビバップ");
-    expect(aliases.get("Neon Genesis Evangelion")).toContain("新世紀エヴァンゲリオン");
-    expect(aliases.get("Sailor Moon")).toContain("美少女戦士セーラームーン");
-    expect(aliases.get("Pokémon")).toContain("ポケットモンスター");
-    expect(aliases.get("Code Geass")).toContain("コードギアス 反逆のルルーシュ");
+    expect(aliases.get("Cowboy Bebop")?.map((source) => source.alias)).toContain("カウボーイビバップ");
+    expect(aliases.get("Neon Genesis Evangelion")?.map((source) => source.alias)).toContain("新世紀エヴァンゲリオン");
+    expect(aliases.get("Sailor Moon")?.map((source) => source.alias)).toContain("美少女戦士セーラームーン");
+    expect(aliases.get("Pokémon")?.map((source) => source.alias)).toContain("ポケットモンスター");
+    expect(aliases.get("Code Geass")?.map((source) => source.alias)).toContain("コードギアス 反逆のルルーシュ");
+  });
+
+  it("keeps verifiable provenance on each curated alias", () => {
+    const aliases = new Map(TVMAZE_MANIFEST.map((entry) => [entry.name, entry.aliases ?? []]));
+    expect(aliases.get("Attack on Titan")?.find((source) => source.alias === "進撃の巨人")).toMatchObject({
+      language: "ja",
+      sourceName: "JA Wikipedia",
+      sourceUrl: expect.stringContaining("ja.wikipedia.org/wiki/"),
+    });
+    expect(aliases.get("Breaking Bad")?.find((source) => source.alias === "اختلال ضال")).toMatchObject({
+      language: "ar",
+      sourceName: "AR Wikipedia",
+      sourceUrl: expect.stringContaining("ar.wikipedia.org/wiki/"),
+    });
+    expect(aliases.get("The Staircase")?.find((source) => source.alias === "Soupçons")).toEqual({
+      alias: "Soupçons",
+      language: "fr",
+      sourceName: "TVMaze",
+      sourceUrl: "https://www.tvmaze.com/shows/13645",
+    });
   });
 
   it("validates manifest identity and rejects a collision before writes", () => {
@@ -164,12 +191,27 @@ describe("real catalog sync", () => {
     const episodes = await db.select().from(episodesTable).where(eq(episodesTable.titleId, again.id));
     const mappings = await db.select().from(providerMappingsTable).where(eq(providerMappingsTable.titleId, again.id));
     const providers = await db.select().from(watchProvidersTable).where(eq(watchProvidersTable.titleId, again.id));
+    const aliases = await db.select().from(titleAliasesTable).where(eq(titleAliasesTable.titleId, again.id));
     expect(again.altTitles).toContain("Alternate Test Title");
     expect(again.altTitles).toContain("Existing Alias");
     expect(again.altTitles).toContain("テスト作品");
     expect(again.altTitles).toContain("عمل تجريبي");
     expect(again.altTitles.filter((title) => title.toLowerCase() === "alternate test title")).toHaveLength(1);
     expect(again.altTitles).not.toContain("Test Identity Series");
+    expect(aliases.find((alias) => alias.alias === "Existing Alias")).toMatchObject({
+      sourceName: "Existing catalog metadata",
+      isEditorial: true,
+    });
+    expect(aliases.find((alias) => alias.alias === "عمل تجريبي")).toMatchObject({
+      language: "ar",
+      sourceName: "AR Wikipedia",
+      sourceUrl: "https://ar.wikipedia.org/wiki/عمل_تجريبي",
+    });
+    expect(aliases.find((alias) => alias.alias === "テスト作品")).toMatchObject({
+      language: "ja",
+      sourceName: "JA Wikipedia",
+      sourceUrl: "https://ja.wikipedia.org/wiki/テスト",
+    });
     expect(again.overview).toBe("Richer existing overview");
     expect(again.runtimeMinutes).toBe(120);
     const safety = await db.select().from(safetyRecordsTable).where(and(
