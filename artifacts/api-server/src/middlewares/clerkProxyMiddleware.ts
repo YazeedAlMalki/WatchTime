@@ -26,30 +26,55 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 const CLERK_FAPI = 'https://frontend-api.clerk.dev';
 export const CLERK_PROXY_PATH = '/api/__clerk';
 
+function normalizeHost(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || /[/?#@\s\\]/.test(trimmed)) return undefined;
+
+  try {
+    const parsed = new URL(`https://${trimmed}`);
+    if (parsed.username || parsed.password || parsed.pathname !== '/') {
+      return undefined;
+    }
+    return parsed.host;
+  } catch {
+    return undefined;
+  }
+}
+
+function allowedClerkProxyHosts(): Set<string> {
+  return new Set(
+    [
+      ...(process.env.REPLIT_DOMAINS?.split(',') ?? []),
+      process.env.APP_HOST,
+      process.env.CUSTOM_DOMAIN,
+    ]
+      .map(normalizeHost)
+      .filter((host): host is string => Boolean(host)),
+  );
+}
+
 /**
- * Returns the first effective public hostname for the given request,
- * preferring x-forwarded-host over the Host header so callers behind a
- * proxy see the original client-facing host.
+ * Returns an allowlisted public hostname for the request.
  *
- * x-forwarded-host can take three shapes:
- *   - undefined (no proxy involved)
- *   - a single string (one proxy hop)
- *   - a comma-delimited string when an upstream appended rather than
- *     replaced the header (Node folds duplicate headers this way), or a
- *     string[] in some Express typings
- * In the multi-value case, the leftmost value is the original client-
- * facing host. Take that one in all forms. Exported so that app.ts
- * (clerkMiddleware callback) and this proxy middleware agree on which
- * hostname is canonical — otherwise multi-domain/custom-domain flows
- * break.
+ * Deployment and custom domains come from server-side configuration. Request
+ * headers are only used to select one of those known domains; neither
+ * x-forwarded-host nor Host can introduce a new hostname into Clerk redirects
+ * or publishable-key resolution.
  */
 export function getClerkProxyHost(req: {
   headers: IncomingHttpHeaders;
 }): string | undefined {
+  const allowedHosts = allowedClerkProxyHosts();
   const forwarded = req.headers['x-forwarded-host'];
   const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  const firstHop = raw?.split(',')[0]?.trim();
-  return firstHop || req.headers.host?.trim() || undefined;
+  const candidates = [
+    normalizeHost(raw?.split(',')[0]),
+    normalizeHost(req.headers.host),
+  ];
+
+  return candidates.find((host) => host && allowedHosts.has(host));
 }
 
 export function clerkProxyMiddleware(): RequestHandler {
