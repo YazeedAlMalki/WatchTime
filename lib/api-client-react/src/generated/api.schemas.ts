@@ -676,8 +676,10 @@ export interface IntegrationHealth {
   successRatePercent: number;
   mappedTitles: number;
   missingMappings: number;
+  sustainedFailureAlert: boolean;
 }
 
+export type CatalogRefreshFailureProvider = typeof CatalogRefreshFailureProvider[keyof typeof CatalogRefreshFailureProvider];
 export type ProviderMappingStatus = typeof ProviderMappingStatus[keyof typeof ProviderMappingStatus];
 
 
@@ -889,3 +891,57 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
+
+export interface CatalogRefreshFailure {
+  title: string;
+  provider: CatalogRefreshFailureProvider;
+  /** @nullable */
+  error?: string | null;
+}
+
+export const CatalogRefreshRunTrigger = {
+  scheduled: 'scheduled',
+  manual: 'manual',
+  retry: 'retry',
+} as const;
+
+export type CatalogRefreshRunTrigger = typeof CatalogRefreshRunTrigger[keyof typeof CatalogRefreshRunTrigger];
+
+export interface CatalogRefreshAccepted {
+  runId: number;
+}
+
+export interface CatalogRefreshRun {
+  id: number;
+  trigger: CatalogRefreshRunTrigger;
+  status: CatalogRefreshRunStatus;
+  totalItems: number;
+  processedItems: number;
+  succeededItems: number;
+  failedItems: number;
+  episodesUpdated: number;
+  /** @nullable */
+  startedAt?: string | null;
+  /** @nullable */
+  finishedAt?: string | null;
+  /** @nullable */
+  error?: string | null;
+  createdAt: string;
+  failures: CatalogRefreshFailure[];
+}
+
+export const CatalogRefreshFailureProvider = {
+  TVMaze: 'TVMaze',
+  Wikipedia: 'Wikipedia',
+} as const;
+
+export type CatalogRefreshRunStatus = typeof CatalogRefreshRunStatus[keyof typeof CatalogRefreshRunStatus];
+
+export const CatalogRefreshRunStatus = {
+  queued: 'queued',
+  running: 'running',
+  succeeded: 'succeeded',
+  partial: 'partial',
+  failed: 'failed',
+  skipped: 'skipped',
+} as const;

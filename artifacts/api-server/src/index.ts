@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { scheduleCatalogRefresh } from "./lib/catalog-refresh";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,5 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  scheduleCatalogRefresh().catch((err) => logger.error({ err }, "unable to schedule catalog refresh"));
 });

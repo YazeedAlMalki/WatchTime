@@ -731,6 +731,56 @@ paths:
                   $ref: "#/components/schemas/IntegrationHealth"
         "403":
           description: Forbidden
+  /admin/catalog-refreshes:
+    get:
+      operationId: listCatalogRefreshes
+      tags: [admin]
+      summary: Recent catalog refresh runs and failures
+      responses:
+        "200":
+          description: Recent refresh runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CatalogRefreshRun"
+        "403":
+          description: Forbidden
+    post:
+      operationId: startCatalogRefresh
+      tags: [admin]
+      summary: Start a full catalog refresh
+      responses:
+        "202":
+          description: Refresh accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogRefreshAccepted"
+        "403":
+          description: Forbidden
+  /admin/catalog-refreshes/{id}/retry:
+    post:
+      operationId: retryCatalogRefresh
+      tags: [admin]
+      summary: Retry failed titles from a catalog refresh
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "202":
+          description: Retry accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogRefreshAccepted"
+        "409":
+          description: No failed titles
+        "403":
+          description: Forbidden
   /admin/content:
     get:
       operationId: searchAdminContent
@@ -1286,7 +1336,7 @@ components:
         error: { type: string }
     IntegrationHealth:
       type: object
-      required: [provider, status, successRatePercent, mappedTitles, missingMappings]
+      required: [provider, status, successRatePercent, mappedTitles, missingMappings, sustainedFailureAlert]
       properties:
         provider: { type: string }
         status: { type: string, enum: [healthy, degraded, failing, provider_unavailable] }
@@ -1296,6 +1346,39 @@ components:
         successRatePercent: { type: number }
         mappedTitles: { type: integer }
         missingMappings: { type: integer }
+        sustainedFailureAlert: { type: boolean }
+    CatalogRefreshFailure:
+      type: object
+      required: [title, provider]
+      properties:
+        title: { type: string }
+        provider: { type: string, enum: [TVMaze, Wikipedia] }
+        error: { type: ["string", "null"] }
+    CatalogRefreshRun:
+      type: object
+      required: [id, trigger, status, totalItems, processedItems, succeededItems, failedItems, episodesUpdated, createdAt, failures]
+      properties:
+        id: { type: integer }
+        trigger: { type: string, enum: [scheduled, manual, retry] }
+        status: { type: string, enum: [queued, running, succeeded, partial, failed, skipped] }
+        totalItems: { type: integer }
+        processedItems: { type: integer }
+        succeededItems: { type: integer }
+        failedItems: { type: integer }
+        episodesUpdated: { type: integer }
+        startedAt: { type: ["string", "null"] }
+        finishedAt: { type: ["string", "null"] }
+        error: { type: ["string", "null"] }
+        createdAt: { type: string }
+        failures:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogRefreshFailure"
+    CatalogRefreshAccepted:
+      type: object
+      required: [runId]
+      properties:
+        runId: { type: integer }
     ProviderMapping:
       type: object
       required: [provider, status]

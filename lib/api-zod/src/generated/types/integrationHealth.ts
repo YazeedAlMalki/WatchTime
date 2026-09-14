@@ -19,4 +19,5 @@ export interface IntegrationHealth {
   successRatePercent: number;
   mappedTitles: number;
   missingMappings: number;
+  sustainedFailureAlert: boolean;
 }

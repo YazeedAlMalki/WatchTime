@@ -10,6 +10,9 @@ import {
   useListAdminFeedback,
   useUpdateAdminFeedback,
   useListAdminIntegrations,
+  useListCatalogRefreshes,
+  useStartCatalogRefresh,
+  useRetryCatalogRefresh,
   useGetAdminAnalytics,
   useSearchAdminContent,
   useRefreshAdminContent,
@@ -19,6 +22,7 @@ import {
   getListAdminReportsQueryKey,
   getListAdminFeedbackQueryKey,
   getSearchAdminContentQueryKey,
+  getListCatalogRefreshesQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Redirect } from "wouter";
@@ -823,13 +827,78 @@ function IntegrationsTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: integrations, isLoading } = useListAdminIntegrations();
+  const { data: refreshes } = useListCatalogRefreshes({
+    query: {
+      queryKey: getListCatalogRefreshesQueryKey(),
+      refetchInterval: (query) => query.state.data?.some((run) => run.status === "running" || run.status === "queued") ? 2000 : 30_000,
+    },
+  });
+  const startCatalog = useStartCatalogRefresh({
+    mutation: {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getListCatalogRefreshesQueryKey() });
+        toast({ title: "Catalog refresh started" });
+      },
+    },
+  });
+  const retryCatalog = useRetryCatalogRefresh({
+    mutation: {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getListCatalogRefreshesQueryKey() });
+        toast({ title: "Failed titles queued for retry" });
+      },
+    },
+  });
   const refresh = useRefreshAdminContent();
 
   if (isLoading) return <div className="h-64 flex items-center justify-center animate-pulse bg-secondary/30 rounded-3xl" />;
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="text-xl font-display font-bold">Integration Health</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xl font-display font-bold">Catalog Refresh</h2>
+        <Button onClick={() => startCatalog.mutate()} disabled={startCatalog.isPending || refreshes?.some((run) => run.status === "running")}>
+          <RefreshCw className={`w-4 h-4 mr-2 ${startCatalog.isPending ? "animate-spin" : ""}`} />
+          Refresh now
+        </Button>
+      </div>
+      {refreshes?.length ? (
+        <div className="space-y-3">
+          {refreshes.slice(0, 5).map((run) => {
+            const percent = run.totalItems ? Math.round((run.processedItems / run.totalItems) * 100) : 0;
+            return (
+              <div key={run.id} className="bg-card border border-border rounded-2xl p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-semibold capitalize">{run.trigger} refresh</span>
+                    <span className="ml-2 text-xs uppercase text-muted-foreground">{run.status}</span>
+                  </div>
+                  <span className="text-sm text-muted-foreground">{new Date(run.createdAt).toLocaleString()}</span>
+                </div>
+                <div className="mt-3 h-2 rounded-full bg-secondary overflow-hidden">
+                  <div className="h-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+                </div>
+                <div className="mt-2 text-sm text-muted-foreground">
+                  {run.processedItems}/{run.totalItems} processed · {run.succeededItems} succeeded · {run.failedItems} failed · {run.episodesUpdated} episodes
+                </div>
+                {run.failures.length > 0 && (
+                  <div className="mt-3">
+                    <div className="text-sm text-red-600 dark:text-red-400">
+                      {run.failures.slice(0, 5).map((failure) => `${failure.title} (${failure.provider}): ${failure.error ?? "Unknown error"}`).join(" · ")}
+                    </div>
+                    <Button className="mt-2" size="sm" variant="outline"
+                      disabled={retryCatalog.isPending}
+                      onClick={() => retryCatalog.mutate({ id: run.id })}>
+                      Retry failed titles
+                    </Button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : <p className="text-sm text-muted-foreground">No catalog refreshes have run yet. Automatic refreshes run weekly.</p>}
+      <h2 className="text-xl font-display font-bold mt-4">Integration Health</h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {integrations?.map(int => (
           <div key={int.provider} className="bg-card border border-border rounded-3xl p-6 shadow-sm">
@@ -843,6 +912,11 @@ function IntegrationsTab() {
               }`}>{int.status.replace(/_/g, " ")}</span>
             </div>
             <div className="space-y-3 text-sm">
+              {int.sustainedFailureAlert && (
+                <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+                  Sustained provider failure. Catalog data from this source may be stale.
+                </div>
+              )}
               <div className="flex justify-between items-center py-2 border-b border-border/50">
                 <span className="text-muted-foreground">Success Rate</span>
                 <span className="font-medium">{int.successRatePercent}%</span>

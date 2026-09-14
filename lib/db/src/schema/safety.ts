@@ -9,6 +9,7 @@ import {
   jsonb,
   pgEnum,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { titlesTable } from "./catalog";
 import { usersTable } from "./users";
@@ -116,3 +117,33 @@ export const integrationHealthTable = pgTable("integration_health", {
   mappedTitles: integer("mapped_titles").notNull().default(0),
   missingMappings: integer("missing_mappings").notNull().default(0),
 }, (table) => [index("integration_health_provider_idx").on(table.provider)]);
+
+export const catalogSyncRunsTable = pgTable("catalog_sync_runs", {
+  id: serial("id").primaryKey(),
+  trigger: text("trigger").notNull(), // scheduled | manual | retry
+  status: text("status").notNull().default("queued"), // queued | running | succeeded | partial | failed | skipped
+  totalItems: integer("total_items").notNull().default(0),
+  processedItems: integer("processed_items").notNull().default(0),
+  succeededItems: integer("succeeded_items").notNull().default(0),
+  failedItems: integer("failed_items").notNull().default(0),
+  episodesUpdated: integer("episodes_updated").notNull().default(0),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index("catalog_sync_runs_created_idx").on(table.createdAt)]);
+
+export const catalogSyncItemsTable = pgTable("catalog_sync_items", {
+  id: serial("id").primaryKey(),
+  runId: integer("run_id").notNull().references(() => catalogSyncRunsTable.id, { onDelete: "cascade" }),
+  itemKey: text("item_key").notNull(),
+  title: text("title").notNull(),
+  provider: text("provider").notNull(),
+  status: text("status").notNull().default("queued"), // queued | running | succeeded | failed
+  error: text("error"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+}, (table) => [
+  uniqueIndex("catalog_sync_items_run_key_idx").on(table.runId, table.itemKey),
+  index("catalog_sync_items_run_status_idx").on(table.runId, table.status),
+]);

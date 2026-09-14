@@ -489,7 +489,6 @@ export const createImportBodyFileNameMax = 255;
 export const createImportBodyContentMax = 2097152;
 
 
-
 export const CreateImportBody = zod.object({
   "source": zod.enum(['tvtime', 'trakt', 'letterboxd', 'generic']).describe('Selects the strict documented export shape; see docs\/import-api-contract.md.'),
   "fileName": zod.string().min(1).max(createImportBodyFileNameMax),
@@ -776,7 +775,6 @@ export const GetPublicStatsResponse = zod.object({
  */
 
 
-
 export const CreateFeedbackBody = zod.object({
   "category": zod.enum(['bug', 'feature', 'general']),
   "message": zod.string().min(1),
@@ -950,11 +948,33 @@ export const ListAdminIntegrationsResponseItem = zod.object({
   "lastError": zod.string().nullish(),
   "successRatePercent": zod.number(),
   "mappedTitles": zod.int(),
-  "missingMappings": zod.int()
+  "missingMappings": zod.int(),
+  "sustainedFailureAlert": zod.boolean()
 })
 export const ListAdminIntegrationsResponse = zod.array(ListAdminIntegrationsResponseItem)
 
-
+/**
+ * @summary Recent catalog refresh runs and failures
+ */
+export const ListCatalogRefreshesResponseItem = zod.object({
+  "id": zod.int(),
+  "trigger": zod.enum(['scheduled', 'manual', 'retry']),
+  "status": zod.enum(['queued', 'running', 'succeeded', 'partial', 'failed', 'skipped']),
+  "totalItems": zod.int(),
+  "processedItems": zod.int(),
+  "succeededItems": zod.int(),
+  "failedItems": zod.int(),
+  "episodesUpdated": zod.int(),
+  "startedAt": zod.string().nullish(),
+  "finishedAt": zod.string().nullish(),
+  "error": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "failures": zod.array(zod.object({
+  "title": zod.string(),
+  "provider": zod.enum(['TVMaze', 'Wikipedia']),
+  "error": zod.string().nullish()
+}))
+})
 /**
  * @summary Search content items with provider mappings
  */
@@ -1011,7 +1031,6 @@ export const refreshAdminContentBatchBodyLimitMax = 25;
 
 export const refreshAdminContentBatchBodyOffsetDefault = 0;
 export const refreshAdminContentBatchBodyOffsetMin = 0;
-
 
 
 export const RefreshAdminContentBatchBody = zod.object({
@@ -1104,3 +1123,22 @@ export const GetAdminAuditLogResponse = zod.object({
 })
 
 
+/**
+ * @summary Retry failed titles from a catalog refresh
+ */
+export const RetryCatalogRefreshParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const RetryCatalogRefreshResponse = zod.object({
+  "runId": zod.int()
+})
+
+export const ListCatalogRefreshesResponse = zod.array(ListCatalogRefreshesResponseItem)
+
+/**
+ * @summary Start a full catalog refresh
+ */
+export const StartCatalogRefreshResponse = zod.object({
+  "runId": zod.int()
+})

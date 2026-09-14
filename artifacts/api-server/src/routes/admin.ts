@@ -12,6 +12,8 @@ import {
   analyticsEventsTable,
   watchedTitlesTable,
   adminAuditLogTable,
+  catalogSyncRunsTable,
+  catalogSyncItemsTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, gte, lte, ilike, inArray } from "drizzle-orm";
 import {
@@ -28,6 +30,7 @@ import {
   refreshWikidataBatch,
   refreshWikidataTitle,
 } from "../lib/wikidata";
+import { retryFailedCatalogTitles, startCatalogRefresh } from "../lib/catalog-refresh";
 
 const router: IRouter = Router();
 
@@ -353,6 +356,7 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
 
 router.get("/integrations", async (_req, res) => {
   const rows = await db.select().from(integrationHealthTable);
+  const sustainedFailureThreshold = Date.now() - 3 * 24 * 60 * 60 * 1000;
   return res.json(
     rows.map((r) => ({
       provider: r.provider,
@@ -363,8 +367,59 @@ router.get("/integrations", async (_req, res) => {
       successRatePercent: r.successRatePercent,
       mappedTitles: r.mappedTitles,
       missingMappings: r.missingMappings,
+      sustainedFailureAlert:
+        (r.provider === "TVMaze" || r.provider === "Wikipedia") &&
+        r.status === "failing" &&
+        (!r.lastSuccessAt || r.lastSuccessAt.getTime() < sustainedFailureThreshold),
     })),
   );
+});
+
+router.get("/catalog-refreshes", async (_req, res) => {
+  const runs = await db.select().from(catalogSyncRunsTable)
+    .orderBy(desc(catalogSyncRunsTable.createdAt)).limit(20);
+  const runIds = runs.map((run) => run.id);
+  const items = runIds.length
+    ? await db.select().from(catalogSyncItemsTable)
+        .where(and(inArray(catalogSyncItemsTable.runId, runIds), eq(catalogSyncItemsTable.status, "failed")))
+    : [];
+  return res.json(runs.map((run) => ({
+    ...run,
+    startedAt: run.startedAt?.toISOString() ?? null,
+    finishedAt: run.finishedAt?.toISOString() ?? null,
+    createdAt: run.createdAt.toISOString(),
+    failures: items.filter((item) => item.runId === run.id).map((item) => ({
+      title: item.title,
+      provider: item.provider,
+      error: item.error,
+    })),
+  })));
+});
+
+router.post("/catalog-refreshes", async (req, res) => {
+  const runId = await startCatalogRefresh("manual");
+  await db.insert(adminAuditLogTable).values({
+    adminId: req.userId!,
+    action: "start_catalog_refresh",
+    entityType: "catalog_sync",
+    entityId: runId,
+  });
+  return res.status(202).json({ runId });
+});
+
+router.post("/catalog-refreshes/:id/retry", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid run id" });
+  const runId = await retryFailedCatalogTitles(id);
+  if (!runId) return res.status(409).json({ error: "This run has no failed titles to retry" });
+  await db.insert(adminAuditLogTable).values({
+    adminId: req.userId!,
+    action: "retry_catalog_refresh",
+    entityType: "catalog_sync",
+    entityId: runId,
+    details: { sourceRunId: id },
+  });
+  return res.status(202).json({ runId });
 });
 
 router.get("/content", async (req, res) => {

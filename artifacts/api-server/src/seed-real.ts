@@ -222,7 +222,7 @@ const LEGACY_ID_REPAIRS: Array<[number, number]> = [
   [54439, 13645], // The Staircase scripted drama -> documentary
 ];
 
-const sourceItems: SourceItem[] = [
+export const sourceItems: SourceItem[] = [
   // Neither public source supplies a comparable popularity score. Zero means
   // "unknown" in this schema; ranking is never fabricated from list order.
   ...TVMAZE_MANIFEST.map((entry) => ({
@@ -744,14 +744,26 @@ export type SyncOptions = {
   limit?: number;
 };
 
-async function runCatalogSyncUnlocked(options: SyncOptions, items: SourceItem[]) {
+export type SyncProgress = {
+  item: SourceItem;
+  status: "running" | "succeeded" | "failed";
+  attempted: number;
+  succeeded: number;
+  episodes: number;
+  error?: string;
+};
+async function runCatalogSyncUnlocked(
+  options: SyncOptions,
+  items: SourceItem[],
+  onProgress?: (progress: SyncProgress) => void | Promise<void>,
+): Promise<SyncResult> {
   if (!options.dryRun) {
     await preflightDedupe();
     await repairLegacyMappings();
   }
   const selected = items.filter((item) => !options.types?.length || options.types.includes(item.type)).slice(0, options.limit);
   const counts = { attempted: 0, succeeded: 0, episodes: 0 };
-  const failures: Array<{ title: string; error: string }> = [];
+  const failures: SyncResult["failures"] = [];
   const health = new Map<string, { attempted: number; succeeded: number; error: string | null }>();
   let cursor = 0;
   const worker = async () => {
@@ -760,6 +772,7 @@ async function runCatalogSyncUnlocked(options: SyncOptions, items: SourceItem[])
       if (!item) return;
       counts.attempted++;
       const provider = item.source === "tvmaze" ? "TVMaze" : "Wikipedia";
+      await onProgress?.({ item, status: "running", ...counts });
       const h = health.get(provider) ?? { attempted: 0, succeeded: 0, error: null };
       h.attempted++;
       health.set(provider, h);
@@ -771,10 +784,12 @@ async function runCatalogSyncUnlocked(options: SyncOptions, items: SourceItem[])
         }
         counts.succeeded++;
         h.succeeded++;
+        await onProgress?.({ item, status: "succeeded", ...counts });
         process.stdout.write(`[${counts.attempted}/${selected.length}] ✓ ${item.name}\n`);
       } catch (error) {
         h.error = error instanceof Error ? error.message : String(error);
-        failures.push({ title: item.name, error: h.error });
+        failures.push({ key: item.key, title: item.name, provider, error: h.error });
+        await onProgress?.({ item, status: "failed", ...counts, error: h.error });
         process.stdout.write(`[${counts.attempted}/${selected.length}] ✗ ${item.name}: ${h.error}\n`);
       }
     }
@@ -786,12 +801,18 @@ async function runCatalogSyncUnlocked(options: SyncOptions, items: SourceItem[])
   const byType = Object.fromEntries(["movie", "tv", "anime", "documentary"].map((type) => [type, selected.filter((item) => item.type === type).length]));
   process.stdout.write(JSON.stringify({ dryRun: options.dryRun, selected: selected.length, selectedByType: byType, succeeded: counts.succeeded, failures: failures.length, episodes: counts.episodes }) + "\n");
   if (failures.length && !options.allowPartial) process.exitCode = 1;
+  return { selected: selected.length, succeeded: counts.succeeded, episodes: counts.episodes, failures };
 }
 
-async function withCatalogLock<T>(work: () => Promise<T>): Promise<T> {
+async function withCatalogLock<T>(work: () => Promise<T>, waitForLock = true): Promise<T | null> {
   const client = await pool.connect();
   try {
-    await client.query("select pg_advisory_lock(hashtext('watchtime:catalog-sync'))");
+    if (waitForLock) {
+      await client.query("select pg_advisory_lock(hashtext('watchtime:catalog-sync'))");
+    } else {
+      const result = await client.query<{ locked: boolean }>("select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked");
+      if (!result.rows[0]?.locked) return null;
+    }
     return await work();
   } finally {
     await client.query("select pg_advisory_unlock(hashtext('watchtime:catalog-sync'))").catch(() => {});
@@ -799,8 +820,13 @@ async function withCatalogLock<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-export function runCatalogSync(options: SyncOptions = parseArgs(), items: SourceItem[] = sourceItems) {
-  return withCatalogLock(() => runCatalogSyncUnlocked(options, items));
+export function runCatalogSync(
+  options: SyncOptions = parseArgs(),
+  items: SourceItem[] = sourceItems,
+  onProgress?: (progress: SyncProgress) => void | Promise<void>,
+  waitForLock = true,
+) {
+  return withCatalogLock(() => runCatalogSyncUnlocked(options, items, onProgress), waitForLock);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -809,3 +835,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exitCode = 1;
   }).finally(() => pool.end());
 }
+
+export type SyncResult = {
+  selected: number;
+  succeeded: number;
+  episodes: number;
+  failures: Array<{ key: string; title: string; provider: "TVMaze" | "Wikipedia"; error: string }>;
+};
