@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  catalogSyncItemsTable,
+  catalogSyncRunsTable,
   db,
   episodesTable,
   integrationHealthTable,
@@ -8,13 +10,18 @@ import {
   titlesTable,
   watchProvidersTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   parseArgs,
   runCatalogSync,
+  sourceItems,
   validateTvMazeResponse,
   type SourceItem,
 } from "./seed-real";
+import {
+  scheduleCatalogRefresh,
+  startCatalogRefresh,
+} from "./lib/catalog-refresh";
 
 const testImdb = "tt9990001";
 const testId = 990001;
@@ -52,6 +59,9 @@ const showPayload = {
     }],
   },
 };
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const catalogRunIds: number[] = [];
+const scheduledTimers: NodeJS.Timeout[] = [];
 
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -60,12 +70,29 @@ function jsonResponse(payload: unknown, status = 200) {
   });
 }
 
+async function waitForCatalogRun(
+  runId: number,
+  predicate: (run: typeof catalogSyncRunsTable.$inferSelect) => boolean,
+) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const [run] = await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, runId));
+    if (run && predicate(run)) return run;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Catalog refresh run ${runId} did not reach the expected state`);
+}
+
 let healthSnapshot: (typeof integrationHealthTable.$inferSelect)[] = [];
 beforeEach(async () => {
   healthSnapshot = await db.select().from(integrationHealthTable);
 });
 
 afterEach(async () => {
+  for (const timer of scheduledTimers.splice(0)) clearTimeout(timer);
+  if (catalogRunIds.length) {
+    await db.delete(catalogSyncRunsTable).where(inArray(catalogSyncRunsTable.id, catalogRunIds.splice(0)));
+  }
   vi.unstubAllGlobals();
   const [title] = await db.select({ id: titlesTable.id }).from(titlesTable)
     .where(eq(titlesTable.imdbId, testImdb)).limit(1);
@@ -276,5 +303,94 @@ describe("real catalog sync", () => {
     process.argv = ["node", "seed-real", "--unknown"];
     expect(() => parseArgs()).toThrow(/Unknown argument/);
     process.argv = original;
+  });
+
+  it("allows only one catalog writer during scheduled and manual overlap", async () => {
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const fetchMock = vi.fn(async () => {
+      await fetchGate;
+      return jsonResponse(showPayload);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const scheduledId = await startCatalogRefresh("scheduled", [testItem]);
+    catalogRunIds.push(scheduledId);
+    await waitForCatalogRun(scheduledId, () => fetchMock.mock.calls.length === 1);
+
+    const manualId = await startCatalogRefresh("manual", [testItem]);
+    catalogRunIds.push(manualId);
+    const skipped = await waitForCatalogRun(manualId, (run) => run.status === "skipped");
+    expect(skipped.error).toMatch(/already running/i);
+
+    releaseFetch();
+    await waitForCatalogRun(scheduledId, (run) => run.status === "succeeded");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const writtenTitles = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
+    expect(writtenTitles).toHaveLength(1);
+  });
+
+  it("marks a restart-interrupted run and its unfinished item as retryable failures", async () => {
+    const retryableItem = sourceItems[0];
+    const [run] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "scheduled",
+      status: "running",
+      totalItems: 1,
+      startedAt: new Date(),
+    }).returning();
+    catalogRunIds.push(run.id);
+    await db.insert(catalogSyncItemsTable).values({
+      runId: run.id,
+      itemKey: retryableItem.key,
+      title: retryableItem.name,
+      provider: "TVMaze",
+      status: "running",
+      startedAt: new Date(),
+    });
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    await scheduleCatalogRefresh();
+    const timer = setTimeoutSpy.mock.results.at(-1)?.value as NodeJS.Timeout | undefined;
+    if (timer) scheduledTimers.push(timer);
+
+    const [recoveredRun] = await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, run.id));
+    const [recoveredItem] = await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, run.id));
+    expect(recoveredRun).toMatchObject({
+      status: "failed",
+      error: "Catalog refresh was interrupted by a server restart",
+    });
+    expect(recoveredRun.finishedAt).toBeInstanceOf(Date);
+    expect(recoveredItem).toMatchObject({
+      status: "failed",
+      itemKey: retryableItem.key,
+      error: "Catalog refresh was interrupted by a server restart",
+    });
+    expect(sourceItems.some((item) => item.key === recoveredItem.itemKey)).toBe(true);
+  });
+
+  it("keeps the next scheduled run one week after an immediate completed run", async () => {
+    const now = new Date();
+    const [run] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual",
+      status: "succeeded",
+      createdAt: now,
+      startedAt: now,
+      finishedAt: now,
+    }).returning();
+    catalogRunIds.push(run.id);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    await scheduleCatalogRefresh();
+
+    const delay = Number(setTimeoutSpy.mock.calls.at(-1)?.[1]);
+    const timer = setTimeoutSpy.mock.results.at(-1)?.value as NodeJS.Timeout | undefined;
+    if (timer) scheduledTimers.push(timer);
+    expect(delay).toBeGreaterThan(WEEK_MS - 2_000);
+    expect(delay).toBeLessThanOrEqual(WEEK_MS);
   });
 });
