@@ -217,6 +217,42 @@ describe('mobile startup contracts', () => {
     expect(mockMarkStartup).toHaveBeenCalledWith('font-error');
   });
 
+  it('keeps home data quiet while Clerk auth is loading, then loads the ready branch', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: false, isSignedIn: undefined });
+
+    const screen = await render(<HomeScreen />);
+
+    expect(screen.getByTestId('loading')).toBeTruthy();
+    expect(mockQueryEnabled.shows).toEqual([]);
+    expect(mockQueryEnabled.watchlist).toEqual([]);
+    expect(mockQueryEnabled.recommendations).toEqual([]);
+    expect(mockQueryEnabled.trending).toEqual([]);
+
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
+
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
+    expect(mockQueryEnabled.trending).toEqual([]);
+
+    await act(async () => {
+      pendingInteraction?.();
+    });
+    await act(async () => {
+      pendingFrame?.(0);
+    });
+
+    await waitFor(() => {
+      expect(mockQueryEnabled.shows.at(-1)).toBe(true);
+      expect(mockQueryEnabled.watchlist.at(-1)).toBe(true);
+      expect(mockQueryEnabled.recommendations.at(-1)).toBe(true);
+    });
+  });
+
   it('keeps signed-in home queries disabled until the post-first-frame gate opens', async () => {
     await render(<HomeScreen />);
 
