@@ -23,6 +23,19 @@ export const feedbackRateLimit = rateLimit({
 });
 
 /**
+ * GET /api/stats/public — 60 per minute per IP.
+ * The route also caches its database result, but this bounds abusive request volume.
+ */
+export const publicStatsRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  store: new DrizzleRateLimitStore("public_stats"),
+  message: { error: "Too many stats requests. Please wait before trying again." },
+});
+
+/**
  * POST /api/titles/:id/safety/reports — 10 per hour per user (falling back to IP).
  * Must be placed after requireAuth so req.userId is populated.
  */

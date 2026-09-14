@@ -11,12 +11,28 @@ import {
 import { eq, sql, desc, inArray } from "drizzle-orm";
 import { CreateFeedbackBody } from "@workspace/api-zod";
 import { optionalAuth } from "../middlewares/auth";
-import { feedbackRateLimit } from "../middlewares/rateLimiters";
+import { feedbackRateLimit, publicStatsRateLimit } from "../middlewares/rateLimiters";
 import { toTitleJson } from "../lib/serialize";
 
 const router: IRouter = Router();
 
-router.get("/stats/public", async (_req, res) => {
+const PUBLIC_STATS_CACHE_MS = 60_000;
+let publicStatsCache: { value: PublicStats; expiresAt: number } | null = null;
+let publicStatsRequest: Promise<PublicStats> | null = null;
+
+type PublicStats = {
+  registeredUsers: number;
+  titlesTracked: number;
+  episodesWatched: number;
+  moviesWatched: number;
+  trendingTv: ReturnType<typeof toTitleJson>[];
+  trendingMovies: ReturnType<typeof toTitleJson>[];
+  trendingAnime: ReturnType<typeof toTitleJson>[];
+  trendingDocumentaries: ReturnType<typeof toTitleJson>[];
+  mostSafetyChecked: ReturnType<typeof toTitleJson>[];
+};
+
+async function loadPublicStats(): Promise<PublicStats> {
   const [[users], [tracked], [eps], [movies]] = await Promise.all([
     db.select({ count: sql<number>`count(*)::int` }).from(usersTable),
     db
@@ -62,7 +78,7 @@ router.get("/stats/public", async (_req, res) => {
     .filter(Boolean)
     .map((t) => toTitleJson(t!));
 
-  return res.json({
+  return {
     registeredUsers: users.count,
     titlesTracked: tracked.count,
     episodesWatched: eps.count,
@@ -72,7 +88,30 @@ router.get("/stats/public", async (_req, res) => {
     trendingAnime: await byType("anime"),
     trendingDocumentaries: await byType("documentary"),
     mostSafetyChecked: orderedSafety,
-  });
+  };
+}
+
+async function getPublicStats(): Promise<PublicStats> {
+  if (publicStatsCache && publicStatsCache.expiresAt > Date.now()) {
+    return publicStatsCache.value;
+  }
+
+  if (!publicStatsRequest) {
+    publicStatsRequest = loadPublicStats()
+      .then((value) => {
+        publicStatsCache = { value, expiresAt: Date.now() + PUBLIC_STATS_CACHE_MS };
+        return value;
+      })
+      .finally(() => {
+        publicStatsRequest = null;
+      });
+  }
+
+  return publicStatsRequest;
+}
+
+router.get("/stats/public", publicStatsRateLimit, async (_req, res) => {
+  return res.json(await getPublicStats());
 });
 
 router.post("/feedback", feedbackRateLimit, optionalAuth, async (req, res) => {

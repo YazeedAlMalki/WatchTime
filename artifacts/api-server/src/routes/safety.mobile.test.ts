@@ -53,6 +53,7 @@ vi.mock("../middlewares/rateLimiters", () => ({
   safetyContributionRateLimit: (req: any, res: any, next: any) =>
     mockContributionRateLimit(req, res, next),
   feedbackRateLimit: (_req: any, _res: any, next: any) => next(),
+  publicStatsRateLimit: (_req: any, _res: any, next: any) => next(),
   importCreateRateLimit: (_req: any, _res: any, next: any) => next(),
   importConfirmRateLimit: (_req: any, _res: any, next: any) => next(),
 }));

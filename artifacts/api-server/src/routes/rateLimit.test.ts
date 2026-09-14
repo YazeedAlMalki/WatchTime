@@ -22,6 +22,14 @@ vi.mock("../middlewares/rateLimiters", () => ({
     keyGenerator: (req: any) => req.headers["x-test-key"] ?? req.ip ?? "test",
     message: { error: "Too many feedback submissions. Please wait before trying again." },
   }),
+  publicStatsRateLimit: rateLimit({
+    windowMs: 60_000,
+    limit: 1,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    keyGenerator: (req: any) => req.headers["x-test-key"] ?? req.ip ?? "test",
+    message: { error: "Too many stats requests. Please wait before trying again." },
+  }),
   safetyReportRateLimit: rateLimit({
     windowMs: 60_000,
     limit: 1,
@@ -146,6 +154,24 @@ describe("POST /api/feedback — rate limit", () => {
       .send({ category: "general", message: "second attempt" });
 
     assert429(second, "Too many feedback submissions. Please wait before trying again.");
+  });
+});
+
+describe("GET /api/stats/public — rate limit", () => {
+  it("allows the first request and blocks the second with 429", async () => {
+    const key = `stats-rl-test-${Date.now()}`;
+
+    const first = await supertest(app)
+      .get("/api/stats/public")
+      .set("X-Test-Key", key);
+
+    expect(first.status).toBe(200);
+
+    const second = await supertest(app)
+      .get("/api/stats/public")
+      .set("X-Test-Key", key);
+
+    assert429(second, "Too many stats requests. Please wait before trying again.");
   });
 });
 
