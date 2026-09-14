@@ -258,15 +258,87 @@ describe("shared rating-region preference", () => {
     expect(missing.body.preferredRating).toBeNull();
   });
 
-  it.each(["US", "GB", "DE", "FR"])(
-    "continues to accept the existing %s country choice",
-    async (preferredRatingRegion) => {
+  it.each([
+    ["US", "MPAA", "PG-13"],
+    ["GB", "BBFC", "12A"],
+    ["DE", "FSK", "12"],
+    ["FR", "CNC", "Tous publics"],
+    ["AU", "Australian Classification", "M"],
+    ["BR", "ClassInd", "14"],
+  ])(
+    "returns only the mapped official classification for %s",
+    async (preferredRatingRegion, expectedSystem, expectedLabel) => {
+      const officialItems = [
+        ["MPAA", "PG-13"],
+        ["BBFC", "12A"],
+        ["FSK", "12"],
+        ["CNC", "Tous publics"],
+        ["Australian Classification", "M"],
+        ["ClassInd", "14"],
+      ].map(([category, label]) => ({
+        category,
+        label,
+        score: null,
+        maxScore: null,
+        description: `${category} official rating`,
+      }));
+
+      await db.insert(safetyRecordsTable).values([
+        {
+          titleId,
+          sourceName: "Wikidata",
+          tier: 2,
+          isCommunity: false,
+          status: "available",
+          items: officialItems,
+        },
+        {
+          titleId,
+          sourceName: "WatchTime Community",
+          tier: 1,
+          isCommunity: true,
+          status: "available",
+          items: [{
+            category: expectedSystem,
+            label: "Community collision",
+            score: null,
+            maxScore: null,
+            description: "Must not be selected",
+          }],
+        },
+        {
+          titleId,
+          sourceName: "Other Ratings Provider",
+          tier: 2,
+          isCommunity: false,
+          status: "available",
+          items: [{
+            category: expectedSystem,
+            label: "Non-Wikidata collision",
+            score: null,
+            maxScore: null,
+            description: "Must not be selected",
+          }],
+        },
+      ]);
+
       const update = await supertest(app)
         .patch("/api/me")
         .send({ preferredRatingRegion });
 
       expect(update.status).toBe(200);
       expect(update.body.preferredRatingRegion).toBe(preferredRatingRegion);
+
+      const safety = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+      expect(safety.status).toBe(200);
+      expect(safety.body.preferredRatingRegion).toBe(preferredRatingRegion);
+      expect(safety.body.preferredRating).toEqual({
+        region: preferredRatingRegion,
+        countryName: expect.any(String),
+        system: expectedSystem,
+        label: expectedLabel,
+        sourceName: "Wikidata",
+      });
     },
   );
 });
