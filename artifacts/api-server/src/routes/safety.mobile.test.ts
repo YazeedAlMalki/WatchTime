@@ -163,7 +163,7 @@ describe("shared rating-region preference", () => {
       .where(eq(usersTable.id, MOBILE_USER_ID));
   });
 
-  it("persists a profile change and returns that exact country's sourced rating", async () => {
+  it("persists new country choices across clients and returns sourced or missing ratings", async () => {
     await db.insert(safetyRecordsTable).values({
       titleId,
       sourceName: "Wikidata",
@@ -173,6 +173,13 @@ describe("shared rating-region preference", () => {
       items: [
         { category: "MPAA", label: "PG-13", score: null, maxScore: null, description: "US rating" },
         { category: "BBFC", label: "12A", score: null, maxScore: null, description: "GB rating" },
+        {
+          category: "Australian Classification",
+          label: "M",
+          score: null,
+          maxScore: null,
+          description: "AU rating",
+        },
       ],
     });
     await db.insert(safetyRecordsTable).values({
@@ -206,34 +213,62 @@ describe("shared rating-region preference", () => {
       }],
     });
 
+    // Simulate web: save one of the newly supported country choices.
     const update = await supertest(app)
       .patch("/api/me")
-      .send({ preferredRatingRegion: "GB" });
+      .send({ preferredRatingRegion: "AU" });
     expect(update.status).toBe(200);
-    expect(update.body.preferredRatingRegion).toBe("GB");
+    expect(update.body.preferredRatingRegion).toBe("AU");
+
+    // Simulate mobile: a later profile read sees the persisted choice.
+    const profile = await supertest(app).get("/api/me");
+    expect(profile.status).toBe(200);
+    expect(profile.body.preferredRatingRegion).toBe("AU");
 
     const safety = await supertest(app).get(`/api/safety?titleId=${titleId}&seasonNumber=1`);
     expect(safety.status).toBe(200);
     expect(safety.body.level).toBe("season");
     expect(safety.body.preferredRating).toMatchObject({
-      region: "GB",
-      system: "BBFC",
-      label: "12A",
+      region: "AU",
+      system: "Australian Classification",
+      label: "M",
       sourceName: "Wikidata",
     });
     const ratingSource = safety.body.sources.find((source: any) => source.sourceName === "Wikidata");
     expect(ratingSource.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ category: "MPAA", label: "PG-13" }),
       expect.objectContaining({ category: "BBFC", label: "12A" }),
+      expect.objectContaining({ category: "Australian Classification", label: "M" }),
     ]));
 
-    await db.update(usersTable)
-      .set({ preferredRatingRegion: "DE" })
-      .where(eq(usersTable.id, MOBILE_USER_ID));
+    // Simulate web choosing Brazil, for which this title has no sourced rating.
+    const missingUpdate = await supertest(app)
+      .patch("/api/me")
+      .send({ preferredRatingRegion: "BR" });
+    expect(missingUpdate.status).toBe(200);
+    expect(missingUpdate.body.preferredRatingRegion).toBe("BR");
+
+    const missingProfile = await supertest(app).get("/api/me");
+    expect(missingProfile.status).toBe(200);
+    expect(missingProfile.body.preferredRatingRegion).toBe("BR");
+
     const missing = await supertest(app).get(`/api/safety?titleId=${titleId}`);
-    expect(missing.body.preferredRatingRegion).toBe("DE");
+    expect(missing.status).toBe(200);
+    expect(missing.body.preferredRatingRegion).toBe("BR");
     expect(missing.body.preferredRating).toBeNull();
   });
+
+  it.each(["US", "GB", "DE", "FR"])(
+    "continues to accept the existing %s country choice",
+    async (preferredRatingRegion) => {
+      const update = await supertest(app)
+        .patch("/api/me")
+        .send({ preferredRatingRegion });
+
+      expect(update.status).toBe(200);
+      expect(update.body.preferredRatingRegion).toBe(preferredRatingRegion);
+    },
+  );
 });
 
 afterAll(async () => {
