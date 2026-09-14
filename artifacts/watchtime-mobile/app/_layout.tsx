@@ -85,7 +85,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (fontsLoaded || fontError) {
       markStartup(fontError ? 'font-error' : 'fonts-ready');
-      SplashScreen.hideAsync();
+      void SplashScreen.hideAsync().catch(() => undefined);
     }
   }, [fontsLoaded, fontError]);
 

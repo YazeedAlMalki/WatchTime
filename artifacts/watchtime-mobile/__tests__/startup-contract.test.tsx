@@ -41,7 +41,7 @@ jest.mock('@expo-google-fonts/inter', () => ({
 }));
 
 jest.mock('expo-splash-screen', () => ({
-  hideAsync: jest.fn(),
+  hideAsync: jest.fn(() => Promise.resolve()),
   preventAutoHideAsync: jest.fn(),
 }));
 
@@ -217,6 +217,20 @@ describe('mobile startup contracts', () => {
     expect(getByTestId('root-navigation')).toBeTruthy();
     expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
     expect(mockMarkStartup).toHaveBeenCalledWith('font-error');
+  });
+
+  it('keeps root navigation mounted when splash screen cleanup fails', async () => {
+    const splashError = new Error('splash cleanup failed');
+    jest.mocked(SplashScreen.hideAsync).mockRejectedValueOnce(splashError);
+
+    const { getByTestId } = await render(<RootLayout />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(getByTestId('root-navigation')).toBeTruthy();
+    expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
   });
 
   it('keeps home data quiet while Clerk auth is loading, then loads the ready branch', async () => {
