@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import {
   catalogSyncItemsTable,
   catalogSyncRunsTable,
@@ -11,6 +11,8 @@ import { logger } from "./logger";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const SUSTAINED_FAILURE_MS = 3 * 24 * 60 * 60 * 1000;
+export const CATALOG_REFRESH_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+const COMPLETED_RUN_STATUSES = ["succeeded", "partial", "failed", "skipped"];
 let timer: NodeJS.Timeout | undefined;
 
 export async function startCatalogRefresh(
@@ -81,7 +83,29 @@ async function executeRun(runId: number, items: SourceItem[]) {
     await db.update(catalogSyncRunsTable).set({ status: "failed", error: message, finishedAt: new Date() })
       .where(eq(catalogSyncRunsTable.id, runId));
     logger.error({ err: error, runId }, "catalog refresh failed");
+  } finally {
+    void pruneCatalogRefreshHistory().catch((error) => {
+      logger.warn({ err: error }, "unable to prune catalog refresh history");
+    });
   }
+}
+
+export async function pruneCatalogRefreshHistory(
+  cutoff = new Date(Date.now() - CATALOG_REFRESH_RETENTION_MS),
+) {
+  const deleted = await db.delete(catalogSyncRunsTable)
+    .where(and(
+      inArray(catalogSyncRunsTable.status, COMPLETED_RUN_STATUSES),
+      lt(catalogSyncRunsTable.finishedAt, cutoff),
+    ))
+    .returning({ id: catalogSyncRunsTable.id });
+  if (deleted.length) {
+    logger.info(
+      { deletedRuns: deleted.length, cutoff },
+      "pruned catalog refresh history",
+    );
+  }
+  return deleted.length;
 }
 
 async function logSustainedProviderFailures() {

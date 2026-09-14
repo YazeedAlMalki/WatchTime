@@ -131,7 +131,10 @@ export const catalogSyncRunsTable = pgTable("catalog_sync_runs", {
   finishedAt: timestamp("finished_at", { withTimezone: true }),
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [index("catalog_sync_runs_created_idx").on(table.createdAt)]);
+}, (table) => [
+  index("catalog_sync_runs_created_idx").on(table.createdAt),
+  index("catalog_sync_runs_retention_idx").on(table.status, table.finishedAt),
+]);
 
 export const catalogSyncItemsTable = pgTable("catalog_sync_items", {
   id: serial("id").primaryKey(),
