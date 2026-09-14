@@ -231,6 +231,9 @@ describe('mobile startup contracts', () => {
 
     expect(getByTestId('root-navigation')).toBeTruthy();
     expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('splash-recovery-error', {
+      error: 'splash cleanup failed',
+    });
   });
 
   it('keeps home data quiet while Clerk auth is loading, then loads the ready branch', async () => {
