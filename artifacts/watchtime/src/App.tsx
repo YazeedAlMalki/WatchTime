@@ -24,6 +24,7 @@ import WatchlistPage from '@/pages/watchlist';
 import MyShowsPage from '@/pages/my-shows';
 import StatsPage from '@/pages/stats';
 import ProfilePage from '@/pages/profile';
+import ImportDataPage from '@/pages/import-data';
 import FeedbackPage from '@/pages/feedback';
 import AdminPage from '@/pages/admin';
 import { DevAuthPage } from '@/components/auth/DevAuthPage';
@@ -173,6 +174,7 @@ function Router() {
             <Route path="/my-shows" component={MyShowsPage} />
             <Route path="/stats" component={StatsPage} />
             <Route path="/profile" component={ProfilePage} />
+            <Route path="/import-data" component={ImportDataPage} />
             <Route path="/feedback" component={FeedbackPage} />
             <Route path="/admin" component={AdminPage} />
             <Route component={NotFound} />

@@ -482,6 +482,205 @@ export const GetMyRecommendationsResponse = zod.array(GetMyRecommendationsRespon
 
 
 /**
+ * @summary Parse a bounded watch-history export into a private preview
+ */
+export const createImportBodyFileNameMax = 255;
+
+export const createImportBodyContentMax = 2097152;
+
+
+
+export const CreateImportBody = zod.object({
+  "source": zod.enum(['tvtime', 'trakt', 'letterboxd', 'generic']).describe('Selects the strict documented export shape; see docs\/import-api-contract.md.'),
+  "fileName": zod.string().min(1).max(createImportBodyFileNameMax),
+  "content": zod.string().max(createImportBodyContentMax).describe('Raw UTF-8 CSV or JSON text; never retained after parsing.')
+})
+
+export const CreateImportResponse = zod.object({
+  "id": zod.int(),
+  "source": zod.enum(['tvtime', 'trakt', 'letterboxd', 'generic']),
+  "fileName": zod.string(),
+  "status": zod.enum(['ready', 'confirming', 'confirmed']),
+  "rowCount": zod.int(),
+  "summary": zod.record(zod.string(), zod.int()).describe('Preview classification counts; completed jobs additionally include selected, applied, duplicates, and skipped.'),
+  "createdAt": zod.coerce.date(),
+  "confirmedAt": zod.coerce.date().nullable(),
+  "items": zod.array(zod.object({
+  "id": zod.int(),
+  "rowNumber": zod.int(),
+  "kind": zod.enum(['watched_movie', 'watched_episode', 'tracked_show', 'watchlist', 'unsupported']),
+  "classification": zod.enum(['matched', 'duplicate', 'unmatched', 'ambiguous', 'invalid', 'unsupported']),
+  "selected": zod.boolean(),
+  "errorCode": zod.string().nullish(),
+  "normalized": zod.object({
+  "kind": zod.enum(['watched_movie', 'watched_episode', 'tracked_show', 'watchlist']),
+  "title": zod.string(),
+  "type": zod.union([zod.literal('movie'),zod.literal('tv'),zod.literal(null)]).nullable(),
+  "year": zod.int().nullable(),
+  "imdbId": zod.string().nullable(),
+  "tmdbId": zod.int().nullable(),
+  "season": zod.int().nullable(),
+  "episode": zod.int().nullable(),
+  "watchedAt": zod.coerce.date().nullable()
+}),
+  "candidates": zod.array(zod.object({
+  "titleId": zod.int(),
+  "name": zod.string(),
+  "type": zod.string(),
+  "year": zod.int().nullable()
+})),
+  "titleId": zod.int().nullable(),
+  "episodeId": zod.int().nullable()
+}))
+})
+
+
+/**
+ * @summary Get a private import preview or completed result
+ */
+export const GetImportParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const GetImportResponse = zod.object({
+  "id": zod.int(),
+  "source": zod.enum(['tvtime', 'trakt', 'letterboxd', 'generic']),
+  "fileName": zod.string(),
+  "status": zod.enum(['ready', 'confirming', 'confirmed']),
+  "rowCount": zod.int(),
+  "summary": zod.record(zod.string(), zod.int()).describe('Preview classification counts; completed jobs additionally include selected, applied, duplicates, and skipped.'),
+  "createdAt": zod.coerce.date(),
+  "confirmedAt": zod.coerce.date().nullable(),
+  "items": zod.array(zod.object({
+  "id": zod.int(),
+  "rowNumber": zod.int(),
+  "kind": zod.enum(['watched_movie', 'watched_episode', 'tracked_show', 'watchlist', 'unsupported']),
+  "classification": zod.enum(['matched', 'duplicate', 'unmatched', 'ambiguous', 'invalid', 'unsupported']),
+  "selected": zod.boolean(),
+  "errorCode": zod.string().nullish(),
+  "normalized": zod.object({
+  "kind": zod.enum(['watched_movie', 'watched_episode', 'tracked_show', 'watchlist']),
+  "title": zod.string(),
+  "type": zod.union([zod.literal('movie'),zod.literal('tv'),zod.literal(null)]).nullable(),
+  "year": zod.int().nullable(),
+  "imdbId": zod.string().nullable(),
+  "tmdbId": zod.int().nullable(),
+  "season": zod.int().nullable(),
+  "episode": zod.int().nullable(),
+  "watchedAt": zod.coerce.date().nullable()
+}),
+  "candidates": zod.array(zod.object({
+  "titleId": zod.int(),
+  "name": zod.string(),
+  "type": zod.string(),
+  "year": zod.int().nullable()
+})),
+  "titleId": zod.int().nullable(),
+  "episodeId": zod.int().nullable()
+}))
+})
+
+
+/**
+ * @summary Resolve an offered ambiguous title candidate or skip an item
+ */
+export const ResolveImportItemParams = zod.object({
+  "id": zod.coerce.number().int(),
+  "itemId": zod.coerce.number().int()
+})
+
+export const ResolveImportItemBody = zod.union([zod.object({
+  "titleId": zod.int()
+}),zod.object({
+  "skip": zod.literal(true)
+})])
+
+export const ResolveImportItemResponse = zod.object({
+  "id": zod.int(),
+  "rowNumber": zod.int(),
+  "kind": zod.enum(['watched_movie', 'watched_episode', 'tracked_show', 'watchlist', 'unsupported']),
+  "classification": zod.enum(['matched', 'duplicate', 'unmatched', 'ambiguous', 'invalid', 'unsupported']),
+  "selected": zod.boolean(),
+  "errorCode": zod.string().nullish(),
+  "normalized": zod.object({
+  "kind": zod.enum(['watched_movie', 'watched_episode', 'tracked_show', 'watchlist']),
+  "title": zod.string(),
+  "type": zod.union([zod.literal('movie'),zod.literal('tv'),zod.literal(null)]).nullable(),
+  "year": zod.int().nullable(),
+  "imdbId": zod.string().nullable(),
+  "tmdbId": zod.int().nullable(),
+  "season": zod.int().nullable(),
+  "episode": zod.int().nullable(),
+  "watchedAt": zod.coerce.date().nullable()
+}),
+  "candidates": zod.array(zod.object({
+  "titleId": zod.int(),
+  "name": zod.string(),
+  "type": zod.string(),
+  "year": zod.int().nullable()
+})),
+  "titleId": zod.int().nullable(),
+  "episodeId": zod.int().nullable()
+})
+
+
+/**
+ * @summary Atomically apply selected matched import items
+ */
+export const ConfirmImportParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const ConfirmImportResponse = zod.object({
+  "id": zod.int(),
+  "source": zod.enum(['tvtime', 'trakt', 'letterboxd', 'generic']),
+  "fileName": zod.string(),
+  "status": zod.enum(['ready', 'confirming', 'confirmed']),
+  "rowCount": zod.int(),
+  "summary": zod.record(zod.string(), zod.int()).describe('Preview classification counts; completed jobs additionally include selected, applied, duplicates, and skipped.'),
+  "createdAt": zod.coerce.date(),
+  "confirmedAt": zod.coerce.date().nullable(),
+  "items": zod.array(zod.object({
+  "id": zod.int(),
+  "rowNumber": zod.int(),
+  "kind": zod.enum(['watched_movie', 'watched_episode', 'tracked_show', 'watchlist', 'unsupported']),
+  "classification": zod.enum(['matched', 'duplicate', 'unmatched', 'ambiguous', 'invalid', 'unsupported']),
+  "selected": zod.boolean(),
+  "errorCode": zod.string().nullish(),
+  "normalized": zod.object({
+  "kind": zod.enum(['watched_movie', 'watched_episode', 'tracked_show', 'watchlist']),
+  "title": zod.string(),
+  "type": zod.union([zod.literal('movie'),zod.literal('tv'),zod.literal(null)]).nullable(),
+  "year": zod.int().nullable(),
+  "imdbId": zod.string().nullable(),
+  "tmdbId": zod.int().nullable(),
+  "season": zod.int().nullable(),
+  "episode": zod.int().nullable(),
+  "watchedAt": zod.coerce.date().nullable()
+}),
+  "candidates": zod.array(zod.object({
+  "titleId": zod.int(),
+  "name": zod.string(),
+  "type": zod.string(),
+  "year": zod.int().nullable()
+})),
+  "titleId": zod.int().nullable(),
+  "episodeId": zod.int().nullable()
+}))
+})
+
+
+/**
+ * @summary Download private unmatched/error import rows as CSV
+ */
+export const DownloadImportReportParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DownloadImportReportResponse = zod.unknown()
+
+
+/**
  * @summary Public aggregate statistics
  */
 export const GetPublicStatsResponse = zod.object({

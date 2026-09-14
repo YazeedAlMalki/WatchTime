@@ -5,6 +5,7 @@ import trackingRouter from "./tracking";
 import safetyRouter from "./safety";
 import miscRouter from "./misc";
 import adminRouter from "./admin";
+import importsRouter from "./imports";
 
 const router: IRouter = Router();
 
@@ -13,6 +14,7 @@ router.use(catalogRouter);
 router.use(trackingRouter);
 router.use(safetyRouter);
 router.use(miscRouter);
+router.use(importsRouter);
 router.use("/admin", adminRouter);
 
 export default router;

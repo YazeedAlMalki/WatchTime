@@ -323,6 +323,9 @@ describe("PATCH /api/admin/contributions/:id — audit log", () => {
       expect.objectContaining({ err: expect.any(Error) }),
       "unhandled request error",
     );
+    const loggedError = (logger.error as any).mock.calls.at(-1)[0].err;
+    expect(loggedError.message).toBe("simulated DB overload");
+    expect(loggedError.stack).toContain("simulated DB overload");
 
     // The status must still be "pending" — the rollback preserved consistency.
     const [reloaded] = await db

@@ -38,6 +38,10 @@ vi.mock("../middlewares/rateLimiters", () => ({
     keyGenerator: (req: any) => req.headers["x-test-key"] ?? (req as any).userId ?? req.ip ?? "test",
     message: { error: "Daily contribution limit reached. You can submit more contributions tomorrow." },
   }),
+  // Other routers are mounted in the same app; pass through their limits so
+  // this focused suite can still construct the complete route tree.
+  importCreateRateLimit: (_req: any, _res: any, next: any) => next(),
+  importConfirmRateLimit: (_req: any, _res: any, next: any) => next(),
 }));
 
 // ─── Silence logger + clerk mocks ────────────────────────────────────────────

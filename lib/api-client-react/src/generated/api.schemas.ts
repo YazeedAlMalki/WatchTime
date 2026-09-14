@@ -13,6 +13,165 @@ export interface OkResult {
   ok: boolean;
 }
 
+/**
+ * Selects the strict documented export shape; see docs/import-api-contract.md.
+ */
+export type ImportCreateInputSource = typeof ImportCreateInputSource[keyof typeof ImportCreateInputSource];
+
+
+export const ImportCreateInputSource = {
+  tvtime: 'tvtime',
+  trakt: 'trakt',
+  letterboxd: 'letterboxd',
+  generic: 'generic',
+} as const;
+
+export interface ImportCreateInput {
+  /** Selects the strict documented export shape; see docs/import-api-contract.md. */
+  source: ImportCreateInputSource;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  fileName: string;
+  /**
+     * Raw UTF-8 CSV or JSON text; never retained after parsing.
+     * @maxLength 2097152
+     */
+  content: string;
+}
+
+export type ImportNormalizedRecordKind = typeof ImportNormalizedRecordKind[keyof typeof ImportNormalizedRecordKind];
+
+
+export const ImportNormalizedRecordKind = {
+  watched_movie: 'watched_movie',
+  watched_episode: 'watched_episode',
+  tracked_show: 'tracked_show',
+  watchlist: 'watchlist',
+} as const;
+
+/**
+ * @nullable
+ */
+export type ImportNormalizedRecordType = typeof ImportNormalizedRecordType[keyof typeof ImportNormalizedRecordType] | null;
+
+
+export const ImportNormalizedRecordType = {
+  movie: 'movie',
+  tv: 'tv',
+} as const;
+
+export interface ImportNormalizedRecord {
+  kind: ImportNormalizedRecordKind;
+  title: string;
+  /** @nullable */
+  type: ImportNormalizedRecordType;
+  /** @nullable */
+  year: number | null;
+  /** @nullable */
+  imdbId: string | null;
+  /** @nullable */
+  tmdbId: number | null;
+  /** @nullable */
+  season: number | null;
+  /** @nullable */
+  episode: number | null;
+  /** @nullable */
+  watchedAt: string | null;
+}
+
+export interface ImportCandidate {
+  titleId: number;
+  name: string;
+  type: string;
+  /** @nullable */
+  year: number | null;
+}
+
+export type ImportItemKind = typeof ImportItemKind[keyof typeof ImportItemKind];
+
+
+export const ImportItemKind = {
+  watched_movie: 'watched_movie',
+  watched_episode: 'watched_episode',
+  tracked_show: 'tracked_show',
+  watchlist: 'watchlist',
+  unsupported: 'unsupported',
+} as const;
+
+export type ImportItemClassification = typeof ImportItemClassification[keyof typeof ImportItemClassification];
+
+
+export const ImportItemClassification = {
+  matched: 'matched',
+  duplicate: 'duplicate',
+  unmatched: 'unmatched',
+  ambiguous: 'ambiguous',
+  invalid: 'invalid',
+  unsupported: 'unsupported',
+} as const;
+
+export interface ImportItem {
+  id: number;
+  rowNumber: number;
+  kind: ImportItemKind;
+  classification: ImportItemClassification;
+  selected: boolean;
+  /** @nullable */
+  errorCode?: string | null;
+  normalized: ImportNormalizedRecord;
+  candidates: ImportCandidate[];
+  /** @nullable */
+  titleId: number | null;
+  /** @nullable */
+  episodeId: number | null;
+}
+
+export type ImportJobSource = typeof ImportJobSource[keyof typeof ImportJobSource];
+
+
+export const ImportJobSource = {
+  tvtime: 'tvtime',
+  trakt: 'trakt',
+  letterboxd: 'letterboxd',
+  generic: 'generic',
+} as const;
+
+export type ImportJobStatus = typeof ImportJobStatus[keyof typeof ImportJobStatus];
+
+
+export const ImportJobStatus = {
+  ready: 'ready',
+  confirming: 'confirming',
+  confirmed: 'confirmed',
+} as const;
+
+/**
+ * Preview classification counts; completed jobs additionally include selected, applied, duplicates, and skipped.
+ */
+export type ImportJobSummary = {[key: string]: number};
+
+export interface ImportJob {
+  id: number;
+  source: ImportJobSource;
+  fileName: string;
+  status: ImportJobStatus;
+  rowCount: number;
+  /** Preview classification counts; completed jobs additionally include selected, applied, duplicates, and skipped. */
+  summary: ImportJobSummary;
+  createdAt: string;
+  /** @nullable */
+  confirmedAt: string | null;
+  items: ImportItem[];
+}
+
+export type ImportItemResolution = {
+  titleId: number;
+} | {
+  skip: true;
+};
+
 export interface AdminContentRefreshBatchInput {
   /**
      * @minimum 1

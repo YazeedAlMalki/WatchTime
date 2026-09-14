@@ -49,3 +49,25 @@ export const safetyContributionRateLimit = rateLimit({
   store: new DrizzleRateLimitStore("safety_contribution"),
   message: { error: "Daily contribution limit reached. You can submit more contributions tomorrow." },
 });
+
+/** Upload parsing is intentionally scarce: bounded documents are still expensive. */
+export const importCreateRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: userOrIpKey,
+  store: new DrizzleRateLimitStore("import_create"),
+  message: { error: "Too many import uploads. Please wait before trying again." },
+});
+
+/** Confirmation is separately bounded to protect transactional tracking writes. */
+export const importConfirmRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: userOrIpKey,
+  store: new DrizzleRateLimitStore("import_confirm"),
+  message: { error: "Too many import confirmations. Please wait before trying again." },
+});

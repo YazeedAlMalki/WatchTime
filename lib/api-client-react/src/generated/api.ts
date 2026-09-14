@@ -34,6 +34,10 @@ import type {
   GetTitleSafetyParams,
   GetTrendingTitlesParams,
   HealthStatus,
+  ImportCreateInput,
+  ImportItem,
+  ImportItemResolution,
+  ImportJob,
   IntegrationHealth,
   ListAdminContributionsParams,
   ListAdminFeedbackParams,
@@ -1671,6 +1675,376 @@ export function useGetMyRecommendations<TData = Awaited<ReturnType<typeof getMyR
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetMyRecommendationsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateImportUrl = () => {
+
+
+
+
+  return `/api/imports`
+}
+
+/**
+ * @summary Parse a bounded watch-history export into a private preview
+ */
+export const createImport = async (importCreateInput: ImportCreateInput, options?: Parameters<typeof customFetch>[1]): Promise<ImportJob> => {
+
+  return customFetch<ImportJob>(getCreateImportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(importCreateInput)
+  }
+);}
+
+
+
+
+
+export const getCreateImportMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createImport>>, TError,{data: BodyType<ImportCreateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createImport>>, TError,{data: BodyType<ImportCreateInput>}, TContext> => {
+
+const mutationKey = ['createImport'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createImport>>, {data: BodyType<ImportCreateInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createImport(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateImportMutationResult = NonNullable<Awaited<ReturnType<typeof createImport>>>
+    export type CreateImportMutationBody = BodyType<ImportCreateInput>
+    export type CreateImportMutationError = ErrorType<void>
+
+    /**
+ * @summary Parse a bounded watch-history export into a private preview
+ */
+export const useCreateImport = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createImport>>, TError,{data: BodyType<ImportCreateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createImport>>,
+        TError,
+        {data: BodyType<ImportCreateInput>},
+        TContext
+      > => {
+      return useMutation(getCreateImportMutationOptions(options));
+    }
+
+export const getGetImportUrl = (id: number,) => {
+
+
+
+
+  return `/api/imports/${id}`
+}
+
+/**
+ * @summary Get a private import preview or completed result
+ */
+export const getImport = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ImportJob> => {
+
+  return customFetch<ImportJob>(getGetImportUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetImportQueryKey = (id: number,) => {
+    return [
+    `/api/imports/${id}`
+    ] as const;
+    }
+
+
+export const getGetImportQueryOptions = <TData = Awaited<ReturnType<typeof getImport>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getImport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetImportQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getImport>>> = ({ signal }) => getImport(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getImport>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetImportQueryResult = NonNullable<Awaited<ReturnType<typeof getImport>>>
+export type GetImportQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a private import preview or completed result
+ */
+
+export function useGetImport<TData = Awaited<ReturnType<typeof getImport>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getImport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetImportQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getResolveImportItemUrl = (id: number,
+    itemId: number,) => {
+
+
+
+
+  return `/api/imports/${id}/items/${itemId}`
+}
+
+/**
+ * @summary Resolve an offered ambiguous title candidate or skip an item
+ */
+export const resolveImportItem = async (id: number,
+    itemId: number,
+    importItemResolution: ImportItemResolution, options?: Parameters<typeof customFetch>[1]): Promise<ImportItem> => {
+
+  return customFetch<ImportItem>(getResolveImportItemUrl(id,itemId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(importItemResolution)
+  }
+);}
+
+
+
+
+
+export const getResolveImportItemMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveImportItem>>, TError,{id: number;itemId: number;data: BodyType<ImportItemResolution>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resolveImportItem>>, TError,{id: number;itemId: number;data: BodyType<ImportItemResolution>}, TContext> => {
+
+const mutationKey = ['resolveImportItem'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveImportItem>>, {id: number;itemId: number;data: BodyType<ImportItemResolution>}> = (props) => {
+          const {id,itemId,data} = props ?? {};
+
+          return  resolveImportItem(id,itemId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResolveImportItemMutationResult = NonNullable<Awaited<ReturnType<typeof resolveImportItem>>>
+    export type ResolveImportItemMutationBody = BodyType<ImportItemResolution>
+    export type ResolveImportItemMutationError = ErrorType<void>
+
+    /**
+ * @summary Resolve an offered ambiguous title candidate or skip an item
+ */
+export const useResolveImportItem = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveImportItem>>, TError,{id: number;itemId: number;data: BodyType<ImportItemResolution>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resolveImportItem>>,
+        TError,
+        {id: number;itemId: number;data: BodyType<ImportItemResolution>},
+        TContext
+      > => {
+      return useMutation(getResolveImportItemMutationOptions(options));
+    }
+
+export const getConfirmImportUrl = (id: number,) => {
+
+
+
+
+  return `/api/imports/${id}/confirm`
+}
+
+/**
+ * @summary Atomically apply selected matched import items
+ */
+export const confirmImport = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ImportJob> => {
+
+  return customFetch<ImportJob>(getConfirmImportUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getConfirmImportMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmImport>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmImport>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['confirmImport'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmImport>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  confirmImport(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmImportMutationResult = NonNullable<Awaited<ReturnType<typeof confirmImport>>>
+
+    export type ConfirmImportMutationError = ErrorType<void>
+
+    /**
+ * @summary Atomically apply selected matched import items
+ */
+export const useConfirmImport = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmImport>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof confirmImport>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getConfirmImportMutationOptions(options));
+    }
+
+export const getDownloadImportReportUrl = (id: number,) => {
+
+
+
+
+  return `/api/imports/${id}/report`
+}
+
+/**
+ * @summary Download private unmatched/error import rows as CSV
+ */
+export const downloadImportReport = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<string> => {
+
+  return customFetch<string>(getDownloadImportReportUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getDownloadImportReportQueryKey = (id: number,) => {
+    return [
+    `/api/imports/${id}/report`
+    ] as const;
+    }
+
+
+export const getDownloadImportReportQueryOptions = <TData = Awaited<ReturnType<typeof downloadImportReport>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadImportReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDownloadImportReportQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof downloadImportReport>>> = ({ signal }) => downloadImportReport(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof downloadImportReport>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type DownloadImportReportQueryResult = NonNullable<Awaited<ReturnType<typeof downloadImportReport>>>
+export type DownloadImportReportQueryError = ErrorType<void>
+
+
+/**
+ * @summary Download private unmatched/error import rows as CSV
+ */
+
+export function useDownloadImportReport<TData = Awaited<ReturnType<typeof downloadImportReport>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadImportReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getDownloadImportReportQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

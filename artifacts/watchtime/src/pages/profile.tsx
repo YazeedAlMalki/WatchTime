@@ -2,7 +2,7 @@ import React from "react";
 import { useGetMe } from "@workspace/api-client-react";
 import { useClerk } from "@clerk/react";
 import { Button } from "@/components/ui/button";
-import { User, LogOut, Tv, Film, Clock, ShieldCheck, Mail, ShieldAlert } from "lucide-react";
+import { LogOut, Tv, Film, Clock, Mail, ShieldAlert, Upload } from "lucide-react";
 import { Link } from "wouter";
 
 export default function ProfilePage() {
@@ -65,6 +65,21 @@ export default function ProfilePage() {
           <span className="text-3xl font-display font-bold text-foreground">{me.timeWatchedMinutes ? Math.round(me.timeWatchedMinutes / 60) : 0}</span>
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hours Watched</span>
         </div>
+      </section>
+
+      <section className="bg-card border border-border rounded-2xl p-6 sm:p-7 flex flex-col sm:flex-row sm:items-center justify-between gap-6 shadow-sm">
+        <div className="flex items-start gap-4">
+          <div className="shrink-0 w-11 h-11 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+            <Upload className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-xl font-display font-bold text-foreground">Import your watch history</h2>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground max-w-xl">Move watched movies, episode progress, tracked shows, and your watchlist from a supported CSV or JSON export. Review every match before it is added.</p>
+          </div>
+        </div>
+        <Link href="/import-data">
+          <Button className="rounded-full shadow-sm whitespace-nowrap"><Upload className="mr-2 w-4 h-4" /> Import data</Button>
+        </Link>
       </section>
 
       {me.isAdmin && (

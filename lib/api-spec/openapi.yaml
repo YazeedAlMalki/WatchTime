@@ -15,6 +15,7 @@ tags:
   - name: stats
   - name: feedback
   - name: admin
+  - name: imports
 paths:
   /healthz:
     get:
@@ -429,6 +430,109 @@ paths:
                   $ref: "#/components/schemas/RecommendationGroup"
         "401":
           description: Not authenticated
+  /imports:
+    post:
+      operationId: createImport
+      tags: [imports]
+      summary: Parse a bounded watch-history export into a private preview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportCreateInput"
+      responses:
+        "200":
+          description: Existing idempotent import preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+        "201":
+          description: Parsed import preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+        "400": { description: "Malformed, unsupported, or oversized input" }
+        "413": { description: "JSON transport body exceeds the endpoint parser limit" }
+        "401": { description: Not authenticated }
+        "429": { description: Rate limited }
+  /imports/{id}:
+    get:
+      operationId: getImport
+      tags: [imports]
+      summary: Get a private import preview or completed result
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+      responses:
+        "200":
+          description: Import job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+        "401": { description: Not authenticated }
+        "404": { description: Import not found }
+  /imports/{id}/items/{itemId}:
+    patch:
+      operationId: resolveImportItem
+      tags: [imports]
+      summary: Resolve an offered ambiguous title candidate or skip an item
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportItemResolution"
+      responses:
+        "200":
+          description: Updated item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportItem"
+        "400": { description: Invalid resolution or completed import }
+        "401": { description: Not authenticated }
+        "404": { description: Import or item not found }
+  /imports/{id}/confirm:
+    post:
+      operationId: confirmImport
+      tags: [imports]
+      summary: Atomically apply selected matched import items
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+      responses:
+        "200":
+          description: Completed import
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+        "401": { description: Not authenticated }
+        "404": { description: Import not found }
+        "429": { description: Rate limited }
+  /imports/{id}/report:
+    get:
+      operationId: downloadImportReport
+      tags: [imports]
+      summary: Download private unmatched/error import rows as CSV
+      parameters:
+        - $ref: "#/components/parameters/ImportId"
+      responses:
+        "200":
+          description: Error and unmatched item report
+          content:
+            text/csv:
+              schema: { type: string }
+        "401": { description: Not authenticated }
+        "404": { description: Import not found }
   /stats/public:
     get:
       operationId: getPublicStats
@@ -748,6 +852,12 @@ paths:
         "403":
           description: Forbidden
 components:
+  parameters:
+    ImportId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
   schemas:
     HealthStatus:
       type: object
@@ -759,6 +869,86 @@ components:
       properties:
         ok: { type: boolean }
       required: [ok]
+    ImportCreateInput:
+      type: object
+      required: [source, fileName, content]
+      properties:
+        source:
+          type: string
+          enum: [tvtime, trakt, letterboxd, generic]
+          description: "Selects the strict documented export shape; see docs/import-api-contract.md."
+        fileName: { type: string, minLength: 1, maxLength: 255 }
+        content:
+          type: string
+          maxLength: 2097152
+          description: Raw UTF-8 CSV or JSON text; never retained after parsing.
+    ImportNormalizedRecord:
+      type: object
+      required: [kind, title, type, year, imdbId, tmdbId, season, episode, watchedAt]
+      properties:
+        kind: { type: string, enum: [watched_movie, watched_episode, tracked_show, watchlist] }
+        title: { type: string }
+        type: { type: ["string", "null"], enum: [movie, tv, null] }
+        year: { type: ["integer", "null"] }
+        imdbId: { type: ["string", "null"] }
+        tmdbId: { type: ["integer", "null"] }
+        season: { type: ["integer", "null"] }
+        episode: { type: ["integer", "null"] }
+        watchedAt: { type: ["string", "null"], format: date-time }
+    ImportCandidate:
+      type: object
+      required: [titleId, name, type, year]
+      properties:
+        titleId: { type: integer }
+        name: { type: string }
+        type: { type: string }
+        year: { type: ["integer", "null"] }
+    ImportItem:
+      type: object
+      required: [id, rowNumber, kind, classification, selected, normalized, candidates, titleId, episodeId]
+      properties:
+        id: { type: integer }
+        rowNumber: { type: integer }
+        kind: { type: string, enum: [watched_movie, watched_episode, tracked_show, watchlist, unsupported] }
+        classification: { type: string, enum: [matched, duplicate, unmatched, ambiguous, invalid, unsupported] }
+        selected: { type: boolean }
+        errorCode: { type: ["string", "null"] }
+        normalized: { $ref: "#/components/schemas/ImportNormalizedRecord" }
+        candidates:
+          type: array
+          items: { $ref: "#/components/schemas/ImportCandidate" }
+        titleId: { type: ["integer", "null"] }
+        episodeId: { type: ["integer", "null"] }
+    ImportJob:
+      type: object
+      required: [id, source, fileName, status, rowCount, summary, createdAt, confirmedAt, items]
+      properties:
+        id: { type: integer }
+        source: { type: string, enum: [tvtime, trakt, letterboxd, generic] }
+        fileName: { type: string }
+        status: { type: string, enum: [ready, confirming, confirmed] }
+        rowCount: { type: integer }
+        summary:
+          type: object
+          additionalProperties: { type: integer }
+          description: "Preview classification counts; completed jobs additionally include selected, applied, duplicates, and skipped."
+        createdAt: { type: string, format: date-time }
+        confirmedAt: { type: ["string", "null"], format: date-time }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ImportItem" }
+    ImportItemResolution:
+      oneOf:
+        - type: object
+          required: [titleId]
+          additionalProperties: false
+          properties:
+            titleId: { type: integer }
+        - type: object
+          required: [skip]
+          additionalProperties: false
+          properties:
+            skip: { type: boolean, enum: [true] }
     AdminContentRefreshBatchInput:
       type: object
       properties:
