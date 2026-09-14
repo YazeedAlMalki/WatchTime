@@ -23,10 +23,10 @@ type Classification = "matched" | "duplicate" | "unmatched" | "ambiguous" | "inv
 function normaliseTitle(value: string): string {
   return value
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\p{M}+/gu, "")
     .toLowerCase()
     .replace(/&/g, "and")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }
 
@@ -98,8 +98,8 @@ async function classifyImportRows(userId: string, records: NormalizedImportRecor
   for (const title of catalog) {
     if (title.imdbId) add(byImdb, title.imdbId.toLowerCase(), title);
     if (title.tmdbId !== null) add(byTmdb, title.tmdbId, title);
-    add(byNameAndType, `${title.type}:${normaliseTitle(title.name)}`, title);
-    for (const alternative of title.altTitles) add(byNameAndType, `${title.type}:${normaliseTitle(alternative)}`, title);
+    const names = new Set([title.name, ...title.altTitles].map(normaliseTitle).filter(Boolean));
+    for (const name of names) add(byNameAndType, `${title.type}:${name}`, title);
   }
   const compatible = (record: NormalizedImportRecord, title: typeof catalog[number]) =>
     record.type === "movie" ? title.type === "movie" : title.type !== "movie";
@@ -112,8 +112,10 @@ async function classifyImportRows(userId: string, records: NormalizedImportRecor
           : byTmdb.get(record.tmdbId!) ?? [];
       return external.filter((title) => compatible(record, title));
     }
+    const normalizedTitle = normaliseTitle(record.title);
+    if (!normalizedTitle) return [];
     const compatibleTypes = record.type === "movie" ? ["movie"] : ["tv", "anime", "documentary"];
-    const found = compatibleTypes.flatMap((type) => byNameAndType.get(`${type}:${normaliseTitle(record.title)}`) ?? []);
+    const found = compatibleTypes.flatMap((type) => byNameAndType.get(`${type}:${normalizedTitle}`) ?? []);
     return [...new Map(found.map((title) => [title.id, title])).values()]
       .filter((title) => !record.year || title.year === record.year);
   };

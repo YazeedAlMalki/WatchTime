@@ -27,7 +27,7 @@ const testItem: SourceItem = {
   expectedTitle: "Test Identity Series",
   expectedYear: 2020,
   expectedImdbId: testImdb,
-  aliases: ["Alternate Test Title"],
+  aliases: ["Alternate Test Title", " alternate test title ", "Test Identity Series", "テスト作品", "عمل تجريبي"],
   popularity: 0,
 };
 const showPayload = {
@@ -129,6 +129,10 @@ describe("real catalog sync", () => {
     const providers = await db.select().from(watchProvidersTable).where(eq(watchProvidersTable.titleId, again.id));
     expect(again.altTitles).toContain("Alternate Test Title");
     expect(again.altTitles).toContain("Existing Alias");
+    expect(again.altTitles).toContain("テスト作品");
+    expect(again.altTitles).toContain("عمل تجريبي");
+    expect(again.altTitles.filter((title) => title.toLowerCase() === "alternate test title")).toHaveLength(1);
+    expect(again.altTitles).not.toContain("Test Identity Series");
     expect(again.overview).toBe("Richer existing overview");
     expect(again.runtimeMinutes).toBe(120);
     const safety = await db.select().from(safetyRecordsTable).where(and(

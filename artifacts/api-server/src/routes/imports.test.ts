@@ -65,12 +65,12 @@ beforeAll(async () => {
   [movieId] = (await db.insert(titlesTable).values({ name: "__import_integration_movie__", type: "movie", year: 2024, imdbId: "tt1234567" }).returning({ id: titlesTable.id })).map((row) => row.id);
   [showId] = (await db.insert(titlesTable).values({ name: "__import_integration_show__", type: "tv", year: 2024 }).returning({ id: titlesTable.id })).map((row) => row.id);
   [altTitleId, rollbackValidId, rollbackBrokenId, largeBatchTitleId, ...ambiguousTitleIds] = (await db.insert(titlesTable).values([
-    { name: "__import_alt_canonical__", altTitles: ["__import_alt_alias__"], type: "movie", year: 2020 },
+    { name: "__import_alt_canonical__", altTitles: ["__import_alt_alias__", "العنوان المحلي"], type: "movie", year: 2020 },
     { name: "__import_rollback_valid__", type: "movie", year: 2021 },
     { name: "__import_rollback_broken__", type: "movie", year: 2022 },
     { name: "__import_large_batch__", type: "movie", year: 2025 },
-    { name: "__import_ambiguous_title__", type: "movie", year: 2023, tmdbId: 700001 },
-    { name: "__import_ambiguous_title__", type: "movie", year: 2023, tmdbId: 700001 },
+    { name: "__import_ambiguous_title__", altTitles: ["عنوان ملتبس"], type: "movie", year: 2023, tmdbId: 700001 },
+    { name: "__import_ambiguous_title__", altTitles: ["عنوان ملتبس"], type: "movie", year: 2023, tmdbId: 700001 },
   ]).returning({ id: titlesTable.id })).map((row) => row.id);
   cleanupTitleIds = [movieId, showId, altTitleId, rollbackValidId, rollbackBrokenId, largeBatchTitleId, ...ambiguousTitleIds];
   await db.insert(episodesTable).values({ titleId: showId, seasonNumber: 1, episodeNumber: 1, name: "Pilot" });
@@ -164,8 +164,10 @@ describe("private, idempotent watch-history imports", () => {
       "kind,title,type,year,imdbId,tmdbId,season,episode",
       "watched_movie,Incorrect display name,movie,1900,tt1234567,,,",
       "watched_movie,__import_alt_alias__,movie,2020,,,,",
+      "watched_movie,العنوان المحلي,movie,2020,,,,",
       "watched_episode,__import_integration_show__,tv,2024,,,1,99",
       "watched_movie,__import_ambiguous_title__,movie,2023,,,,",
+      "watched_movie,عنوان ملتبس,movie,2023,,,,",
       "watched_movie,External-ID collision,movie,2023,,700001,,",
       "watched_movie,Conflicting IDs,movie,2024,tt1234567,700001,,",
     ].join("\n");
@@ -178,16 +180,20 @@ describe("private, idempotent watch-history imports", () => {
     expect((byRow.get(1) as any).classification).toBe("duplicate");
     expect((byRow.get(2) as any).titleId).toBe(altTitleId);
     expect((byRow.get(2) as any).classification).toBe("matched");
-    expect((byRow.get(3) as any).classification).toBe("unmatched");
-    expect((byRow.get(3) as any).errorCode).toBe("episode_not_found");
-    expect((byRow.get(4) as any).classification).toBe("ambiguous");
-    expect((byRow.get(4) as any).candidates.map((candidate: { titleId: number }) => candidate.titleId).sort()).toEqual(ambiguousTitleIds.sort());
+    expect((byRow.get(3) as any).titleId).toBe(altTitleId);
+    expect((byRow.get(3) as any).classification).toBe("duplicate");
+    expect((byRow.get(4) as any).classification).toBe("unmatched");
+    expect((byRow.get(4) as any).errorCode).toBe("episode_not_found");
     expect((byRow.get(5) as any).classification).toBe("ambiguous");
-    expect((byRow.get(5) as any).candidates).toHaveLength(2);
-    expect((byRow.get(6) as any).classification).toBe("unmatched");
+    expect((byRow.get(5) as any).candidates.map((candidate: { titleId: number }) => candidate.titleId).sort()).toEqual(ambiguousTitleIds.sort());
+    expect((byRow.get(6) as any).classification).toBe("ambiguous");
+    expect((byRow.get(6) as any).candidates.map((candidate: { titleId: number }) => candidate.titleId).sort()).toEqual(ambiguousTitleIds.sort());
+    expect((byRow.get(7) as any).classification).toBe("ambiguous");
+    expect((byRow.get(7) as any).candidates).toHaveLength(2);
+    expect((byRow.get(8) as any).classification).toBe("unmatched");
 
     const resolved = await supertest(app)
-      .patch(`/api/imports/${created.body.id}/items/${(byRow.get(4) as any).id}`)
+      .patch(`/api/imports/${created.body.id}/items/${(byRow.get(5) as any).id}`)
       .set("x-test-user", USER_A)
       .send({ titleId: ambiguousTitleIds[0] });
     expect(resolved.status).toBe(200);
