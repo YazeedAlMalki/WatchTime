@@ -5,12 +5,16 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RegionalRating } from './regionalRating';
 import type { SafetyCategorySummary } from './safetyCategorySummary';
 import type { SafetyInfoLevel } from './safetyInfoLevel';
+import type { SafetyInfoPreferredRatingRegion } from './safetyInfoPreferredRatingRegion';
 import type { SafetySource } from './safetySource';
 
 export interface SafetyInfo {
   level: SafetyInfoLevel;
   summary: SafetyCategorySummary[];
   sources: SafetySource[];
+  preferredRatingRegion: SafetyInfoPreferredRatingRegion;
+  preferredRating: RegionalRating | null;
 }

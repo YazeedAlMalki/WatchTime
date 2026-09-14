@@ -383,6 +383,23 @@ export default function TitleDetailPage() {
               <div className="h-40 flex items-center justify-center"><div className="w-6 h-6 rounded-full border-4 border-primary border-t-transparent animate-spin" /></div>
             ) : safety ? (
               <div className="flex flex-col gap-8">
+                <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                  <div className="text-xs font-bold uppercase tracking-wider text-primary">
+                    Your regional rating
+                  </div>
+                  {safety.preferredRating ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                      <span className="text-2xl font-display font-bold">{safety.preferredRating.label}</span>
+                      <span className="text-sm text-muted-foreground">
+                        {safety.preferredRating.countryName} · {safety.preferredRating.system} · sourced from {safety.preferredRating.sourceName}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      No sourced rating is available for your selected region. Ratings from other countries are shown below and are not used as a substitute.
+                    </p>
+                  )}
+                </div>
                 {/* Summary Chips */}
                 {safety.summary.length > 0 && (
                   <div className="flex flex-wrap gap-3">

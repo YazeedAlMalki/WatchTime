@@ -39,7 +39,10 @@ vi.mock("../middlewares/auth", () => ({
     req.isAdmin = true;
     next();
   },
-  optionalAuth: (_req: any, _res: any, next: any) => next(),
+  optionalAuth: (req: any, _res: any, next: any) => {
+    req.userId = MOBILE_USER_ID;
+    next();
+  },
 }));
 
 // ─── Rate-limiter mocks — pass-through by default; individual tests can
@@ -113,6 +116,7 @@ import {
   contributionsTable,
   watchedEpisodesTable,
   watchedTitlesTable,
+  safetyRecordsTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 
@@ -149,6 +153,87 @@ beforeAll(async () => {
       .returning();
     eligibilityTitleIds.push(et.id);
   }
+});
+
+describe("shared rating-region preference", () => {
+  afterEach(async () => {
+    await db.delete(safetyRecordsTable).where(eq(safetyRecordsTable.titleId, titleId));
+    await db.update(usersTable)
+      .set({ preferredRatingRegion: "US" })
+      .where(eq(usersTable.id, MOBILE_USER_ID));
+  });
+
+  it("persists a profile change and returns that exact country's sourced rating", async () => {
+    await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      items: [
+        { category: "MPAA", label: "PG-13", score: null, maxScore: null, description: "US rating" },
+        { category: "BBFC", label: "12A", score: null, maxScore: null, description: "GB rating" },
+      ],
+    });
+    await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "WatchTime Community",
+      tier: 1,
+      isCommunity: true,
+      status: "available",
+      items: [{
+        category: "BBFC",
+        label: "Community guess",
+        score: null,
+        maxScore: null,
+        description: "Untrusted collision",
+      }],
+    });
+    await db.insert(safetyRecordsTable).values({
+      titleId,
+      seasonNumber: 1,
+      sourceName: "Granular Test",
+      tier: 1,
+      isCommunity: false,
+      status: "available",
+      items: [{
+        category: "Violence",
+        label: "Moderate violence",
+        score: null,
+        maxScore: null,
+        severity: "moderate",
+        description: "Season-level warning",
+      }],
+    });
+
+    const update = await supertest(app)
+      .patch("/api/me")
+      .send({ preferredRatingRegion: "GB" });
+    expect(update.status).toBe(200);
+    expect(update.body.preferredRatingRegion).toBe("GB");
+
+    const safety = await supertest(app).get(`/api/safety?titleId=${titleId}&seasonNumber=1`);
+    expect(safety.status).toBe(200);
+    expect(safety.body.level).toBe("season");
+    expect(safety.body.preferredRating).toMatchObject({
+      region: "GB",
+      system: "BBFC",
+      label: "12A",
+      sourceName: "Wikidata",
+    });
+    const ratingSource = safety.body.sources.find((source: any) => source.sourceName === "Wikidata");
+    expect(ratingSource.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "MPAA", label: "PG-13" }),
+      expect.objectContaining({ category: "BBFC", label: "12A" }),
+    ]));
+
+    await db.update(usersTable)
+      .set({ preferredRatingRegion: "DE" })
+      .where(eq(usersTable.id, MOBILE_USER_ID));
+    const missing = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+    expect(missing.body.preferredRatingRegion).toBe("DE");
+    expect(missing.body.preferredRating).toBeNull();
+  });
 });
 
 afterAll(async () => {

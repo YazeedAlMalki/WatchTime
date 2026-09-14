@@ -595,6 +595,26 @@ function SafetySection({
       </View>
 
       {/* Summary chips */}
+      <View style={[styles.regionalRating, { backgroundColor: c.card, borderColor: c.primary }]}>
+        <Text style={{ color: c.primary, fontSize: 11, fontFamily: 'Inter_700Bold', textTransform: 'uppercase' }}>
+          Your regional rating
+        </Text>
+        {info.preferredRating ? (
+          <>
+            <Text style={{ color: c.foreground, fontSize: 24, fontFamily: 'Inter_700Bold', marginTop: 5 }}>
+              {info.preferredRating.label}
+            </Text>
+            <Text style={{ color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+              {info.preferredRating.countryName} · {info.preferredRating.system} · {info.preferredRating.sourceName}
+            </Text>
+          </>
+        ) : (
+          <Text style={{ color: c.mutedForeground, fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 6, lineHeight: 19 }}>
+            No sourced rating is available for your selected region. Other countries’ ratings below are not used as a substitute.
+          </Text>
+        )}
+      </View>
+
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {info.summary.map((s) => (
           <View
@@ -1037,6 +1057,12 @@ export default function TitleDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  regionalRating: {
+    borderWidth: 1,
+    borderRadius: colors.radius,
+    padding: 14,
+    marginBottom: 12,
+  },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',

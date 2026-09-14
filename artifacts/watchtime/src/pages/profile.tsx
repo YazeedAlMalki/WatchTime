@@ -1,13 +1,26 @@
 import React from "react";
-import { useGetMe } from "@workspace/api-client-react";
+import { getGetMeQueryKey, useGetMe, useUpdateMe } from "@workspace/api-client-react";
 import { useClerk } from "@clerk/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { LogOut, Tv, Film, Clock, Mail, ShieldAlert, Upload } from "lucide-react";
 import { Link } from "wouter";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+
+const RATING_REGIONS = [
+  { value: "US", label: "United States (MPAA)" },
+  { value: "GB", label: "United Kingdom (BBFC)" },
+  { value: "DE", label: "Germany (FSK)" },
+  { value: "FR", label: "France (CNC)" },
+] as const;
 
 export default function ProfilePage() {
   const { data: me, isLoading } = useGetMe();
   const { signOut } = useClerk();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const updateMe = useUpdateMe();
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   if (isLoading) {
@@ -64,6 +77,41 @@ export default function ProfilePage() {
           <Clock className="w-6 h-6 text-purple-500 mb-2" />
           <span className="text-3xl font-display font-bold text-foreground">{me.timeWatchedMinutes ? Math.round(me.timeWatchedMinutes / 60) : 0}</span>
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hours Watched</span>
+        </div>
+      </section>
+
+      <section className="bg-card border border-border rounded-2xl p-6 sm:p-7 shadow-sm">
+        <div className="max-w-xl">
+          <h2 className="text-xl font-display font-bold text-foreground">Rating region</h2>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            We’ll prioritize this country’s official classification on title pages. Ratings from other countries remain available.
+          </p>
+          <Select
+            value={me.preferredRatingRegion}
+            disabled={updateMe.isPending}
+            onValueChange={(preferredRatingRegion: "US" | "GB" | "DE" | "FR") => {
+              updateMe.mutate({ data: { preferredRatingRegion } }, {
+                onSuccess: async () => {
+                  await Promise.all([
+                    queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() }),
+                    queryClient.invalidateQueries({
+                      predicate: (query) => String(query.queryKey[0]).startsWith("/api/safety"),
+                    }),
+                  ]);
+                },
+                onError: () => toast({ title: "Could not save rating region", description: "Please try again.", variant: "destructive" }),
+              });
+            }}
+          >
+            <SelectTrigger className="mt-4 w-full sm:w-72" aria-label="Preferred rating region">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {RATING_REGIONS.map((region) => (
+                <SelectItem key={region.value} value={region.value}>{region.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </section>
 

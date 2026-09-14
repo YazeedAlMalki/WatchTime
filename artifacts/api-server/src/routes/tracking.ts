@@ -19,7 +19,7 @@ import {
   notInArray,
   arrayOverlaps,
 } from "drizzle-orm";
-import { MarkEpisodeWatchedBody } from "@workspace/api-zod";
+import { MarkEpisodeWatchedBody, UpdateMeBody } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/auth";
 import { toTitleJson, toEpisodeJson } from "../lib/serialize";
 
@@ -70,7 +70,19 @@ router.get("/me", requireAuth, async (req, res) => {
     episodesWatched: eps.count,
     moviesWatched: movies.count,
     timeWatchedMinutes: time.minutes + movieTime.minutes,
+    preferredRatingRegion: user.preferredRatingRegion,
   });
+});
+
+router.patch("/me", requireAuth, async (req, res) => {
+  const parsed = UpdateMeBody.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid rating region" });
+  const [user] = await db
+    .update(usersTable)
+    .set({ preferredRatingRegion: parsed.data.preferredRatingRegion })
+    .where(eq(usersTable.id, req.userId!))
+    .returning({ preferredRatingRegion: usersTable.preferredRatingRegion });
+  return res.json(user);
 });
 
 router.post("/titles/:id/watchlist", requireAuth, async (req, res) => {

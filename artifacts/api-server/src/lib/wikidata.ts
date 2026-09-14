@@ -34,6 +34,13 @@ export const WIKIDATA_CLASSIFICATION_PROPERTIES = {
   P2758: "CNC",
 } as const;
 
+export const WIKIDATA_CLASSIFICATION_REGIONS = {
+  P1657: "US",
+  P1981: "DE",
+  P2629: "GB",
+  P2758: "FR",
+} as const;
+
 type ClassificationProperty = keyof typeof WIKIDATA_CLASSIFICATION_PROPERTIES;
 
 type FetchLike = typeof fetch;
@@ -403,7 +410,7 @@ function toSafetyItems(item: WikidataItem) {
     // Wikidata classifications are labels, not vote/score measurements.
     score: null,
     maxScore: null,
-    description: `Wikidata property ${classification.property}: ${classification.propertyName}`,
+    description: `${WIKIDATA_CLASSIFICATION_REGIONS[classification.property]} rating · Wikidata property ${classification.property}`,
   }));
 }
 

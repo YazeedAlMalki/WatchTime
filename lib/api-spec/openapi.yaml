@@ -43,6 +43,27 @@ paths:
                 $ref: "#/components/schemas/UserProfile"
         "401":
           description: Not authenticated
+    patch:
+      operationId: updateMe
+      tags: [tracking]
+      summary: Update current user preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPreferencesUpdate"
+      responses:
+        "200":
+          description: Updated preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPreferences"
+        "400":
+          description: Invalid preference
+        "401":
+          description: Not authenticated
   /titles:
     get:
       operationId: listTitles
@@ -1015,7 +1036,7 @@ components:
         offset: { type: integer, minimum: 0, default: 0 }
     UserProfile:
       type: object
-      required: [id, email, isAdmin, canContribute, showsTracked, episodesWatched, moviesWatched]
+      required: [id, email, isAdmin, canContribute, showsTracked, episodesWatched, moviesWatched, preferredRatingRegion]
       properties:
         id: { type: string }
         email: { type: string }
@@ -1026,6 +1047,24 @@ components:
         episodesWatched: { type: integer }
         moviesWatched: { type: integer }
         timeWatchedMinutes: { type: integer }
+        preferredRatingRegion:
+          type: string
+          enum: [US, GB, DE, FR]
+    UserPreferences:
+      type: object
+      required: [preferredRatingRegion]
+      properties:
+        preferredRatingRegion:
+          type: string
+          enum: [US, GB, DE, FR]
+    UserPreferencesUpdate:
+      type: object
+      required: [preferredRatingRegion]
+      additionalProperties: false
+      properties:
+        preferredRatingRegion:
+          type: string
+          enum: [US, GB, DE, FR]
     Title:
       type: object
       required: [id, type, name, posterUrl, year, genres]
@@ -1185,7 +1224,7 @@ components:
             $ref: "#/components/schemas/SafetySourceItem"
     SafetyInfo:
       type: object
-      required: [level, summary, sources]
+      required: [level, summary, sources, preferredRatingRegion, preferredRating]
       properties:
         level: { type: string, enum: [episode, season, series, movie] }
         summary:
@@ -1196,6 +1235,22 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SafetySource"
+        preferredRatingRegion:
+          type: string
+          enum: [US, GB, DE, FR]
+        preferredRating:
+          oneOf:
+            - $ref: "#/components/schemas/RegionalRating"
+            - type: "null"
+    RegionalRating:
+      type: object
+      required: [region, countryName, system, label, sourceName]
+      properties:
+        region: { type: string, enum: [US, GB, DE, FR] }
+        countryName: { type: string }
+        system: { type: string }
+        label: { type: string }
+        sourceName: { type: string }
     SafetyContributionInput:
       type: object
       required: [category, severity]

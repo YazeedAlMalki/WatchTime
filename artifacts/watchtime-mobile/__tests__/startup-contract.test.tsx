@@ -242,10 +242,10 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.trending).toEqual([]);
 
     await act(async () => {
-      pendingInteraction?.();
+      pendingInteractions[0]?.();
     });
     await act(async () => {
-      pendingFrame?.(0);
+      pendingFrames[0]?.(0);
     });
 
     await waitFor(() => {

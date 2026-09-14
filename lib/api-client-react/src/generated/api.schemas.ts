@@ -191,6 +191,16 @@ export interface AdminContentRefreshBatchInput {
   offset?: number;
 }
 
+export type UserProfilePreferredRatingRegion = typeof UserProfilePreferredRatingRegion[keyof typeof UserProfilePreferredRatingRegion];
+
+
+export const UserProfilePreferredRatingRegion = {
+  US: 'US',
+  GB: 'GB',
+  DE: 'DE',
+  FR: 'FR',
+} as const;
+
 export interface UserProfile {
   id: string;
   email: string;
@@ -202,6 +212,35 @@ export interface UserProfile {
   episodesWatched: number;
   moviesWatched: number;
   timeWatchedMinutes?: number;
+  preferredRatingRegion: UserProfilePreferredRatingRegion;
+}
+
+export type UserPreferencesPreferredRatingRegion = typeof UserPreferencesPreferredRatingRegion[keyof typeof UserPreferencesPreferredRatingRegion];
+
+
+export const UserPreferencesPreferredRatingRegion = {
+  US: 'US',
+  GB: 'GB',
+  DE: 'DE',
+  FR: 'FR',
+} as const;
+
+export interface UserPreferences {
+  preferredRatingRegion: UserPreferencesPreferredRatingRegion;
+}
+
+export type UserPreferencesUpdatePreferredRatingRegion = typeof UserPreferencesUpdatePreferredRatingRegion[keyof typeof UserPreferencesUpdatePreferredRatingRegion];
+
+
+export const UserPreferencesUpdatePreferredRatingRegion = {
+  US: 'US',
+  GB: 'GB',
+  DE: 'DE',
+  FR: 'FR',
+} as const;
+
+export interface UserPreferencesUpdate {
+  preferredRatingRegion: UserPreferencesUpdatePreferredRatingRegion;
 }
 
 export type TitleType = typeof TitleType[keyof typeof TitleType];
@@ -400,10 +439,40 @@ export const SafetyInfoLevel = {
   movie: 'movie',
 } as const;
 
+export type SafetyInfoPreferredRatingRegion = typeof SafetyInfoPreferredRatingRegion[keyof typeof SafetyInfoPreferredRatingRegion];
+
+
+export const SafetyInfoPreferredRatingRegion = {
+  US: 'US',
+  GB: 'GB',
+  DE: 'DE',
+  FR: 'FR',
+} as const;
+
+export type RegionalRatingRegion = typeof RegionalRatingRegion[keyof typeof RegionalRatingRegion];
+
+
+export const RegionalRatingRegion = {
+  US: 'US',
+  GB: 'GB',
+  DE: 'DE',
+  FR: 'FR',
+} as const;
+
+export interface RegionalRating {
+  region: RegionalRatingRegion;
+  countryName: string;
+  system: string;
+  label: string;
+  sourceName: string;
+}
+
 export interface SafetyInfo {
   level: SafetyInfoLevel;
   summary: SafetyCategorySummary[];
   sources: SafetySource[];
+  preferredRatingRegion: SafetyInfoPreferredRatingRegion;
+  preferredRating: RegionalRating | null;
 }
 
 export type SafetyContributionInputSeverity = typeof SafetyContributionInputSeverity[keyof typeof SafetyContributionInputSeverity];
@@ -680,6 +749,64 @@ export interface IntegrationHealth {
 }
 
 export type CatalogRefreshFailureProvider = typeof CatalogRefreshFailureProvider[keyof typeof CatalogRefreshFailureProvider];
+
+
+export const CatalogRefreshFailureProvider = {
+  TVMaze: 'TVMaze',
+  Wikipedia: 'Wikipedia',
+} as const;
+
+export interface CatalogRefreshFailure {
+  title: string;
+  provider: CatalogRefreshFailureProvider;
+  /** @nullable */
+  error?: string | null;
+}
+
+export type CatalogRefreshRunTrigger = typeof CatalogRefreshRunTrigger[keyof typeof CatalogRefreshRunTrigger];
+
+
+export const CatalogRefreshRunTrigger = {
+  scheduled: 'scheduled',
+  manual: 'manual',
+  retry: 'retry',
+} as const;
+
+export type CatalogRefreshRunStatus = typeof CatalogRefreshRunStatus[keyof typeof CatalogRefreshRunStatus];
+
+
+export const CatalogRefreshRunStatus = {
+  queued: 'queued',
+  running: 'running',
+  succeeded: 'succeeded',
+  partial: 'partial',
+  failed: 'failed',
+  skipped: 'skipped',
+} as const;
+
+export interface CatalogRefreshRun {
+  id: number;
+  trigger: CatalogRefreshRunTrigger;
+  status: CatalogRefreshRunStatus;
+  totalItems: number;
+  processedItems: number;
+  succeededItems: number;
+  failedItems: number;
+  episodesUpdated: number;
+  /** @nullable */
+  startedAt?: string | null;
+  /** @nullable */
+  finishedAt?: string | null;
+  /** @nullable */
+  error?: string | null;
+  createdAt: string;
+  failures: CatalogRefreshFailure[];
+}
+
+export interface CatalogRefreshAccepted {
+  runId: number;
+}
+
 export type ProviderMappingStatus = typeof ProviderMappingStatus[keyof typeof ProviderMappingStatus];
 
 
@@ -891,57 +1018,3 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
-
-export interface CatalogRefreshFailure {
-  title: string;
-  provider: CatalogRefreshFailureProvider;
-  /** @nullable */
-  error?: string | null;
-}
-
-export const CatalogRefreshRunTrigger = {
-  scheduled: 'scheduled',
-  manual: 'manual',
-  retry: 'retry',
-} as const;
-
-export type CatalogRefreshRunTrigger = typeof CatalogRefreshRunTrigger[keyof typeof CatalogRefreshRunTrigger];
-
-export interface CatalogRefreshAccepted {
-  runId: number;
-}
-
-export interface CatalogRefreshRun {
-  id: number;
-  trigger: CatalogRefreshRunTrigger;
-  status: CatalogRefreshRunStatus;
-  totalItems: number;
-  processedItems: number;
-  succeededItems: number;
-  failedItems: number;
-  episodesUpdated: number;
-  /** @nullable */
-  startedAt?: string | null;
-  /** @nullable */
-  finishedAt?: string | null;
-  /** @nullable */
-  error?: string | null;
-  createdAt: string;
-  failures: CatalogRefreshFailure[];
-}
-
-export const CatalogRefreshFailureProvider = {
-  TVMaze: 'TVMaze',
-  Wikipedia: 'Wikipedia',
-} as const;
-
-export type CatalogRefreshRunStatus = typeof CatalogRefreshRunStatus[keyof typeof CatalogRefreshRunStatus];
-
-export const CatalogRefreshRunStatus = {
-  queued: 'queued',
-  running: 'running',
-  succeeded: 'succeeded',
-  partial: 'partial',
-  failed: 'failed',
-  skipped: 'skipped',
-} as const;

@@ -9,6 +9,7 @@ import {
   watchedEpisodesTable,
   watchedTitlesTable,
   analyticsEventsTable,
+  usersTable,
 } from "@workspace/db";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
@@ -17,6 +18,11 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth, optionalAuth } from "../middlewares/auth";
 import { safetyReportRateLimit, safetyContributionRateLimit } from "../middlewares/rateLimiters";
+import {
+  RATING_REGIONS,
+  resolvePreferredRating,
+  type RatingRegion,
+} from "../lib/ratingRegions";
 
 const router: IRouter = Router();
 
@@ -45,6 +51,16 @@ router.get("/safety", optionalAuth, async (req, res) => {
   }
   const [title] = await db.select().from(titlesTable).where(eq(titlesTable.id, titleId));
   if (!title) return res.status(404).json({ error: "Not found" });
+  let preferredRatingRegion: RatingRegion = "US";
+  if (req.userId) {
+    const [user] = await db
+      .select({ preferredRatingRegion: usersTable.preferredRatingRegion })
+      .from(usersTable)
+      .where(eq(usersTable.id, req.userId));
+    if (user?.preferredRatingRegion in RATING_REGIONS) {
+      preferredRatingRegion = user.preferredRatingRegion as RatingRegion;
+    }
+  }
 
   // Fallback chain: episode -> season -> series (movie is series-level).
   const levels: Array<{
@@ -95,6 +111,28 @@ router.get("/safety", optionalAuth, async (req, res) => {
     }
   }
 
+  // National classifications describe the title as a whole. Resolve them from
+  // title-level records independently of episode/season warning granularity.
+  const titleLevelRecords = await db
+    .select()
+    .from(safetyRecordsTable)
+    .where(and(
+      eq(safetyRecordsTable.titleId, titleId),
+      isNull(safetyRecordsTable.seasonNumber),
+      isNull(safetyRecordsTable.episodeNumber),
+    ));
+  const ratingSystems = new Set<string>(Object.values(RATING_REGIONS).map(({ system }) => system));
+  const displayRecords = [
+    ...records,
+    ...titleLevelRecords.filter(
+      (record) =>
+        !records.some((selected) => selected.id === record.id) &&
+        !record.isCommunity &&
+        record.sourceName === "Wikidata" &&
+        record.items.some((item) => ratingSystems.has(item.category)),
+    ),
+  ];
+
   // Summary: worst severity per category across available sources.
   const summaryMap = new Map<string, Severity>();
   for (const r of records) {
@@ -114,11 +152,13 @@ router.get("/safety", optionalAuth, async (req, res) => {
 
   return res.json({
     level,
+    preferredRatingRegion,
+    preferredRating: resolvePreferredRating(titleLevelRecords, preferredRatingRegion),
     summary: [...summaryMap.entries()].map(([category, severity]) => ({
       category,
       severity,
     })),
-    sources: records
+    sources: displayRecords
       .sort((a, b) => a.tier - b.tier)
       .map((r) => ({
         sourceName: r.sourceName,

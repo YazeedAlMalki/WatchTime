@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Platform,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,10 +13,17 @@ import { useRouter } from 'expo-router';
 import { useAuth, useUser } from '@clerk/expo';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useGetMe } from '@workspace/api-client-react';
+import { getGetMeQueryKey, useGetMe, useUpdateMe } from '@workspace/api-client-react';
 import { EmptyState, ErrorState, Loading } from '@/components/ui';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
+
+const RATING_REGIONS = [
+  { value: 'US', label: 'United States', system: 'MPAA' },
+  { value: 'GB', label: 'United Kingdom', system: 'BBFC' },
+  { value: 'DE', label: 'Germany', system: 'FSK' },
+  { value: 'FR', label: 'France', system: 'CNC' },
+] as const;
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   const c = useColors();
@@ -39,6 +47,19 @@ export default function ProfileScreen() {
   const { user } = useUser();
   const queryClient = useQueryClient();
   const me = useGetMe({ query: { enabled: !!isSignedIn } as any });
+  const updateMe = useUpdateMe({
+    mutation: {
+      onSuccess: async () => {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() }),
+          queryClient.invalidateQueries({
+            predicate: (query) => String(query.queryKey[0]).startsWith('/api/safety'),
+          }),
+        ]);
+      },
+      onError: () => Alert.alert('Could not save rating region', 'Please try again.'),
+    },
+  });
 
   if (!isSignedIn) {
     return (
@@ -132,6 +153,40 @@ export default function ProfileScreen() {
         <Stat label="Hours" value={hours} />
       </View>
 
+      <View style={[styles.preferenceCard, { backgroundColor: c.card, borderColor: c.border }]}>
+        <Text style={{ color: c.foreground, fontSize: 18, fontFamily: 'Inter_700Bold' }}>
+          Rating region
+        </Text>
+        <Text style={{ color: c.mutedForeground, fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 4, lineHeight: 19 }}>
+          Prioritize the official classification your family recognizes. Other sourced ratings stay available.
+        </Text>
+        <View style={{ gap: 8, marginTop: 14 }}>
+          {RATING_REGIONS.map((region) => {
+            const selected = profile?.preferredRatingRegion === region.value;
+            return (
+              <Pressable
+                key={region.value}
+                testID={`rating-region-${region.value}`}
+                disabled={updateMe.isPending}
+                onPress={() => updateMe.mutate({ data: { preferredRatingRegion: region.value } })}
+                style={({ pressed }) => [
+                  styles.regionOption,
+                  {
+                    borderColor: selected ? c.primary : c.border,
+                    backgroundColor: selected ? c.accent : c.background,
+                    opacity: pressed || updateMe.isPending ? 0.7 : 1,
+                  },
+                ]}
+              >
+                <Text style={{ color: c.foreground, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>{region.label}</Text>
+                <Text style={{ color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular' }}>{region.system}</Text>
+                {selected ? <Feather name="check-circle" size={18} color={c.primary} /> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
       <Pressable
         testID="sign-out-button"
         onPress={async () => {
@@ -175,5 +230,20 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
+  },
+  preferenceCard: {
+    borderWidth: 1,
+    borderRadius: colors.radius,
+    padding: 16,
+    marginTop: 20,
+  },
+  regionOption: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: colors.radius,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
 });
