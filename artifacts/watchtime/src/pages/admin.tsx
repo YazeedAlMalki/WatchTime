@@ -559,8 +559,12 @@ function ContentTab() {
   const { data: content, isLoading } = useSearchAdminContent(debouncedQ ? { q: debouncedQ } : undefined);
   const refresh = useRefreshAdminContent();
 
-  const doRefresh = (id: number, name: string) =>
-    refresh.mutate({ id }, {
+  const doRefresh = (
+    id: number,
+    name: string,
+    provider: "does_the_dog_die" | "wikidata" = "does_the_dog_die",
+  ) =>
+    refresh.mutate({ id, data: { provider } }, {
       onSuccess: (result) => {
         qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
         if (result.ok) {
@@ -608,10 +612,16 @@ function ContentTab() {
                   ))}
                 </div>
               </div>
-              <Button size="sm" variant="outline" className="rounded-xl flex-shrink-0 gap-1.5"
-                onClick={() => doRefresh(item.id, item.name)} disabled={refresh.isPending}>
-                <RefreshCw className="w-3.5 h-3.5" /> Refresh
-              </Button>
+              <div className="flex flex-wrap gap-2 flex-shrink-0">
+                <Button size="sm" variant="outline" className="rounded-xl gap-1.5"
+                  onClick={() => doRefresh(item.id, item.name)} disabled={refresh.isPending}>
+                  <RefreshCw className="w-3.5 h-3.5" /> Refresh DDD
+                </Button>
+                <Button size="sm" variant="outline" className="rounded-xl gap-1.5"
+                  onClick={() => doRefresh(item.id, item.name, "wikidata")} disabled={refresh.isPending}>
+                  <RefreshCw className="w-3.5 h-3.5" /> Wikidata
+                </Button>
+              </div>
             </div>
           ))}
         </div>

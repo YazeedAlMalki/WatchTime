@@ -7,6 +7,11 @@
  */
 
 export * from './adminContentRefreshBatchInput';
+export * from './adminContentRefreshBatchInputProvider';
+export * from './adminContentRefreshInput';
+export * from './adminContentRefreshInputProvider';
+export * from './adminContentRefreshResult';
+export * from './adminContentRefreshResultStatus';
 export * from './adminDashboard';
 export * from './analyticsPoint';
 export * from './analyticsSummary';
@@ -67,7 +72,6 @@ export * from './recentActivityItem';
 export * from './recentActivityItemKind';
 export * from './recommendationGroup';
 export * from './refreshAdminContentBatch200';
-export * from './refreshAdminContentBatch200ResultsItem';
 export * from './reportModeration';
 export * from './reportModerationStatus';
 export * from './safetyCategorySummary';

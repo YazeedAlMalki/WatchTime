@@ -24,6 +24,10 @@ import {
   refreshDoesTheDogDieBatch,
   refreshDoesTheDogDieTitle,
 } from "../lib/does-the-dog-die";
+import {
+  refreshWikidataBatch,
+  refreshWikidataTitle,
+} from "../lib/wikidata";
 
 const router: IRouter = Router();
 
@@ -400,20 +404,38 @@ router.get("/content", async (req, res) => {
 router.post("/content/:id/refresh", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id)) return res.status(400).json({ ok: false, error: "Invalid title id" });
-  const result = await refreshDoesTheDogDieTitle(id);
+  const provider = String(req.body?.provider ?? req.query.provider ?? "does_the_dog_die");
+  if (provider !== "does_the_dog_die" && provider !== "wikidata") {
+    return res.status(400).json({
+      ok: false,
+      error: "provider must be does_the_dog_die or wikidata",
+    });
+  }
+  const result = provider === "wikidata"
+    ? await refreshWikidataTitle(id)
+    : await refreshDoesTheDogDieTitle(id);
   return res.json(result);
 });
 
 router.post("/content/refresh-batch", async (req, res) => {
   const limit = Number.isFinite(Number(req.body?.limit)) ? Number(req.body.limit) : 10;
   const offset = Number.isFinite(Number(req.body?.offset)) ? Number(req.body.offset) : 0;
+  const provider = String(req.body?.provider ?? req.query.provider ?? "does_the_dog_die");
+  if (provider !== "does_the_dog_die" && provider !== "wikidata") {
+    return res.status(400).json({
+      ok: false,
+      error: "provider must be does_the_dog_die or wikidata",
+    });
+  }
   if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
     return res.status(400).json({ ok: false, error: "limit must be an integer from 1 to 25" });
   }
   if (!Number.isInteger(offset) || offset < 0) {
     return res.status(400).json({ ok: false, error: "offset must be a non-negative integer" });
   }
-  const result = await refreshDoesTheDogDieBatch({ limit, offset });
+  const result = provider === "wikidata"
+    ? await refreshWikidataBatch({ limit, offset })
+    : await refreshDoesTheDogDieBatch({ limit, offset });
   return res.json({ ok: true, ...result });
 });
 

@@ -172,7 +172,16 @@ export type ImportItemResolution = {
   skip: true;
 };
 
+export type AdminContentRefreshBatchInputProvider = typeof AdminContentRefreshBatchInputProvider[keyof typeof AdminContentRefreshBatchInputProvider];
+
+
+export const AdminContentRefreshBatchInputProvider = {
+  does_the_dog_die: 'does_the_dog_die',
+  wikidata: 'wikidata',
+} as const;
+
 export interface AdminContentRefreshBatchInput {
+  provider?: AdminContentRefreshBatchInputProvider;
   /**
      * @minimum 1
      * @maximum 25
@@ -613,6 +622,38 @@ export interface AdminDashboard {
   failedSyncs: number;
 }
 
+export type AdminContentRefreshInputProvider = typeof AdminContentRefreshInputProvider[keyof typeof AdminContentRefreshInputProvider];
+
+
+export const AdminContentRefreshInputProvider = {
+  does_the_dog_die: 'does_the_dog_die',
+  wikidata: 'wikidata',
+} as const;
+
+export interface AdminContentRefreshInput {
+  provider?: AdminContentRefreshInputProvider;
+}
+
+export type AdminContentRefreshResultStatus = typeof AdminContentRefreshResultStatus[keyof typeof AdminContentRefreshResultStatus];
+
+
+export const AdminContentRefreshResultStatus = {
+  provider_unavailable: 'provider_unavailable',
+  missing: 'missing',
+  error: 'error',
+} as const;
+
+export interface AdminContentRefreshResult {
+  ok: boolean;
+  titleId: number;
+  titleName: string;
+  /** @nullable */
+  externalId?: string | null;
+  classifications?: number;
+  status?: AdminContentRefreshResultStatus;
+  error?: string;
+}
+
 export type IntegrationHealthStatus = typeof IntegrationHealthStatus[keyof typeof IntegrationHealthStatus];
 
 
@@ -820,14 +861,12 @@ export type SearchAdminContentParams = {
 q?: string;
 };
 
-export type RefreshAdminContentBatch200ResultsItem = { [key: string]: unknown };
-
 export type RefreshAdminContentBatch200 = {
   ok: boolean;
   offset: number;
   limit: number;
   processed: number;
-  results: RefreshAdminContentBatch200ResultsItem[];
+  results: AdminContentRefreshResult[];
 };
 
 export type GetAdminAuditLogParams = {

@@ -5,8 +5,10 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AdminContentRefreshBatchInputProvider } from './adminContentRefreshBatchInputProvider';
 
 export interface AdminContentRefreshBatchInput {
+  provider?: AdminContentRefreshBatchInputProvider;
   /**
      * @minimum 1
      * @maximum 25

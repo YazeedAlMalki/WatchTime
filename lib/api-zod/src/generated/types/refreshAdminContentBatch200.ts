@@ -5,12 +5,12 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { RefreshAdminContentBatch200ResultsItem } from './refreshAdminContentBatch200ResultsItem';
+import type { AdminContentRefreshResult } from './adminContentRefreshResult';
 
 export type RefreshAdminContentBatch200 = {
   ok: boolean;
   offset: number;
   limit: number;
   processed: number;
-  results: RefreshAdminContentBatch200ResultsItem[];
+  results: AdminContentRefreshResult[];
 };

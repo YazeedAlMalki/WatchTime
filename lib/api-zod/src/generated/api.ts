@@ -985,14 +985,27 @@ export const RefreshAdminContentParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
+export const refreshAdminContentBodyProviderDefault = `does_the_dog_die`;
+
+export const RefreshAdminContentBody = zod.object({
+  "provider": zod.enum(['does_the_dog_die', 'wikidata']).default(refreshAdminContentBodyProviderDefault)
+})
+
 export const RefreshAdminContentResponse = zod.object({
-  "ok": zod.boolean()
+  "ok": zod.boolean(),
+  "titleId": zod.int(),
+  "titleName": zod.string(),
+  "externalId": zod.string().nullish(),
+  "classifications": zod.int().optional(),
+  "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
+  "error": zod.string().optional()
 })
 
 
 /**
  * @summary Refresh a bounded batch of catalog safety data
  */
+export const refreshAdminContentBatchBodyProviderDefault = `does_the_dog_die`;
 export const refreshAdminContentBatchBodyLimitDefault = 10;
 export const refreshAdminContentBatchBodyLimitMax = 25;
 
@@ -1002,6 +1015,7 @@ export const refreshAdminContentBatchBodyOffsetMin = 0;
 
 
 export const RefreshAdminContentBatchBody = zod.object({
+  "provider": zod.enum(['does_the_dog_die', 'wikidata']).default(refreshAdminContentBatchBodyProviderDefault),
   "limit": zod.int().min(1).max(refreshAdminContentBatchBodyLimitMax).default(refreshAdminContentBatchBodyLimitDefault),
   "offset": zod.int().min(refreshAdminContentBatchBodyOffsetMin).default(refreshAdminContentBatchBodyOffsetDefault)
 })
@@ -1011,7 +1025,15 @@ export const RefreshAdminContentBatchResponse = zod.object({
   "offset": zod.int(),
   "limit": zod.int(),
   "processed": zod.int(),
-  "results": zod.array(zod.record(zod.string(), zod.unknown()))
+  "results": zod.array(zod.object({
+  "ok": zod.boolean(),
+  "titleId": zod.int(),
+  "titleName": zod.string(),
+  "externalId": zod.string().nullish(),
+  "classifications": zod.int().optional(),
+  "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
+  "error": zod.string().optional()
+}))
 })
 
 

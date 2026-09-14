@@ -761,13 +761,19 @@ paths:
           in: path
           required: true
           schema: { type: integer }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminContentRefreshInput"
       responses:
         "200":
           description: Refresh queued
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OkResult"
+                $ref: "#/components/schemas/AdminContentRefreshResult"
         "403":
           description: Forbidden
   /admin/content/refresh-batch:
@@ -797,8 +803,7 @@ paths:
                   results:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: "#/components/schemas/AdminContentRefreshResult"
         "403":
           description: Forbidden
   /admin/analytics:
@@ -952,6 +957,10 @@ components:
     AdminContentRefreshBatchInput:
       type: object
       properties:
+        provider:
+          type: string
+          enum: [does_the_dog_die, wikidata]
+          default: does_the_dog_die
         limit: { type: integer, minimum: 1, maximum: 25, default: 10 }
         offset: { type: integer, minimum: 0, default: 0 }
     UserProfile:
@@ -1257,6 +1266,24 @@ components:
         openReports: { type: integer }
         newFeedback: { type: integer }
         failedSyncs: { type: integer }
+    AdminContentRefreshInput:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [does_the_dog_die, wikidata]
+          default: does_the_dog_die
+    AdminContentRefreshResult:
+      type: object
+      required: [ok, titleId, titleName]
+      properties:
+        ok: { type: boolean }
+        titleId: { type: integer }
+        titleName: { type: string }
+        externalId: { type: ["string", "null"] }
+        classifications: { type: integer }
+        status: { type: string, enum: [provider_unavailable, missing, error] }
+        error: { type: string }
     IntegrationHealth:
       type: object
       required: [provider, status, successRatePercent, mappedTitles, missingMappings]

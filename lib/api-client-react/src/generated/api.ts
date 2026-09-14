@@ -21,6 +21,8 @@ import type {
 
 import type {
   AdminContentRefreshBatchInput,
+  AdminContentRefreshInput,
+  AdminContentRefreshResult,
   AdminDashboard,
   AnalyticsSummary,
   AuditLogPage,
@@ -2922,14 +2924,15 @@ export const getRefreshAdminContentUrl = (id: number,) => {
 /**
  * @summary Force refresh safety data for a content item
  */
-export const refreshAdminContent = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<OkResult> => {
+export const refreshAdminContent = async (id: number,
+    adminContentRefreshInput?: AdminContentRefreshInput, options?: Parameters<typeof customFetch>[1]): Promise<AdminContentRefreshResult> => {
 
-  return customFetch<OkResult>(getRefreshAdminContentUrl(id),
+  return customFetch<AdminContentRefreshResult>(getRefreshAdminContentUrl(id),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminContentRefreshInput)
   }
 );}
 
@@ -2938,8 +2941,8 @@ export const refreshAdminContent = async (id: number, options?: Parameters<typeo
 
 
 export const getRefreshAdminContentMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdminContent>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof refreshAdminContent>>, TError,{id: number}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdminContent>>, TError,{id: number;data?: BodyType<AdminContentRefreshInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshAdminContent>>, TError,{id: number;data?: BodyType<AdminContentRefreshInput>}, TContext> => {
 
 const mutationKey = ['refreshAdminContent'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -2951,10 +2954,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshAdminContent>>, {id: number}> = (props) => {
-          const {id} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshAdminContent>>, {id: number;data?: BodyType<AdminContentRefreshInput>}> = (props) => {
+          const {id,data} = props ?? {};
 
-          return  refreshAdminContent(id,requestOptions)
+          return  refreshAdminContent(id,data,requestOptions)
         }
 
 
@@ -2965,18 +2968,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type RefreshAdminContentMutationResult = NonNullable<Awaited<ReturnType<typeof refreshAdminContent>>>
-
+    export type RefreshAdminContentMutationBody = BodyType<AdminContentRefreshInput> | undefined
     export type RefreshAdminContentMutationError = ErrorType<void>
 
     /**
  * @summary Force refresh safety data for a content item
  */
 export const useRefreshAdminContent = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdminContent>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdminContent>>, TError,{id: number;data?: BodyType<AdminContentRefreshInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof refreshAdminContent>>,
         TError,
-        {id: number},
+        {id: number;data?: BodyType<AdminContentRefreshInput>},
         TContext
       > => {
       return useMutation(getRefreshAdminContentMutationOptions(options));
