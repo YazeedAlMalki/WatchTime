@@ -16,6 +16,8 @@ import {
   useGetAdminAnalytics,
   useSearchAdminContent,
   useListAdminContentAliases,
+  useUpdateAdminContentAlias,
+  useDeleteAdminContentAlias,
   useRefreshAdminContent,
   useRefreshAdminContentBatch,
   useGetAdminAuditLog,
@@ -24,6 +26,7 @@ import {
   getListAdminReportsQueryKey,
   getListAdminFeedbackQueryKey,
   getSearchAdminContentQueryKey,
+  getListAdminContentAliasesQueryKey,
   getListCatalogRefreshesQueryKey,
   type RefreshAdminContentBatch200,
   type AdminContentAlias,
@@ -64,6 +67,9 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  Pencil,
+  Trash2,
+  Save,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -1296,6 +1302,106 @@ function AliasReview({
   aliases: AdminContentAlias[] | undefined;
   isLoading: boolean;
 }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const updateAlias = useUpdateAdminContentAlias();
+  const deleteAlias = useDeleteAdminContentAlias();
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [draft, setDraft] = useState({
+    alias: "",
+    language: "",
+    sourceUrl: "",
+  });
+
+  const refreshAliasViews = async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: getListAdminContentAliasesQueryKey() }),
+      qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() }),
+    ]);
+  };
+
+  const errorDescription = (error: unknown) => {
+    if (error && typeof error === "object" && "data" in error) {
+      const data = (error as { data?: unknown }).data;
+      if (data && typeof data === "object" && "error" in data) {
+        const message = (data as { error?: unknown }).error;
+        if (typeof message === "string") return message;
+      }
+    }
+    return error instanceof Error ? error.message : "Please try again.";
+  };
+
+  const startEditing = (alias: AdminContentAlias) => {
+    setEditingId(alias.id);
+    setDraft({
+      alias: alias.alias,
+      language: alias.language ?? "",
+      sourceUrl: alias.sourceUrl ?? "",
+    });
+  };
+
+  const saveAlias = () => {
+    if (editingId === null) return;
+    const alias = draft.alias.trim();
+    if (!alias) {
+      toast({
+        title: "Alias is required",
+        description: "Enter an alternate title before saving.",
+        variant: "destructive",
+      });
+      return;
+    }
+    updateAlias.mutate(
+      {
+        id: editingId,
+        data: {
+          alias,
+          language: draft.language.trim() || null,
+          sourceUrl: draft.sourceUrl.trim() || null,
+        },
+      },
+      {
+        onSuccess: async () => {
+          setEditingId(null);
+          await refreshAliasViews();
+          toast({ title: "Alternate title updated" });
+        },
+        onError: (error) =>
+          toast({
+            title: "Could not update alternate title",
+            description: errorDescription(error),
+            variant: "destructive",
+          }),
+      },
+    );
+  };
+
+  const removeAlias = (alias: AdminContentAlias) => {
+    if (
+      !window.confirm(
+        `Remove “${alias.alias}” from ${alias.titleName}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    deleteAlias.mutate(
+      { id: alias.id },
+      {
+        onSuccess: async () => {
+          if (editingId === alias.id) setEditingId(null);
+          await refreshAliasViews();
+          toast({ title: "Alternate title removed" });
+        },
+        onError: (error) =>
+          toast({
+            title: "Could not remove alternate title",
+            description: errorDescription(error),
+            variant: "destructive",
+          }),
+      },
+    );
+  };
+
   return (
     <div className="pt-5 mt-2 border-t border-border">
       <div className="flex items-center justify-between gap-3 mb-3">
@@ -1330,13 +1436,28 @@ function AliasReview({
                 <th className="px-4 py-3">Language</th>
                 <th className="px-4 py-3">Source</th>
                 <th className="px-4 py-3">Review</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {aliases.map((alias) => (
                 <tr key={alias.id}>
-                  <td className="px-4 py-3 font-medium text-foreground">
-                    {alias.alias}
+                  <td className="px-4 py-3 font-medium text-foreground min-w-52">
+                    {editingId === alias.id ? (
+                      <Input
+                        value={draft.alias}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            alias: event.target.value,
+                          }))
+                        }
+                        maxLength={300}
+                        aria-label={`Alternate title for ${alias.titleName}`}
+                      />
+                    ) : (
+                      alias.alias
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-foreground">
@@ -1347,11 +1468,39 @@ function AliasReview({
                       {alias.titleYear ? ` · ${alias.titleYear}` : ""}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {alias.language ?? "Unknown"}
+                  <td className="px-4 py-3 text-muted-foreground min-w-36">
+                    {editingId === alias.id ? (
+                      <Input
+                        value={draft.language}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            language: event.target.value,
+                          }))
+                        }
+                        placeholder="Unknown"
+                        aria-label={`Language for ${alias.alias}`}
+                      />
+                    ) : (
+                      alias.language ?? "Unknown"
+                    )}
                   </td>
                   <td className="px-4 py-3">
-                    {alias.sourceUrl ? (
+                    {editingId === alias.id ? (
+                      <Input
+                        value={draft.sourceUrl}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            sourceUrl: event.target.value,
+                          }))
+                        }
+                        type="url"
+                        placeholder="https://…"
+                        className="min-w-56"
+                        aria-label={`Source link for ${alias.alias}`}
+                      />
+                    ) : alias.sourceUrl ? (
                       <a
                         href={alias.sourceUrl}
                         target="_blank"
@@ -1377,6 +1526,51 @@ function AliasReview({
                         Unique
                       </span>
                     )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end gap-2">
+                      {editingId === alias.id ? (
+                        <>
+                          <Button
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={saveAlias}
+                            disabled={updateAlias.isPending}
+                          >
+                            <Save className="w-3.5 h-3.5" /> Save
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setEditingId(null)}
+                            disabled={updateAlias.isPending}
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5"
+                          onClick={() => startEditing(alias)}
+                          disabled={deleteAlias.isPending}
+                        >
+                          <Pencil className="w-3.5 h-3.5" /> Edit
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 text-destructive hover:text-destructive"
+                        onClick={() => removeAlias(alias)}
+                        disabled={
+                          deleteAlias.isPending || updateAlias.isPending
+                        }
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Remove
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
