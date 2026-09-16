@@ -14,6 +14,7 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import {
   parseArgs,
+  isCatalogSyncCli,
   runCatalogSync,
   sourceItems,
   TVMAZE_MANIFEST,
@@ -110,6 +111,16 @@ afterEach(async () => {
 });
 
 describe("real catalog sync", () => {
+  it("never treats the bundled API server entry as the catalog CLI", () => {
+    expect(isCatalogSyncCli(
+      "/workspace/artifacts/api-server/dist/index.mjs",
+      "file:///workspace/artifacts/api-server/dist/index.mjs",
+    )).toBe(false);
+    expect(isCatalogSyncCli(
+      "/workspace/artifacts/api-server/src/seed-real.ts",
+      "file:///workspace/artifacts/api-server/src/seed-real.ts",
+    )).toBe(true);
+  });
   it("includes sourced original-language aliases for the remaining popular anime", () => {
     const aliases = new Map(TVMAZE_MANIFEST.map((entry) => [entry.name, entry.aliases ?? []]));
     expect(aliases.get("Cowboy Bebop")?.map((source) => source.alias)).toContain("カウボーイビバップ");
@@ -432,6 +443,27 @@ describe("real catalog sync", () => {
       status: "succeeded",
       createdAt: now,
       startedAt: now,
+      finishedAt: now,
+    }).returning();
+    catalogRunIds.push(run.id);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    await scheduleCatalogRefresh();
+
+    const delay = Number(setTimeoutSpy.mock.calls.at(-1)?.[1]);
+    const timer = setTimeoutSpy.mock.results.at(-1)?.value as NodeJS.Timeout | undefined;
+    if (timer) scheduledTimers.push(timer);
+    expect(delay).toBeGreaterThan(WEEK_MS - 2_000);
+    expect(delay).toBeLessThanOrEqual(WEEK_MS);
+  });
+
+  it("does not immediately retry a failed or skipped attempt after restart", async () => {
+    const now = new Date();
+    const [run] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "scheduled",
+      status: "failed",
+      totalItems: 1,
+      createdAt: now,
       finishedAt: now,
     }).returning();
     catalogRunIds.push(run.id);

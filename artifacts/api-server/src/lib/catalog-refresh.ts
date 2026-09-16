@@ -135,7 +135,9 @@ export async function scheduleCatalogRefresh(delayOverride?: number) {
   if (delay === undefined) {
     await recoverInterruptedRuns();
     const [latest] = await db.select().from(catalogSyncRunsTable)
-      .where(inArray(catalogSyncRunsTable.status, ["running", "succeeded", "partial"]))
+      // Failed and skipped runs are attempts too. Scheduling from only
+      // successful runs made a restart immediately repeat an overdue failure.
+      .where(inArray(catalogSyncRunsTable.status, COMPLETED_RUN_STATUSES))
       .orderBy(desc(catalogSyncRunsTable.createdAt)).limit(1);
     const dueAt = latest?.createdAt ? latest.createdAt.getTime() + WEEK_MS : Date.now();
     delay = Math.max(1_000, dueAt - Date.now());

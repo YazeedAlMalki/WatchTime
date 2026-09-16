@@ -189,13 +189,24 @@ router.get("/titles/:id", optionalAuth, async (req, res) => {
 
   let nextEpisode = null;
   if (req.userId && totalEpisodes > 0) {
-    const allEps = await db
-      .select()
+    const [nextRow] = await db
+      .select({ episode: episodesTable })
       .from(episodesTable)
-      .where(eq(episodesTable.titleId, id))
-      .orderBy(asc(episodesTable.seasonNumber), asc(episodesTable.episodeNumber));
-    const next = allEps.find((e) => !watchedEpisodeIds.has(e.id));
-    if (next) nextEpisode = toEpisodeJson(next, false);
+      .leftJoin(
+        watchedEpisodesTable,
+        and(
+          eq(watchedEpisodesTable.episodeId, episodesTable.id),
+          eq(watchedEpisodesTable.userId, req.userId),
+          eq(watchedEpisodesTable.titleId, id),
+        ),
+      )
+      .where(and(
+        eq(episodesTable.titleId, id),
+        sql`${watchedEpisodesTable.episodeId} is null`,
+      ))
+      .orderBy(asc(episodesTable.seasonNumber), asc(episodesTable.episodeNumber))
+      .limit(1);
+    if (nextRow) nextEpisode = toEpisodeJson(nextRow.episode, false);
   }
 
   db.insert(analyticsEventsTable)

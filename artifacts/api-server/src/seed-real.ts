@@ -32,6 +32,7 @@ import {
   providerMappingsTable,
   integrationHealthTable,
 } from "@workspace/db";
+import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export type CatalogType = "movie" | "tv" | "anime" | "documentary";
@@ -70,7 +71,9 @@ export type SourceItem = {
 
 const UA = "WatchTime/1.0 (real catalog synchronizer; https://watchtime.example)";
 const RETRIES = 3;
-const CONCURRENCY = 3;
+// Catalog writes compete with title reads on the same database. Keep one
+// writer at a time so a refresh cannot starve the API while it is running.
+const CONCURRENCY = 1;
 const SAFETY_SOURCES = [
   ["Common Sense Media", 1, "https://www.commonsensemedia.org"],
   ["Kids-In-Mind", 1, "https://kids-in-mind.com"],
@@ -651,7 +654,17 @@ async function ingestShow(item: SourceItem, show: any) {
     for (const value of episodeValues) {
       const existingEpisode = episodeByKey.get(`${value.seasonNumber}:${value.episodeNumber}`);
       if (!existingEpisode) episodeInserts.push(value);
-      else episodeUpdates.push({ ...value, id: existingEpisode.id });
+      else {
+        // Providers occasionally omit fields that are already populated in
+        // our catalog. Preserve those richer values, and avoid issuing an
+        // UPDATE at all when the source has not changed.
+        const changed = value.name !== existingEpisode.name
+          || (value.overview != null && value.overview !== existingEpisode.overview)
+          || (value.runtimeMinutes != null && value.runtimeMinutes !== existingEpisode.runtimeMinutes)
+          || (value.airDate != null && value.airDate !== existingEpisode.airDate)
+          || (value.stillUrl != null && value.stillUrl !== existingEpisode.stillUrl);
+        if (changed) episodeUpdates.push({ ...value, id: existingEpisode.id });
+      }
     }
     for (const batch of chunks(episodeInserts, 100)) await tx.insert(episodesTable).values(batch);
     for (const batch of chunks(episodeUpdates, 100)) {
@@ -859,7 +872,18 @@ export function runCatalogSync(
   return withCatalogLock(() => runCatalogSyncUnlocked(options, items, onProgress), waitForLock);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+export function isCatalogSyncCli(
+  argvEntry = process.argv[1],
+  moduleUrl = import.meta.url,
+) {
+  if (!argvEntry || !/^seed-real\.(?:[cm]?[jt]s)$/.test(basename(argvEntry))) return false;
+  return moduleUrl === pathToFileURL(argvEntry).href;
+}
+
+// Bundlers preserve import.meta.url as the server bundle URL for inlined
+// modules. Checking the entry filename prevents the API server's index.mjs
+// from running this CLI and closing its shared database pool.
+if (isCatalogSyncCli()) {
   runCatalogSync().catch((error) => {
     process.stderr.write(`Catalog sync failed: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
