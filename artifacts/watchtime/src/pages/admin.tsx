@@ -1295,7 +1295,7 @@ function ContentTab() {
   );
 }
 
-function AliasReview({
+export function AliasReview({
   aliases,
   isLoading,
 }: {
