@@ -32,6 +32,20 @@ jest.mock('@clerk/expo/token-cache', () => ({
   tokenCache: {},
 }));
 
+jest.mock('@/lib/app-auth', () => ({
+  AppAuthProvider: ({ children }: any) => children,
+  useAppAuth: () => {
+    const auth = mockUseAuth();
+    return {
+      isLoaded: auth.isLoaded,
+      isSignedIn: !!auth.isSignedIn,
+      isDemoSignedIn: false,
+      activateDemo: jest.fn(),
+      clearDemo: jest.fn(),
+    };
+  },
+}));
+
 jest.mock('@expo-google-fonts/inter', () => ({
   Inter_400Regular: {},
   Inter_500Medium: {},

@@ -19,6 +19,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import colors from '@/constants/colors';
 import { getDevDemoToken } from '@/lib/dev-demo-session';
+import { AppAuthProvider } from '@/lib/app-auth';
 import { markStartup } from '@/lib/startup-metrics';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -40,7 +41,7 @@ function AuthTokenBridge() {
     // still-refreshing) token from winning a request immediately after demo
     // navigation.
     setAuthTokenGetter(async () => {
-      const demoToken = await getDevDemoToken();
+      const demoToken = typeof __DEV__ !== 'undefined' && __DEV__ ? await getDevDemoToken() : null;
       if (demoToken) return demoToken;
       return getToken();
     });
@@ -109,20 +110,22 @@ export default function RootLayout() {
       tokenCache={tokenCache}
       proxyUrl={proxyUrl}
     >
-      <SafeAreaProvider>
-        <ErrorBoundary>
-          <QueryClientProvider client={queryClient}>
-            <AuthTokenBridge />
-            <StartupFrameMarker />
-            <GestureHandlerRootView>
-              <KeyboardProvider>
-                <StatusBar style="light" />
-                <RootLayoutNav />
-              </KeyboardProvider>
-            </GestureHandlerRootView>
-          </QueryClientProvider>
-        </ErrorBoundary>
-      </SafeAreaProvider>
+      <AppAuthProvider>
+        <SafeAreaProvider>
+          <ErrorBoundary>
+            <QueryClientProvider client={queryClient}>
+              <AuthTokenBridge />
+              <StartupFrameMarker />
+              <GestureHandlerRootView>
+                <KeyboardProvider>
+                  <StatusBar style="light" />
+                  <RootLayoutNav />
+                </KeyboardProvider>
+              </GestureHandlerRootView>
+            </QueryClientProvider>
+          </ErrorBoundary>
+        </SafeAreaProvider>
+      </AppAuthProvider>
     </ClerkProvider>
   );
 }

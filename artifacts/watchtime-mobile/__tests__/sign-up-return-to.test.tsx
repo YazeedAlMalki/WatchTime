@@ -18,6 +18,7 @@ const mockUseRouter = jest.fn();
 let mockReplace: jest.Mock;
 let mockLinkHref: unknown;
 const mockSaveDevDemoSession = jest.fn();
+const mockActivateDemo = jest.fn();
 
 jest.mock('@clerk/expo', () => ({
   useAuth: (...args: any[]) => mockUseAuth(...args),
@@ -65,6 +66,10 @@ jest.mock('@/constants/colors', () => ({
 
 jest.mock('@/lib/dev-demo-session', () => ({
   saveDevDemoSession: (...args: unknown[]) => mockSaveDevDemoSession(...args),
+}));
+
+jest.mock('@/lib/app-auth', () => ({
+  useAppAuth: () => ({ activateDemo: mockActivateDemo }),
 }));
 
 import SignInScreen from '../app/(auth)/sign-in';
@@ -119,6 +124,7 @@ describe('development demo authentication', () => {
 
     expect(mockReplace).toHaveBeenCalledWith('/title/456');
     expect(mockSaveDevDemoSession).toHaveBeenCalledWith('signed-demo-token', 900);
+    expect(mockActivateDemo).toHaveBeenCalled();
   });
 
   it('falls back to home after a valid demo submission without returnTo', async () => {

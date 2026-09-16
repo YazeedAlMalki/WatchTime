@@ -11,6 +11,7 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth, useUser } from '@clerk/expo';
+import { useAppAuth } from '@/lib/app-auth';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getGetMeQueryKey, useGetMe, useUpdateMe } from '@workspace/api-client-react';
@@ -37,7 +38,8 @@ export default function ProfileScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isSignedIn, signOut } = useAuth();
+  const { isSignedIn: clerkSignedIn, signOut } = useAuth();
+  const { isSignedIn, isDemoSignedIn, clearDemo } = useAppAuth();
   const { user } = useUser();
   const queryClient = useQueryClient();
   const me = useGetMe({ query: { enabled: !!isSignedIn } as any });
@@ -184,7 +186,8 @@ export default function ProfileScreen() {
       <Pressable
         testID="sign-out-button"
         onPress={async () => {
-          await signOut();
+          if (isDemoSignedIn) await clearDemo();
+          if (clerkSignedIn) await signOut();
           queryClient.clear();
         }}
         style={({ pressed }) => [

@@ -7,4 +7,4 @@ Shared demo credentials may create a short-lived, server-signed development sess
 
 **Why:** Navigation-only demo forms looked like successful login but left every protected action unauthenticated. Accepting public demo credentials directly on protected routes would weaken authentication.
 
-**How to apply:** Keep Clerk as the only production authentication system. In development, validate credentials at the login endpoint, issue a short-lived signed token, use a cookie for web and bearer storage for mobile, and map it to a fixed non-admin identity server-side.
+**How to apply:** Keep Clerk as the only production authentication system. In development, validate credentials at the login endpoint, issue a short-lived signed token, use a cookie for web and bearer storage for mobile, and map it to a fixed non-admin identity server-side. Mobile UI gates must use the combined app-auth state rather than Clerk's `isSignedIn` alone.

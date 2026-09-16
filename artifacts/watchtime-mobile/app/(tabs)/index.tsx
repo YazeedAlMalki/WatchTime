@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useAuth } from '@clerk/expo';
+import { useAppAuth } from '@/lib/app-auth';
 import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -317,7 +317,7 @@ function SignedOutHome({ startupReady }: { startupReady: boolean }) {
 }
 
 export default function HomeScreen() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAppAuth();
   const [startupReady, setStartupReady] = useState(false);
 
   useEffect(() => {

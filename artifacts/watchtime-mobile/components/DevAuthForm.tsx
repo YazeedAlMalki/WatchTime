@@ -19,6 +19,7 @@ import {
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useColors } from '@/hooks/useColors';
 import { saveDevDemoSession } from '@/lib/dev-demo-session';
+import { useAppAuth } from '@/lib/app-auth';
 import colors from '@/constants/colors';
 
 type AuthMode = 'sign-in' | 'sign-up';
@@ -38,6 +39,7 @@ export function DevAuthForm({ mode }: { mode: AuthMode }) {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const isSignIn = mode === 'sign-in';
+  const { activateDemo } = useAppAuth();
 
   const alternateHref = returnTo
     ? {
@@ -70,6 +72,7 @@ export function DevAuthForm({ mode }: { mode: AuthMode }) {
           : 'The development demo is unavailable. Please try again.');
       }
       await saveDevDemoSession(data.token, data.expiresIn);
+      activateDemo();
       router.replace(getDevAuthDestination(returnTo) as Href);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Unable to sign in');

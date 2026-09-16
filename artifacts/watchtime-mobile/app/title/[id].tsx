@@ -15,7 +15,7 @@ import {
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useAuth } from '@clerk/expo';
+import { useAppAuth } from '@/lib/app-auth';
 import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -800,7 +800,7 @@ export default function TitleDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const titleId = Number(id);
-  const { isSignedIn } = useAuth();
+  const { isSignedIn } = useAppAuth();
   const queryClient = useQueryClient();
 
   const title = useGetTitle(titleId);

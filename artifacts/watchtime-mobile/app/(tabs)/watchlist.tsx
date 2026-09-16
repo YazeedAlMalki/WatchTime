@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useAuth } from '@clerk/expo';
+import { useAppAuth } from '@/lib/app-auth';
 import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,7 +26,7 @@ export default function WatchlistScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isSignedIn } = useAuth();
+  const { isSignedIn } = useAppAuth();
   const queryClient = useQueryClient();
   const watchlist = useGetMyWatchlist({ query: { enabled: !!isSignedIn } as any });
   const remove = useRemoveFromWatchlist({

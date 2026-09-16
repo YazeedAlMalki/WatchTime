@@ -48,3 +48,8 @@ export async function getDevDemoToken(): Promise<string | null> {
   else await SecureStore.deleteItemAsync(STORAGE_KEY);
   return null;
 }
+
+export async function clearDevDemoSession(): Promise<void> {
+  if (Platform.OS === 'web') webStorage()?.removeItem(STORAGE_KEY);
+  else await SecureStore.deleteItemAsync(STORAGE_KEY);
+}
