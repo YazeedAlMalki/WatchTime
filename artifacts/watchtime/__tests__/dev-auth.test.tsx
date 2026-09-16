@@ -18,7 +18,7 @@ vi.mock("wouter", () => ({
 
 import { DevAuthPage } from "@/components/auth/DevAuthPage";
 
-function fillAndSubmit(container: HTMLElement, email: string, password: string) {
+async function fillAndSubmit(container: HTMLElement, email: string, password: string) {
   const emailInput = container.querySelector<HTMLInputElement>('input[name="email"]');
   const passwordInput = container.querySelector<HTMLInputElement>('input[name="password"]');
   const form = container.querySelector<HTMLFormElement>("form");
@@ -41,7 +41,7 @@ function fillAndSubmit(container: HTMLElement, email: string, password: string) 
     valueSetter.call(passwordInput, password);
     passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  act(() => {
+  await act(async () => {
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
 }
@@ -74,8 +74,8 @@ describe.each([
     vi.unstubAllGlobals();
   });
 
-  it("shows validation and stays put for invalid credentials without a request", () => {
-    fillAndSubmit(container, "wrong@example.com", "wrong-password");
+  it("shows validation and stays put for invalid credentials without a request", async () => {
+    await fillAndSubmit(container, "wrong@example.com", "wrong-password");
 
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       "incorrect",
@@ -95,10 +95,13 @@ describe("valid development demo submissions", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     window.history.replaceState({}, "", url);
     mockSetLocation.mockReset();
+    fetchSpy.mockReset();
+    fetchSpy.mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal("fetch", fetchSpy);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
+    window.localStorage.clear();
 
     act(() => {
       root.render(<DevAuthPage mode={mode} />);
@@ -111,21 +114,25 @@ describe("valid development demo submissions", () => {
     vi.unstubAllGlobals();
   });
 
-  it("preserves a local returnTo path", () => {
+  it("creates a cookie-backed demo session and preserves a local returnTo path", async () => {
     render("sign-in", "/sign-in?returnTo=%2Ftitle%2F456");
 
-    fillAndSubmit(container, DEV_DEMO_EMAIL, DEV_DEMO_PASSWORD);
+    await fillAndSubmit(container, DEV_DEMO_EMAIL, DEV_DEMO_PASSWORD);
 
     expect(mockSetLocation).toHaveBeenCalledWith("/title/456");
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledWith("/api/dev-auth/login", expect.objectContaining({
+      method: "POST",
+      credentials: "include",
+    }));
+    expect(window.localStorage.getItem("watchtime.devDemoActive")).toBe("1");
   });
 
-  it("falls back to home when returnTo is absent", () => {
+  it("falls back to home when returnTo is absent", async () => {
     render("sign-up", "/sign-up");
 
-    fillAndSubmit(container, DEV_DEMO_EMAIL, DEV_DEMO_PASSWORD);
+    await fillAndSubmit(container, DEV_DEMO_EMAIL, DEV_DEMO_PASSWORD);
 
     expect(mockSetLocation).toHaveBeenCalledWith("/");
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 });

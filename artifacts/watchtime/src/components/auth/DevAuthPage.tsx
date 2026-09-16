@@ -23,6 +23,7 @@ export function DevAuthPage({ mode }: { mode: AuthMode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const isSignIn = mode === "sign-in";
   const alternateMode = isSignIn ? "sign-up" : "sign-in";
@@ -30,15 +31,29 @@ export function DevAuthPage({ mode }: { mode: AuthMode }) {
     ? `/${alternateMode}?returnTo=${encodeURIComponent(returnTo)}`
     : `/${alternateMode}`;
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!isValidDevDemoCredentials(email, password)) {
       setError("That demo email or password is incorrect. Use the credentials shown above.");
       return;
     }
-
     setError("");
-    setLocation(getDevAuthDestination(returnTo));
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/dev-auth/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ email, password }),
+      });
+      if (!response.ok) throw new Error(response.status === 401
+        ? "That demo email or password is incorrect. Use the credentials shown above."
+        : "The development demo is unavailable. Please try again.");
+      window.localStorage.setItem("watchtime.devDemoActive", "1");
+      setLocation(getDevAuthDestination(returnTo));
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Unable to sign in");
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -48,8 +63,7 @@ export function DevAuthPage({ mode }: { mode: AuthMode }) {
         <div>
           <p className="font-semibold text-primary">Development demo login</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            This is not production authentication. No real account is created, and
-            these credentials do not unlock protected API data.
+            Development-only demo access. It uses a short-lived local session and never creates a real account.
           </p>
         </div>
       </div>
@@ -108,8 +122,8 @@ export function DevAuthPage({ mode }: { mode: AuthMode }) {
             {error}
           </p>
         ) : null}
-        <Button type="submit" className="w-full rounded-full" disabled={!email || !password}>
-          {isSignIn ? "Enter demo" : "Start demo"}
+        <Button type="submit" className="w-full rounded-full" disabled={!email || !password || isLoading}>
+          {isLoading ? "Signing in…" : isSignIn ? "Enter demo" : "Start demo"}
           <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
       </form>

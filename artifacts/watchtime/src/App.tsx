@@ -104,6 +104,9 @@ const clerkAppearance = {
 };
 
 function HomeRedirect() {
+  const isDevDemo = isDevelopmentBuild &&
+    window.localStorage.getItem("watchtime.devDemoActive") === "1";
+  if (isDevDemo) return <Redirect to="/home" />;
   return (
     <>
       <Show when="signed-in">

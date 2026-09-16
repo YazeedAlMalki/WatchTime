@@ -18,6 +18,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import colors from '@/constants/colors';
+import { getDevDemoToken } from '@/lib/dev-demo-session';
 import { markStartup } from '@/lib/startup-metrics';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -35,7 +36,14 @@ const queryClient = new QueryClient();
 function AuthTokenBridge() {
   const { getToken, isLoaded } = useAuth();
   useEffect(() => {
-    setAuthTokenGetter(() => getToken());
+    // Check the development session first. This prevents Clerk's (possibly
+    // still-refreshing) token from winning a request immediately after demo
+    // navigation.
+    setAuthTokenGetter(async () => {
+      const demoToken = await getDevDemoToken();
+      if (demoToken) return demoToken;
+      return getToken();
+    });
     return () => setAuthTokenGetter(null);
   }, [getToken]);
 

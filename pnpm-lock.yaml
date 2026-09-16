@@ -193,6 +193,9 @@ importers:
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@workspace/dev-auth':
+        specifier: workspace:*
+        version: link:../../lib/dev-auth
       '@workspace/rating-regions':
         specifier: workspace:*
         version: link:../../lib/rating-regions

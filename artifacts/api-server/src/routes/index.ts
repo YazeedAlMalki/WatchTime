@@ -6,9 +6,11 @@ import safetyRouter from "./safety";
 import miscRouter from "./misc";
 import adminRouter from "./admin";
 import importsRouter from "./imports";
+import devAuthRouter from "./dev-auth";
 
 const router: IRouter = Router();
 
+router.use(devAuthRouter);
 router.use(healthRouter);
 router.use(catalogRouter);
 router.use(trackingRouter);

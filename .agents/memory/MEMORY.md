@@ -12,3 +12,4 @@
 - [Workspace link and schema recovery](workspace-link-schema-recovery.md) — after merges, reinstall workspace links and apply the dev Drizzle schema before diagnosing app data failures.
 - [API client build artifacts](api-client-build-artifacts.md) — rebuild generated library declarations after contract changes; consumers can otherwise read stale dist types.
 - [Bundled CLI entry guards](bundled-cli-entry-guards.md) — filename-gate CLI shutdown code; import.meta.url alone can match the bundled API entry.
+- [Development demo auth boundary](development-demo-auth.md) — demo sessions may unlock dev APIs, but must remain cryptographically signed, non-admin, and rejected in production.

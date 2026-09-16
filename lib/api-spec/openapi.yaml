@@ -16,7 +16,37 @@ tags:
   - name: feedback
   - name: admin
   - name: imports
+  - name: auth
 paths:
+  /dev-auth/login:
+    post:
+      operationId: devAuthLogin
+      tags: [auth]
+      summary: Development-only demo login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200":
+          description: Short-lived demo session (also sets a HttpOnly cookie)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expiresIn, userId]
+                properties:
+                  token: { type: string }
+                  expiresIn: { type: integer }
+                  userId: { type: string }
+        "401": { description: Invalid credentials }
+        "404": { description: Unavailable outside development }
   /healthz:
     get:
       operationId: healthCheck

@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { getAuth, clerkClient } from "@clerk/express";
 import { db, usersTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
+import { DEV_DEMO_COOKIE, DEV_DEMO_USER_ID, verifyDevToken } from "../routes/dev-auth";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -70,11 +71,42 @@ async function ensureLocalUser(clerkUserId: string): Promise<{
   return { id: row.id, isAdmin: row.isAdmin };
 }
 
+async function ensureDevDemoUser(): Promise<{ id: string; isAdmin: boolean }> {
+  const [existing] = await db.select().from(usersTable).where(eq(usersTable.id, DEV_DEMO_USER_ID));
+  if (existing) return { id: existing.id, isAdmin: false };
+  const [created] = await db.insert(usersTable).values({
+    id: DEV_DEMO_USER_ID, email: "demo@watchtime.local", name: "WatchTime Demo", isAdmin: false,
+  }).onConflictDoNothing().returning();
+  if (created) return { id: created.id, isAdmin: false };
+  const [row] = await db.select().from(usersTable).where(eq(usersTable.id, DEV_DEMO_USER_ID));
+  return { id: row.id, isAdmin: false };
+}
+
+function isValidDevAuth(req: Request): boolean {
+  if (process.env.NODE_ENV !== "development") return false;
+  const bearer = req.get("authorization");
+  const cookie = req.get("cookie")?.split(";").map((part) => part.trim())
+    .find((part) => part.startsWith(`${DEV_DEMO_COOKIE}=`))?.slice(DEV_DEMO_COOKIE.length + 1);
+  const token = bearer?.startsWith("Bearer ") ? bearer.slice(7) : cookie;
+  return !!token && verifyDevToken(token);
+}
+
 export async function requireAuth(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
+  if (isValidDevAuth(req)) {
+    try {
+      const user = await ensureDevDemoUser();
+      req.userId = user.id;
+      req.isAdmin = false;
+      return next();
+    } catch (err) {
+      req.log.error({ err }, "failed to provision demo user");
+      return res.status(500).json({ error: "Internal error" });
+    }
+  }
   const auth = getAuth(req);
   const clerkUserId = auth?.userId;
   if (!clerkUserId) {
@@ -97,6 +129,16 @@ export async function optionalAuth(
   _res: Response,
   next: NextFunction,
 ) {
+  if (isValidDevAuth(req)) {
+    try {
+      const user = await ensureDevDemoUser();
+      req.userId = user.id;
+      req.isAdmin = false;
+    } catch (err) {
+      req.log.error({ err }, "optionalAuth demo provisioning failed");
+    }
+    return next();
+  }
   const auth = getAuth(req);
   if (auth?.userId) {
     try {

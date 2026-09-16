@@ -18,6 +18,7 @@ import {
 } from '@workspace/dev-auth';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useColors } from '@/hooks/useColors';
+import { saveDevDemoSession } from '@/lib/dev-demo-session';
 import colors from '@/constants/colors';
 
 type AuthMode = 'sign-in' | 'sign-up';
@@ -35,6 +36,7 @@ export function DevAuthForm({ mode }: { mode: AuthMode }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const isSignIn = mode === 'sign-in';
 
   const alternateHref = returnTo
@@ -44,14 +46,36 @@ export function DevAuthForm({ mode }: { mode: AuthMode }) {
       }
     : (isSignIn ? '/(auth)/sign-up' : '/(auth)/sign-in');
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!isValidDevDemoCredentials(email, password)) {
       setError('That demo email or password is incorrect. Use the credentials shown above.');
       return;
     }
-
     setError('');
-    router.replace(getDevAuthDestination(returnTo) as Href);
+    setIsLoading(true);
+    try {
+      const base = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : '';
+      const response = await fetch(`${base}/api/dev-auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (
+        !response.ok
+        || typeof data.token !== 'string'
+        || typeof data.expiresIn !== 'number'
+      ) {
+        throw new Error(response.status === 401
+          ? 'That demo email or password is incorrect. Use the credentials shown above.'
+          : 'The development demo is unavailable. Please try again.');
+      }
+      await saveDevDemoSession(data.token, data.expiresIn);
+      router.replace(getDevAuthDestination(returnTo) as Href);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Unable to sign in');
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -73,8 +97,7 @@ export function DevAuthForm({ mode }: { mode: AuthMode }) {
               Development demo login
             </Text>
             <Text style={{ color: c.mutedForeground, fontSize: 13, lineHeight: 19, marginTop: 4 }}>
-              This is not production authentication. No real account is created, and
-              these credentials do not unlock protected API data.
+              Development-only demo access. It uses a short-lived local session and never creates a real account.
             </Text>
           </View>
         </View>
@@ -149,7 +172,7 @@ export function DevAuthForm({ mode }: { mode: AuthMode }) {
         <Pressable
           testID={isSignIn ? 'sign-in-button' : 'sign-up-button'}
           onPress={handleSubmit}
-          disabled={!email || !password}
+          disabled={!email || !password || isLoading}
           style={({ pressed }) => [
             styles.button,
             {
@@ -159,7 +182,7 @@ export function DevAuthForm({ mode }: { mode: AuthMode }) {
           ]}
         >
           <Text style={{ color: c.primaryForeground, fontSize: 16, fontFamily: 'Inter_600SemiBold' }}>
-            {isSignIn ? 'Enter demo' : 'Start demo'}
+            {isLoading ? 'Signing in…' : isSignIn ? 'Enter demo' : 'Start demo'}
           </Text>
         </Pressable>
 

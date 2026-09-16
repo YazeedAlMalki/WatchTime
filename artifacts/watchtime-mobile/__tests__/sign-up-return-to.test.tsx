@@ -1,8 +1,8 @@
 /**
  * Development demo authentication contract.
  *
- * The auth screens intentionally do not call Clerk. A valid submission only
- * navigates locally, while an invalid submission stays on the form.
+ * The auth screens intentionally do not call Clerk. A valid submission creates
+ * a development-only API session, while invalid credentials stay on the form.
  */
 
 import React from 'react';
@@ -17,6 +17,7 @@ const mockUseLocalSearchParams = jest.fn();
 const mockUseRouter = jest.fn();
 let mockReplace: jest.Mock;
 let mockLinkHref: unknown;
+const mockSaveDevDemoSession = jest.fn();
 
 jest.mock('@clerk/expo', () => ({
   useAuth: (...args: any[]) => mockUseAuth(...args),
@@ -62,6 +63,10 @@ jest.mock('@/constants/colors', () => ({
   default: { radius: 8 },
 }));
 
+jest.mock('@/lib/dev-demo-session', () => ({
+  saveDevDemoSession: (...args: unknown[]) => mockSaveDevDemoSession(...args),
+}));
+
 import SignInScreen from '../app/(auth)/sign-in';
 import SignUpScreen from '../app/(auth)/sign-up';
 
@@ -72,6 +77,12 @@ describe('development demo authentication', () => {
     mockUseAuth.mockReturnValue({ isSignedIn: false });
     mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
     mockUseRouter.mockReturnValue({ replace: mockReplace, push: jest.fn() });
+    mockSaveDevDemoSession.mockResolvedValue(undefined);
+    globalThis.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ token: 'signed-demo-token', expiresIn: 900 }),
+    });
   });
 
   afterEach(() => {
@@ -107,6 +118,7 @@ describe('development demo authentication', () => {
     });
 
     expect(mockReplace).toHaveBeenCalledWith('/title/456');
+    expect(mockSaveDevDemoSession).toHaveBeenCalledWith('signed-demo-token', 900);
   });
 
   it('falls back to home after a valid demo submission without returnTo', async () => {
@@ -122,6 +134,7 @@ describe('development demo authentication', () => {
     });
 
     expect(mockReplace).toHaveBeenCalledWith('/');
+    expect(mockSaveDevDemoSession).toHaveBeenCalledWith('signed-demo-token', 900);
   });
 
   it('preserves returnTo when switching from sign-up to sign-in', async () => {
