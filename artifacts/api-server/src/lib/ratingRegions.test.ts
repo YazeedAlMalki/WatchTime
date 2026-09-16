@@ -79,4 +79,37 @@ describe("resolvePreferredRating", () => {
     expect(resolvePreferredRating([communityCollision, ...records], "GB")?.label).toBe("12A");
     expect(resolvePreferredRating([communityCollision], "GB")).toBeNull();
   });
+
+  it("prefers the newest official classification regardless of record order", () => {
+    const older = {
+      ...records[0],
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      items: [{ category: "MPAA", label: "PG" }],
+    };
+    const newer = {
+      ...records[0],
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      items: [{ category: "MPAA", label: "PG-13" }],
+    };
+
+    expect(resolvePreferredRating([older, newer], "US")?.label).toBe("PG-13");
+    expect(resolvePreferredRating([newer, older], "US")?.label).toBe("PG-13");
+  });
+
+  it("uses stable content when duplicate official records have equal freshness", () => {
+    const timestamp = new Date("2026-02-01T00:00:00.000Z");
+    const first = {
+      ...records[0],
+      updatedAt: timestamp,
+      items: [{ category: "MPAA", label: "PG" }],
+    };
+    const second = {
+      ...records[0],
+      updatedAt: timestamp,
+      items: [{ category: "MPAA", label: "PG-13" }],
+    };
+
+    expect(resolvePreferredRating([first, second], "US")?.label).toBe("PG");
+    expect(resolvePreferredRating([second, first], "US")?.label).toBe("PG");
+  });
 });

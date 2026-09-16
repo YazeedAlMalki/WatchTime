@@ -11,7 +11,7 @@ import {
   analyticsEventsTable,
   usersTable,
 } from "@workspace/db";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import {
   CreateSafetyContributionBody,
   CreateSafetyReportBody,
@@ -123,7 +123,8 @@ router.get("/safety", optionalAuth, async (req, res) => {
       eq(safetyRecordsTable.titleId, titleId),
       isNull(safetyRecordsTable.seasonNumber),
       isNull(safetyRecordsTable.episodeNumber),
-    ));
+    ))
+    .orderBy(desc(safetyRecordsTable.updatedAt), asc(safetyRecordsTable.id));
   const ratingSystems = new Set<string>(RATING_REGIONS.map(({ system }) => system));
   const displayRecords = [
     ...records,
