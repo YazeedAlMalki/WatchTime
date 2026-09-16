@@ -10,3 +10,4 @@
 - [Workflow database schema pushes](workflow-database-schema-pushes.md) — shell tests and managed workflows may use different DB endpoints; update both before preview verification.
 - [Expo startup contract mocks](expo-startup-contract-mocks.md) — isolate module-level splash rejection tests with a fresh doMock; static Expo mocks can otherwise hide missing methods.
 - [Workspace link and schema recovery](workspace-link-schema-recovery.md) — after merges, reinstall workspace links and apply the dev Drizzle schema before diagnosing app data failures.
+- [API client build artifacts](api-client-build-artifacts.md) — rebuild generated library declarations after contract changes; consumers can otherwise read stale dist types.
