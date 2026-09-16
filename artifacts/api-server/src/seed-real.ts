@@ -905,18 +905,24 @@ async function syncAliases(tx: any, titleId: number, canonicalName: string, item
     sourceAliases.set(normalizedAlias, { ...source, alias: trimmed });
   }
   for (const [normalizedAlias, source] of sourceAliases) {
+    const [current] = await tx.select().from(titleAliasesTable).where(and(
+      eq(titleAliasesTable.titleId, titleId),
+      eq(titleAliasesTable.normalizedAlias, normalizedAlias),
+    )).limit(1);
+    const legacyProviderOwnership =
+      current?.isEditorial === true &&
+      current.sourceName !== "Admin editorial" &&
+      current.sourceUrl === source.sourceUrl;
+    if (current?.isEditorial && !legacyProviderOwnership) continue;
+
     const values = {
       alias: source.alias,
       language: source.language,
       sourceName: source.sourceName,
       sourceUrl: source.sourceUrl,
-      isEditorial: true,
+      isEditorial: false,
       updatedAt: new Date(),
     };
-    const [current] = await tx.select().from(titleAliasesTable).where(and(
-      eq(titleAliasesTable.titleId, titleId),
-      eq(titleAliasesTable.normalizedAlias, normalizedAlias),
-    )).limit(1);
     if (current) {
       await tx.update(titleAliasesTable).set(values).where(eq(titleAliasesTable.id, current.id));
     } else {

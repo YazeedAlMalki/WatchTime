@@ -76,6 +76,7 @@ describe("admin title aliases", () => {
       alias: "Shared Local Title",
       sourceName: "Editorial test",
       language: "en",
+      isEditorial: true,
       collision: true,
       collisionTitleCount: 2,
     });
@@ -152,6 +153,7 @@ describe("admin title aliases", () => {
       expect.objectContaining({
         alias: "Shared Local Title",
         sourceName: "Provider catalog",
+        isEditorial: false,
       }),
     ]));
     expect(titles.find((title) => title.id === createdTitleIds[0])?.altTitles)
@@ -163,14 +165,59 @@ describe("admin title aliases", () => {
     expect(collisionReport.body).toEqual(expect.arrayContaining([
       expect.objectContaining({
         titleId: createdTitleIds[0],
+        isEditorial: false,
         collision: true,
         collisionTitleCount: 2,
       }),
       expect.objectContaining({
         titleId: createdTitleIds[1],
+        isEditorial: true,
         collision: true,
         collisionTitleCount: 2,
       }),
     ]));
+  });
+
+  it("migrates a legacy provider alias to provider ownership without losing its value", async () => {
+    const [legacyAlias] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
+    await db.update(titleAliasesTable).set({
+      sourceName: "Provider catalog",
+      sourceUrl: "https://example.test/provider",
+      isEditorial: true,
+    }).where(eq(titleAliasesTable.id, legacyAlias.id));
+
+    const sourceItem: SourceItem = {
+      key: "movie:legacy-alias-refresh-test",
+      source: "wikipedia",
+      type: "movie",
+      name: "Alias Test One",
+      imdbId: "tt-alias-test-1",
+      aliases: [{
+        alias: "SHARED LOCAL TITLE",
+        language: "en",
+        sourceName: "Provider catalog",
+        sourceUrl: "https://example.test/provider",
+      }],
+      popularity: 0,
+      wikiPage: "Alias Test One",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      extract: "Provider summary",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [sourceItem]);
+
+    const [migrated] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.id, legacyAlias.id));
+    expect(migrated).toMatchObject({
+      alias: "SHARED LOCAL TITLE",
+      sourceName: "Provider catalog",
+      sourceUrl: "https://example.test/provider",
+      isEditorial: false,
+    });
   });
 });
