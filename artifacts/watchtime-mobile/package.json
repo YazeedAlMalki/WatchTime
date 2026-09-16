@@ -8,6 +8,7 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:api-contract": "pnpm --filter @workspace/api-spec run codegen:check && pnpm run typecheck",
     "test": "jest"
   },
   "devDependencies": {
