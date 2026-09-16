@@ -341,6 +341,121 @@ describe("shared rating-region preference", () => {
       });
     },
   );
+
+  it.each(
+    [
+      ["US", "MPAA"],
+      ["GB", "BBFC"],
+      ["DE", "FSK"],
+      ["FR", "CNC"],
+      ["AU", "Australian Classification"],
+      ["BR", "ClassInd"],
+    ].flatMap(([region, system]) =>
+      ["stale", "unavailable", "failed"].map((status) => [region, system, status]),
+    ),
+  )(
+    "does not return a %s rating from a %s Wikidata record",
+    async (preferredRatingRegion, expectedSystem, unavailableStatus) => {
+      await db.insert(safetyRecordsTable).values([
+        {
+          titleId,
+          sourceName: "Wikidata",
+          tier: 2,
+          isCommunity: false,
+          status: unavailableStatus,
+          items: [{
+            category: expectedSystem,
+            label: `${unavailableStatus} official rating`,
+            score: null,
+            maxScore: null,
+            description: "Must not be selected",
+          }],
+        },
+        {
+          titleId,
+          sourceName: "WatchTime Community",
+          tier: 1,
+          isCommunity: true,
+          status: "available",
+          items: [{
+            category: expectedSystem,
+            label: "Community collision",
+            score: null,
+            maxScore: null,
+            description: "Must not fill the gap",
+          }],
+        },
+        {
+          titleId,
+          sourceName: "Other Ratings Provider",
+          tier: 2,
+          isCommunity: false,
+          status: "available",
+          items: [{
+            category: expectedSystem,
+            label: "Non-Wikidata collision",
+            score: null,
+            maxScore: null,
+            description: "Must not fill the gap",
+          }],
+        },
+      ]);
+
+      await db.update(usersTable)
+        .set({ preferredRatingRegion })
+        .where(eq(usersTable.id, MOBILE_USER_ID));
+
+      const safety = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+
+      expect(safety.status).toBe(200);
+      expect(safety.body.preferredRatingRegion).toBe(preferredRatingRegion);
+      expect(safety.body.preferredRating).toBeNull();
+    },
+  );
+
+  it("uses another available Wikidata record when an unavailable one has the same classification", async () => {
+    await db.insert(safetyRecordsTable).values([
+      {
+        titleId,
+        sourceName: "Wikidata",
+        tier: 2,
+        isCommunity: false,
+        status: "stale",
+        items: [{
+          category: "MPAA",
+          label: "Stale official rating",
+          score: null,
+          maxScore: null,
+          description: "Must not be selected",
+        }],
+      },
+      {
+        titleId,
+        sourceName: "Wikidata",
+        tier: 2,
+        isCommunity: false,
+        status: "available",
+        items: [{
+          category: "MPAA",
+          label: "PG",
+          score: null,
+          maxScore: null,
+          description: "Current official rating",
+        }],
+      },
+    ]);
+
+    const safety = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+
+    expect(safety.status).toBe(200);
+    expect(safety.body.preferredRating).toEqual({
+      region: "US",
+      countryName: "United States",
+      system: "MPAA",
+      label: "PG",
+      sourceName: "Wikidata",
+    });
+  });
 });
 
 afterAll(async () => {
