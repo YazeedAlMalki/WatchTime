@@ -162,8 +162,40 @@ describe("Wikidata refresh persistence", () => {
     if (healthBefore) await db.insert(integrationHealthTable).values(healthBefore);
   });
 
-  it("is repeatable and preserves community and other-provider records", async () => {
+  it("is repeatable, consolidates pre-existing official duplicates, and preserves other providers", async () => {
     await db.insert(safetyRecordsTable).values([
+      {
+        titleId,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        url: "https://www.wikidata.org/wiki/Q41",
+        status: "available",
+        items: [{
+          category: "MPAA",
+          label: "PG",
+          score: null,
+          maxScore: null,
+          description: "US rating · Wikidata property P1657",
+        }],
+        updatedAt: new Date("2020-01-01T00:00:00.000Z"),
+      },
+      {
+        titleId,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        url: "https://www.wikidata.org/wiki/Q43",
+        status: "available",
+        items: [{
+          category: "MPAA",
+          label: "PG-13",
+          score: null,
+          maxScore: null,
+          description: "US rating · Wikidata property P1657",
+        }],
+        updatedAt: new Date("2020-01-02T00:00:00.000Z"),
+      },
       {
         titleId,
         sourceName: "WatchTime Community",

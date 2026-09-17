@@ -5,7 +5,7 @@ import {
   safetyRecordsTable,
   titlesTable,
 } from "@workspace/db";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 /**
  * Wikidata's public SPARQL endpoint is deliberately used without credentials.
@@ -476,31 +476,34 @@ export async function refreshWikidataTitle(
       // Wikidata's own row, and retain it when the provider currently exposes
       // no classification labels. Community and richer provider rows are
       // never touched.
-      if (items.length > 0) {
-        const [existingRecord] = await tx.select()
-          .from(safetyRecordsTable)
-          .where(and(
-            eq(safetyRecordsTable.titleId, titleId),
-            eq(safetyRecordsTable.sourceName, WIKIDATA_PROVIDER),
-            isNull(safetyRecordsTable.seasonNumber),
-            isNull(safetyRecordsTable.episodeNumber),
-          ))
-          .limit(1);
-        const values = {
-          titleId,
-          sourceName: WIKIDATA_PROVIDER,
-          tier: 2,
-          isCommunity: false,
-          url: item.itemUrl,
-          status: "available" as const,
-          items,
-          updatedAt: now,
-        };
-        if (existingRecord) {
-          await tx.update(safetyRecordsTable).set(values).where(eq(safetyRecordsTable.id, existingRecord.id));
-        } else {
-          await tx.insert(safetyRecordsTable).values(values);
-        }
+      const existingRecords = await tx.select()
+        .from(safetyRecordsTable)
+        .where(and(
+          eq(safetyRecordsTable.titleId, titleId),
+          eq(safetyRecordsTable.sourceName, WIKIDATA_PROVIDER),
+          isNull(safetyRecordsTable.seasonNumber),
+          isNull(safetyRecordsTable.episodeNumber),
+        ))
+        .orderBy(desc(safetyRecordsTable.updatedAt), asc(safetyRecordsTable.id));
+      const [existingRecord] = existingRecords;
+      const values = {
+        titleId,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        url: item.itemUrl,
+        status: "available" as const,
+        items,
+        updatedAt: now,
+      };
+      if (existingRecord && items.length > 0) {
+        await tx.update(safetyRecordsTable).set(values).where(eq(safetyRecordsTable.id, existingRecord.id));
+      } else if (!existingRecord && items.length > 0) {
+        await tx.insert(safetyRecordsTable).values(values);
+      }
+      const duplicateIds = existingRecords.slice(1).map((record) => record.id);
+      if (duplicateIds.length > 0) {
+        await tx.delete(safetyRecordsTable).where(inArray(safetyRecordsTable.id, duplicateIds));
       }
     });
     await updateIntegrationHealth({
