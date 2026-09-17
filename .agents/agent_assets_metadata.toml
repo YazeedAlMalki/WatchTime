@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "BWPw40qMgsXfMD6QY6jgB"
+uri = "file://reports/watchtime-lighthouse.html"
+type = "text"
+title = "WatchTime Lighthouse Audit"
+description = "Production-build Lighthouse report after the performance optimization pass."
+logical_id = "516fd416-19a3-4512-aadb-0d563952b255"
+content_hash = "sha256:508a672793ee3e9246409f4b8e6405f05d476347845363276b068195044c27cf"
+size = 460927
+mtime_ms = 1789652252783
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:7fa0166a-73a2-4777-8e96-64cdc1c619e1/516fd416-19a3-4512-aadb-0d563952b255/46c1e89f-13f0-4d10-88b5-63c72f8a959c"
+storage_version_token = "1789652609762138"
+content_type = "text/html"

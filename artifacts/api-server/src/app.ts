@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import compression from "compression";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
@@ -71,6 +72,7 @@ app.use(
     credentials: true,
   }),
 );
+app.use(compression({ threshold: 1024 }));
 
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 

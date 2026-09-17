@@ -1,10 +1,20 @@
 import React from "react";
-import { useGetMyRecommendations, useGetMyRecentActivity, useGetMyShows, useGetMyWatchlist, useMarkEpisodeWatched } from "@workspace/api-client-react";
+import {
+  getGetMyRecommendationsQueryKey,
+  getGetMyRecentActivityQueryKey,
+  getGetMyShowsQueryKey,
+  useGetMyRecommendations,
+  useGetMyRecentActivity,
+  useGetMyShows,
+  useGetMyWatchlist,
+  useMarkEpisodeWatched,
+} from "@workspace/api-client-react";
 import { PosterCard } from "@/components/ui/poster-card";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import { Play, Clock, Sparkles, ChevronRight, Check } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { OptimizedImage } from "@/components/ui/optimized-image";
 
 export default function HomePage() {
   const { data: myShows, isLoading: showsLoading } = useGetMyShows();
@@ -42,9 +52,9 @@ export default function HomePage() {
               <div key={show.title.id} className="bg-card border border-border rounded-2xl overflow-hidden flex flex-col hover-elevate shadow-sm transition-all group">
                 <div className="relative aspect-video w-full bg-secondary">
                   {show.nextEpisode?.stillUrl ? (
-                    <img src={show.nextEpisode.stillUrl} alt={show.nextEpisode.name} className="w-full h-full object-cover" />
+                    <OptimizedImage src={show.nextEpisode.stillUrl} alt={show.nextEpisode.name} className="w-full h-full object-cover" width={640} height={360} />
                   ) : show.title.backdropUrl ? (
-                    <img src={show.title.backdropUrl} alt={show.title.name} className="w-full h-full object-cover opacity-50" />
+                    <OptimizedImage src={show.title.backdropUrl} alt={show.title.name} className="w-full h-full object-cover opacity-50" width={640} height={360} />
                   ) : null}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent p-4 flex flex-col justify-end">
                     <span className="text-white font-bold font-display truncate shadow-sm">{show.title.name}</span>
@@ -63,7 +73,13 @@ export default function HomePage() {
                       if (show.nextEpisode) {
                         markWatched.mutate(
                           { episodeId: show.nextEpisode.id, data: { includePrevious: true } },
-                          { onSuccess: () => queryClient.invalidateQueries() }
+                          {
+                            onSuccess: () => Promise.all([
+                              queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() }),
+                              queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() }),
+                              queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() }),
+                            ]),
+                          }
                         );
                       }
                     }}

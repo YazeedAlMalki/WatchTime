@@ -33,6 +33,8 @@ import type {
   CatalogRefreshRun,
   ContentMapping,
   ContributionModeration,
+  DevAuthLogin200,
+  DevAuthLoginBody,
   EpisodeWatchInput,
   FeedbackInput,
   FeedbackItem,
@@ -98,6 +100,77 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getDevAuthLoginUrl = () => {
+
+
+
+
+  return `/api/dev-auth/login`
+}
+
+/**
+ * @summary Development-only demo login
+ */
+export const devAuthLogin = async (devAuthLoginBody: DevAuthLoginBody, options?: Parameters<typeof customFetch>[1]): Promise<DevAuthLogin200> => {
+
+  return customFetch<DevAuthLogin200>(getDevAuthLoginUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(devAuthLoginBody)
+  }
+);}
+
+
+
+
+
+export const getDevAuthLoginMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof devAuthLogin>>, TError,{data: BodyType<DevAuthLoginBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof devAuthLogin>>, TError,{data: BodyType<DevAuthLoginBody>}, TContext> => {
+
+const mutationKey = ['devAuthLogin'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof devAuthLogin>>, {data: BodyType<DevAuthLoginBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  devAuthLogin(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DevAuthLoginMutationResult = NonNullable<Awaited<ReturnType<typeof devAuthLogin>>>
+    export type DevAuthLoginMutationBody = BodyType<DevAuthLoginBody>
+    export type DevAuthLoginMutationError = ErrorType<void>
+
+    /**
+ * @summary Development-only demo login
+ */
+export const useDevAuthLogin = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof devAuthLogin>>, TError,{data: BodyType<DevAuthLoginBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof devAuthLogin>>,
+        TError,
+        {data: BodyType<DevAuthLoginBody>},
+        TContext
+      > => {
+      return useMutation(getDevAuthLoginMutationOptions(options));
+    }
 
 export const getHealthCheckUrl = () => {
 

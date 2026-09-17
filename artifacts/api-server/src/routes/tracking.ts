@@ -307,20 +307,27 @@ router.get("/me/recommendations", requireAuth, async (req, res) => {
     .limit(3);
   const watchedIds = watched.map((w) => w.title.id);
   const groups = [];
-  for (const w of watched) {
-    const similar = await db
+  const allGenres = [...new Set(watched.flatMap((w) => w.title.genres))];
+  const candidates = watched.length > 0
+    ? await db
       .select()
       .from(titlesTable)
       .where(
         and(
           watchedIds.length ? notInArray(titlesTable.id, watchedIds) : undefined,
-          w.title.genres.length > 0
-            ? arrayOverlaps(titlesTable.genres, w.title.genres)
+          allGenres.length > 0
+            ? arrayOverlaps(titlesTable.genres, allGenres)
             : undefined,
         ),
       )
       .orderBy(desc(titlesTable.popularity))
-      .limit(6);
+      .limit(60)
+    : [];
+  for (const w of watched) {
+    const watchedGenres = new Set(w.title.genres);
+    const similar = candidates
+      .filter((candidate) => candidate.genres.some((genre) => watchedGenres.has(genre)))
+      .slice(0, 6);
     if (similar.length > 0) {
       groups.push({
         reason: `Because you watched ${w.title.name}`,

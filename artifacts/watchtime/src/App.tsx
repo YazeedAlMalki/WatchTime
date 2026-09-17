@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -6,7 +6,6 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { ClerkProvider, SignIn, SignUp, Show } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
-import NotFound from '@/pages/not-found';
 import {
   Route,
   Switch,
@@ -17,20 +16,31 @@ import {
 
 import { Navbar } from '@/components/layout/Navbar';
 import LandingPage from '@/pages/landing';
-import HomePage from '@/pages/home';
-import BrowsePage from '@/pages/browse';
-import TitleDetailPage from '@/pages/title-detail';
-import WatchlistPage from '@/pages/watchlist';
-import MyShowsPage from '@/pages/my-shows';
-import StatsPage from '@/pages/stats';
-import ProfilePage from '@/pages/profile';
-import ImportDataPage from '@/pages/import-data';
-import FeedbackPage from '@/pages/feedback';
-import AdminPage from '@/pages/admin';
 import { DevAuthPage } from '@/components/auth/DevAuthPage';
 import { isDevelopmentAuthEnabled } from '@workspace/dev-auth';
 
-const queryClient = new QueryClient();
+const HomePage = lazy(() => import('@/pages/home'));
+const BrowsePage = lazy(() => import('@/pages/browse'));
+const TitleDetailPage = lazy(() => import('@/pages/title-detail'));
+const WatchlistPage = lazy(() => import('@/pages/watchlist'));
+const MyShowsPage = lazy(() => import('@/pages/my-shows'));
+const StatsPage = lazy(() => import('@/pages/stats'));
+const ProfilePage = lazy(() => import('@/pages/profile'));
+const ImportDataPage = lazy(() => import('@/pages/import-data'));
+const FeedbackPage = lazy(() => import('@/pages/feedback'));
+const AdminPage = lazy(() => import('@/pages/admin'));
+const NotFound = lazy(() => import('@/pages/not-found'));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60_000,
+      gcTime: 10 * 60_000,
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 const clerkPubKey = publishableKeyFromHost(
   window.location.hostname,
@@ -162,26 +172,41 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
+function RouteSkeleton() {
+  return (
+    <div className="container mx-auto flex w-full flex-col gap-6 px-4 py-8 sm:px-8" aria-label="Loading page">
+      <div className="h-9 w-56 animate-pulse rounded-lg bg-secondary/50" />
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-5">
+        {Array.from({ length: 10 }).map((_, index) => (
+          <div key={index} className="aspect-[2/3] animate-pulse rounded-xl bg-secondary/30" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Router() {
   return (
     <div className="min-h-[100dvh] flex flex-col w-full bg-background">
       <Navbar />
       <main className="flex-1 w-full flex flex-col">
         <RoutedErrorBoundary>
-          <Switch>
-            <Route path="/" component={HomeRedirect} />
-            <Route path="/home" component={HomePage} />
-            <Route path="/browse" component={BrowsePage} />
-            <Route path="/title/:id" component={TitleDetailPage} />
-            <Route path="/watchlist" component={WatchlistPage} />
-            <Route path="/my-shows" component={MyShowsPage} />
-            <Route path="/stats" component={StatsPage} />
-            <Route path="/profile" component={ProfilePage} />
-            <Route path="/import-data" component={ImportDataPage} />
-            <Route path="/feedback" component={FeedbackPage} />
-            <Route path="/admin" component={AdminPage} />
-            <Route component={NotFound} />
-          </Switch>
+          <Suspense fallback={<RouteSkeleton />}>
+            <Switch>
+              <Route path="/" component={HomeRedirect} />
+              <Route path="/home" component={HomePage} />
+              <Route path="/browse" component={BrowsePage} />
+              <Route path="/title/:id" component={TitleDetailPage} />
+              <Route path="/watchlist" component={WatchlistPage} />
+              <Route path="/my-shows" component={MyShowsPage} />
+              <Route path="/stats" component={StatsPage} />
+              <Route path="/profile" component={ProfilePage} />
+              <Route path="/import-data" component={ImportDataPage} />
+              <Route path="/feedback" component={FeedbackPage} />
+              <Route path="/admin" component={AdminPage} />
+              <Route component={NotFound} />
+            </Switch>
+          </Suspense>
         </RoutedErrorBoundary>
       </main>
     </div>

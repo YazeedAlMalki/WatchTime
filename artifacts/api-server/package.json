@@ -18,6 +18,7 @@
     "@workspace/dev-auth": "workspace:*",
     "@workspace/rating-regions": "workspace:*",
     "cookie-parser": "^1.4.7",
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
     "drizzle-orm": "catalog:",
     "express": "^5.2.1",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "catalog:",

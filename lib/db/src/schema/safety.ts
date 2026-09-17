@@ -39,7 +39,13 @@ export const safetyRecordsTable = pgTable("safety_records", {
   status: text("status").notNull().default("available"), // available | provider_unavailable
   items: jsonb("items").$type<SafetyItem[]>().notNull().default([]),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => [
+  index("safety_records_title_granularity_idx").on(
+    table.titleId,
+    table.seasonNumber,
+    table.episodeNumber,
+  ),
+]);
 
 export const contributionStatusEnum = pgEnum("contribution_status", [
   "pending",
@@ -63,7 +69,10 @@ export const contributionsTable = pgTable("contributions", {
   description: text("description"),
   status: contributionStatusEnum("status").notNull().default("pending"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => [
+  index("contributions_status_created_idx").on(table.status, table.createdAt),
+  index("contributions_title_status_idx").on(table.titleId, table.status),
+]);
 
 export const reportsTable = pgTable("reports", {
   id: serial("id").primaryKey(),
@@ -78,7 +87,10 @@ export const reportsTable = pgTable("reports", {
   details: text("details"),
   status: text("status").notNull().default("open"), // open | resolved | dismissed
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => [
+  index("reports_status_created_idx").on(table.status, table.createdAt),
+  index("reports_title_status_idx").on(table.titleId, table.status),
+]);
 
 export const providerMappingsTable = pgTable("provider_mappings", {
   id: serial("id").primaryKey(),
@@ -104,7 +116,10 @@ export const adminAuditLogTable = pgTable("admin_audit_log", {
   entityId: integer("entity_id"),
   details: jsonb("details"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => [
+  index("admin_audit_log_created_idx").on(table.createdAt),
+  index("admin_audit_log_admin_created_idx").on(table.adminId, table.createdAt),
+]);
 
 export const integrationHealthTable = pgTable("integration_health", {
   id: serial("id").primaryKey(),

@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { Title } from "@workspace/api-client-react";
 import { Play, Plus, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { OptimizedImage } from "@/components/ui/optimized-image";
 
 interface PosterCardProps {
   title: Title;
@@ -15,11 +16,13 @@ export function PosterCard({ title, onWatchlistToggle, onWatchedToggle }: Poster
     <div className="group relative flex flex-col gap-3 w-full">
       <Link href={`/title/${title.id}`} className="block relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-secondary shadow-sm transition-all duration-300 group-hover:shadow-md group-hover:-translate-y-1">
         {title.posterUrl ? (
-          <img
+          <OptimizedImage
             src={title.posterUrl}
             alt={title.name}
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             loading="lazy"
+            width={360}
+            height={540}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground p-4 text-center">

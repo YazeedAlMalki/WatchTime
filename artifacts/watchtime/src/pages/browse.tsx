@@ -3,7 +3,7 @@ import { useListTitles, ListTitlesType, ListTitlesSort } from "@workspace/api-cl
 import { PosterCard } from "@/components/ui/poster-card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Filter } from "lucide-react";
+import { Search } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -13,19 +13,36 @@ import {
 } from "@/components/ui/select";
 import { useDebounce } from "@/hooks/use-debounce";
 import { trackEvent } from "@/lib/analytics";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+
+const PAGE_SIZE = 24;
 
 export default function BrowsePage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 500);
   const [type, setType] = useState<ListTitlesType | "all">("all");
   const [sort, setSort] = useState<ListTitlesSort>("popular");
+  const [page, setPage] = useState(0);
 
   const { data: titles, isLoading, isSuccess } = useListTitles({
     q: debouncedSearch || undefined,
     type: type !== "all" ? type : undefined,
     sort,
-    limit: 40
+    limit: PAGE_SIZE + 1,
+    offset: page * PAGE_SIZE,
   });
+  const visibleTitles = titles?.slice(0, PAGE_SIZE);
+  const hasNextPage = (titles?.length ?? 0) > PAGE_SIZE;
+
+  useEffect(() => {
+    setPage(0);
+  }, [debouncedSearch, type, sort]);
 
   useEffect(() => {
     if (!isSuccess || !debouncedSearch.trim()) return;
@@ -90,7 +107,7 @@ export default function BrowsePage() {
             <div key={i} className="aspect-[2/3] rounded-xl bg-secondary/30 animate-pulse" />
           ))}
         </div>
-      ) : titles?.length === 0 ? (
+      ) : visibleTitles?.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center text-muted-foreground">
           <Search className="w-12 h-12 mb-4 opacity-20" />
           <h3 className="text-xl font-display font-medium text-foreground">No titles found</h3>
@@ -98,11 +115,45 @@ export default function BrowsePage() {
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-          {titles?.map((title) => (
+          {visibleTitles?.map((title) => (
             <PosterCard key={title.id} title={title} />
           ))}
         </div>
       )}
+      {!isLoading && (page > 0 || hasNextPage) ? (
+        <Pagination>
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                href="#"
+                aria-disabled={page === 0}
+                className={page === 0 ? "pointer-events-none opacity-50" : undefined}
+                onClick={(event) => {
+                  event.preventDefault();
+                  setPage((value) => Math.max(0, value - 1));
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+              />
+            </PaginationItem>
+            <PaginationItem className="px-3 text-sm text-muted-foreground">
+              Page {page + 1}
+            </PaginationItem>
+            <PaginationItem>
+              <PaginationNext
+                href="#"
+                aria-disabled={!hasNextPage}
+                className={!hasNextPage ? "pointer-events-none opacity-50" : undefined}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (!hasNextPage) return;
+                  setPage((value) => value + 1);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      ) : null}
     </div>
   );
 }

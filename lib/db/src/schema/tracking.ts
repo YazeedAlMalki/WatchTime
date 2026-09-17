@@ -4,6 +4,7 @@ import {
   text,
   integer,
   timestamp,
+  index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { titlesTable, episodesTable } from "./catalog";
@@ -56,5 +57,7 @@ export const watchedEpisodesTable = pgTable(
   },
   (t) => [
     uniqueIndex("watched_episodes_user_episode_idx").on(t.userId, t.episodeId),
+    index("watched_episodes_user_title_idx").on(t.userId, t.titleId),
+    index("watched_episodes_user_watched_at_idx").on(t.userId, t.watchedAt),
   ],
 );

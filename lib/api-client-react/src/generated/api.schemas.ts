@@ -952,6 +952,17 @@ export interface AuditLogPage {
   entries: AuditLogEntry[];
 }
 
+export type DevAuthLoginBody = {
+  email: string;
+  password: string;
+};
+
+export type DevAuthLogin200 = {
+  token: string;
+  expiresIn: number;
+  userId: string;
+};
+
 export type ListTitlesParams = {
 q?: string;
 type?: ListTitlesType;

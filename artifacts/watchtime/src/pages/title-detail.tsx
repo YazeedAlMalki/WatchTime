@@ -18,6 +18,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { PosterCard } from "@/components/ui/poster-card";
+import { OptimizedImage } from "@/components/ui/optimized-image";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -215,7 +216,7 @@ export default function TitleDetailPage() {
       {/* Hero Backdrop */}
       <div className="relative w-full h-[40vh] sm:h-[60vh] md:h-[70vh] bg-secondary flex-shrink-0">
         {title.backdropUrl ? (
-          <img src={title.backdropUrl} alt="" className="w-full h-full object-cover opacity-60" />
+          <OptimizedImage src={title.backdropUrl} alt="" className="w-full h-full object-cover opacity-60" loading="eager" fetchPriority="high" width={1024} height={576} />
         ) : (
           <div className="w-full h-full bg-gradient-to-br from-secondary via-secondary to-background" />
         )}
@@ -227,7 +228,7 @@ export default function TitleDetailPage() {
         <div className="w-40 sm:w-64 flex-shrink-0 flex flex-col gap-4">
           <div className="aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl border-4 border-background bg-card">
             {title.posterUrl ? (
-              <img src={title.posterUrl} alt={title.name} className="w-full h-full object-cover" />
+              <OptimizedImage src={title.posterUrl} alt={title.name} className="w-full h-full object-cover" loading="eager" width={480} height={720} />
             ) : (
               <div className="w-full h-full bg-secondary flex items-center justify-center p-4 text-center text-muted-foreground font-display">No Poster</div>
             )}
@@ -514,7 +515,7 @@ export default function TitleDetailPage() {
                                 {ep.airDate && <span className="text-xs text-muted-foreground">{new Date(ep.airDate).toLocaleDateString()}</span>}
                               </div>
                               {ep.stillUrl && (
-                                <img src={ep.stillUrl} alt="" className="w-24 aspect-video object-cover rounded-md shadow-sm opacity-80 group-hover:opacity-100 transition-opacity" />
+                                <OptimizedImage src={ep.stillUrl} alt="" className="w-24 aspect-video object-cover rounded-md shadow-sm opacity-80 group-hover:opacity-100 transition-opacity" width={192} height={108} />
                               )}
                             </div>
                           ))}

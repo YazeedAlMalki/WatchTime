@@ -9,6 +9,21 @@ import * as zod from 'zod/v4';
 
 
 /**
+ * @summary Development-only demo login
+ */
+export const DevAuthLoginBody = zod.object({
+  "email": zod.email(),
+  "password": zod.string()
+})
+
+export const DevAuthLoginResponse = zod.object({
+  "token": zod.string(),
+  "expiresIn": zod.int(),
+  "userId": zod.string()
+})
+
+
+/**
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({

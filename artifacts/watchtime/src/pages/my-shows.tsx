@@ -1,5 +1,13 @@
 import React, { useState } from "react";
-import { useGetMyShows, useGetMyMovies, useGetMyRecentActivity, useMarkEpisodeWatched } from "@workspace/api-client-react";
+import {
+  getGetMyRecentActivityQueryKey,
+  getGetMyRecommendationsQueryKey,
+  getGetMyShowsQueryKey,
+  useGetMyShows,
+  useGetMyMovies,
+  useGetMyRecentActivity,
+  useMarkEpisodeWatched,
+} from "@workspace/api-client-react";
 import { PosterCard } from "@/components/ui/poster-card";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
@@ -7,6 +15,7 @@ import { PlaySquare, Check, Clock } from "lucide-react";
 import { Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { OptimizedImage } from "@/components/ui/optimized-image";
 
 export default function MyShowsPage() {
   const { data: shows, isLoading: showsLoading } = useGetMyShows();
@@ -18,7 +27,13 @@ export default function MyShowsPage() {
   const handleMarkWatched = (episodeId: number) => {
     markWatched.mutate(
       { episodeId, data: { includePrevious: true } },
-      { onSuccess: () => queryClient.invalidateQueries() }
+      {
+        onSuccess: () => Promise.all([
+          queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() }),
+          queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() }),
+          queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() }),
+        ]),
+      }
     );
   };
 
@@ -56,7 +71,7 @@ export default function MyShowsPage() {
                 return (
                   <div key={show.title.id} className="flex flex-col sm:flex-row bg-card border border-border rounded-2xl overflow-hidden shadow-sm hover-elevate transition-all">
                     <Link href={`/title/${show.title.id}`} className="w-full sm:w-32 aspect-[2/3] sm:aspect-auto flex-shrink-0 bg-secondary">
-                      {show.title.posterUrl && <img src={show.title.posterUrl} alt={show.title.name} className="w-full h-full object-cover" />}
+                      {show.title.posterUrl && <OptimizedImage src={show.title.posterUrl} alt={show.title.name} className="w-full h-full object-cover" width={256} height={384} />}
                     </Link>
                     <div className="flex-1 p-6 flex flex-col justify-between gap-4">
                       <div>
@@ -129,7 +144,7 @@ export default function MyShowsPage() {
                   <div className="absolute -left-[31px] sm:-left-[47px] top-1 w-4 h-4 rounded-full bg-background border-2 border-primary" />
                   <div className="flex gap-4 items-start">
                     <Link href={`/title/${item.titleId}`} className="w-16 sm:w-24 aspect-[2/3] flex-shrink-0 rounded-lg overflow-hidden bg-secondary shadow-sm">
-                      {item.posterUrl && <img src={item.posterUrl} alt={item.titleName} className="w-full h-full object-cover" />}
+                      {item.posterUrl && <OptimizedImage src={item.posterUrl} alt={item.titleName} className="w-full h-full object-cover" width={192} height={288} />}
                     </Link>
                     <div className="flex flex-col py-1">
                       <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">

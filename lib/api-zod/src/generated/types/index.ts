@@ -33,6 +33,8 @@ export * from './contentMapping';
 export * from './contentMappingType';
 export * from './contributionModeration';
 export * from './contributionModerationStatus';
+export * from './devAuthLogin200';
+export * from './devAuthLoginBody';
 export * from './episode';
 export * from './episodeWatchInput';
 export * from './feedbackInput';
