@@ -512,8 +512,18 @@ router.patch("/content-aliases/:id", async (req, res) => {
   const alias = typeof req.body?.alias === "string" ? req.body.alias.trim() : "";
   const language = typeof req.body?.language === "string" ? req.body.language.trim() || null : null;
   const sourceUrl = typeof req.body?.sourceUrl === "string" ? req.body.sourceUrl.trim() || null : null;
+  const expectedUpdatedAt = typeof req.body?.expectedUpdatedAt === "string"
+    ? req.body.expectedUpdatedAt.trim()
+    : "";
+  const expectedUpdatedAtDate = expectedUpdatedAt ? new Date(expectedUpdatedAt) : null;
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid alias id" });
   if (!alias || alias.length > 300) return res.status(400).json({ error: "Alias must be 1 to 300 characters" });
+  if (
+    !expectedUpdatedAtDate ||
+    Number.isNaN(expectedUpdatedAtDate.getTime())
+  ) {
+    return res.status(400).json({ error: "The alias timestamp is required to save this correction" });
+  }
   if (sourceUrl) {
     try {
       const url = new URL(sourceUrl);
@@ -526,6 +536,11 @@ router.patch("/content-aliases/:id", async (req, res) => {
     const [current] = await tx.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.id, id)).for("update");
     if (!current) return null;
+    if (current.updatedAt.getTime() !== expectedUpdatedAtDate.getTime()) {
+      return {
+        error: "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+      } as const;
+    }
     const [title] = await tx.select({ name: titlesTable.name }).from(titlesTable)
       .where(eq(titlesTable.id, current.titleId));
     const normalizedAlias = normalizeAlias(alias);

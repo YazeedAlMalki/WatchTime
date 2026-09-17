@@ -1099,7 +1099,8 @@ export const updateAdminContentAliasBodyAliasMax = 300;
 export const UpdateAdminContentAliasBody = zod.object({
   "alias": zod.string().min(1).max(updateAdminContentAliasBodyAliasMax),
   "language": zod.string().nullish(),
-  "sourceUrl": zod.url().nullish()
+  "sourceUrl": zod.url().nullish(),
+  "expectedUpdatedAt": zod.coerce.date()
 })
 
 export const UpdateAdminContentAliasResponse = zod.object({

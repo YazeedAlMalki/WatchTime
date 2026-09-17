@@ -155,6 +155,7 @@ describe("admin alternate-title review", () => {
           alias: "Corrected Local Title",
           language: "fr",
           sourceUrl: "https://example.test/corrected",
+          expectedUpdatedAt: initialAlias.updatedAt,
         },
       },
       expect.any(Object),
@@ -205,6 +206,42 @@ describe("admin alternate-title review", () => {
       variant: "destructive",
     });
     expect(container.textContent).toContain("2 titles");
+  });
+
+  it("refreshes collision badges when a stale draft is rejected", async () => {
+    mocks.updateMutation.mutate.mockImplementation(
+      (_variables: unknown, options?: { onError?: (error: unknown) => Promise<void> }) => {
+        void options?.onError?.({
+          data: {
+            error:
+              "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+          },
+        });
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+
+    act(() => {
+      setInput(container, "Alternate title for The Lighthouse", "Stale correction");
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["/api/admin/content-aliases"],
+    });
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["/api/admin/content"],
+    });
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: "Could not update alternate title",
+      description:
+        "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+      variant: "destructive",
+    });
+    expect(container.textContent).toContain("2 titles");
+    expect(container.textContent).not.toContain("Save");
   });
 
   it("requires removal confirmation and refreshes collision badges after removal", async () => {

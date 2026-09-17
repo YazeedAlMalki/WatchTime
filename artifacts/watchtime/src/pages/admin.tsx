@@ -1311,6 +1311,7 @@ export function AliasReview({
     alias: "",
     language: "",
     sourceUrl: "",
+    expectedUpdatedAt: "",
   });
   const [refreshError, setRefreshError] = useState(false);
   const [isRefreshingAliasViews, setIsRefreshingAliasViews] = useState(false);
@@ -1355,6 +1356,7 @@ export function AliasReview({
       alias: alias.alias,
       language: alias.language ?? "",
       sourceUrl: alias.sourceUrl ?? "",
+      expectedUpdatedAt: alias.updatedAt,
     });
   };
 
@@ -1376,6 +1378,7 @@ export function AliasReview({
           alias,
           language: draft.language.trim() || null,
           sourceUrl: draft.sourceUrl.trim() || null,
+          expectedUpdatedAt: draft.expectedUpdatedAt,
         },
       },
       {
@@ -1393,12 +1396,21 @@ export function AliasReview({
                 },
           );
         },
-        onError: (error) =>
+        onError: async (error) => {
+          const description = errorDescription(error);
+          const isStaleDraft = description.includes(
+            "changed while you were editing",
+          );
+          if (isStaleDraft) {
+            setEditingId(null);
+            await refreshAliasViews();
+          }
           toast({
             title: "Could not update alternate title",
-            description: errorDescription(error),
+            description,
             variant: "destructive",
-          }),
+          });
+        },
       },
     );
   };

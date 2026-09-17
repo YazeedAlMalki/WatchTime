@@ -87,12 +87,66 @@ describe("admin title aliases", () => {
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
     const response = await request(app)
       .patch(`/api/admin/content-aliases/${row.id}`)
-      .send({ alias: "Corrected Local Title", language: "en", sourceUrl: "https://example.test/corrected" });
+      .send({
+        alias: "Corrected Local Title",
+        language: "en",
+        sourceUrl: "https://example.test/corrected",
+        expectedUpdatedAt: row.updatedAt.toISOString(),
+      });
     expect(response.status).toBe(200);
     const titles = await db.select().from(titlesTable).where(inArray(titlesTable.id, createdTitleIds));
     expect(titles.map((title) => title.imdbId).sort()).toEqual(["tt-alias-test-1", "tt-alias-test-2"]);
     expect(titles.find((title) => title.id === createdTitleIds[0])?.altTitles).toEqual(["Corrected Local Title"]);
     expect(titles.find((title) => title.id === createdTitleIds[1])?.altTitles).toEqual([]);
+  });
+
+  it("rejects a stale correction without leaving collision badges behind", async () => {
+    const [row] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
+    const expectedUpdatedAt = row.updatedAt.toISOString();
+
+    const firstEdit = await request(app)
+      .patch(`/api/admin/content-aliases/${row.id}`)
+      .send({
+        alias: "First Admin Correction",
+        language: "en",
+        sourceUrl: "https://example.test/first-correction",
+        expectedUpdatedAt,
+      });
+    expect(firstEdit.status).toBe(200);
+
+    const staleEdit = await request(app)
+      .patch(`/api/admin/content-aliases/${row.id}`)
+      .send({
+        alias: "Second Admin Correction",
+        language: "fr",
+        sourceUrl: "https://example.test/second-correction",
+        expectedUpdatedAt,
+      });
+    expect(staleEdit.status).toBe(409);
+    expect(staleEdit.body).toEqual({
+      error:
+        "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+    });
+
+    const [unchanged] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.id, row.id));
+    expect(unchanged).toMatchObject({
+      alias: "First Admin Correction",
+      language: "en",
+      sourceUrl: "https://example.test/first-correction",
+    });
+
+    const collisionReport = await request(app)
+      .get("/api/admin/content-aliases?q=First Admin Correction");
+    expect(collisionReport.status).toBe(200);
+    expect(collisionReport.body).toEqual([
+      expect.objectContaining({
+        alias: "First Admin Correction",
+        collision: false,
+        collisionTitleCount: 1,
+      }),
+    ]);
   });
 
   it("keeps an editorial correction and catalog identities intact after a provider refresh", async () => {
@@ -127,6 +181,7 @@ describe("admin title aliases", () => {
         alias: "Corrected Local Title",
         language: "en",
         sourceUrl: "https://example.test/corrected",
+        expectedUpdatedAt: alias.updatedAt.toISOString(),
       });
     expect(edit.status).toBe(200);
 

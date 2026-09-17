@@ -16,4 +16,5 @@ export interface AdminContentAliasUpdate {
   language?: string | null;
   /** @nullable */
   sourceUrl?: string | null;
+  expectedUpdatedAt: Date;
 }
