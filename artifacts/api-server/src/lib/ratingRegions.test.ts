@@ -36,6 +36,9 @@ describe("resolvePreferredRating", () => {
       system: "BBFC",
       label: "12A",
       sourceName: "Wikidata",
+      recordId: null,
+      lastRefreshedAt: null,
+      sourceUrl: null,
     });
   });
 

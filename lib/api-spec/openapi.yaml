@@ -1345,13 +1345,16 @@ components:
             - type: "null"
     RegionalRating:
       type: object
-      required: [region, countryName, system, label, sourceName]
+      required: [region, countryName, system, label, sourceName, recordId, lastRefreshedAt, sourceUrl]
       properties:
         region: { type: string, enum: [US, GB, DE, FR, AU, BR] }
         countryName: { type: string }
         system: { type: string }
         label: { type: string }
         sourceName: { type: string }
+        recordId: { type: ["integer", "null"] }
+        lastRefreshedAt: { type: ["string", "null"] }
+        sourceUrl: { type: ["string", "null"] }
     SafetyContributionInput:
       type: object
       required: [category, severity]
@@ -1584,7 +1587,7 @@ components:
         lastRefreshedAt: { type: ["string", "null"] }
     ContentMapping:
       type: object
-      required: [id, name, type, mappings]
+      required: [id, name, type, mappings, selectedRating]
       properties:
         id: { type: integer }
         name: { type: string }
@@ -1595,6 +1598,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProviderMapping"
+        selectedRating:
+          oneOf:
+            - $ref: "#/components/schemas/RegionalRating"
+            - type: "null"
     AnalyticsPoint:
       type: object
       required: [date, value]

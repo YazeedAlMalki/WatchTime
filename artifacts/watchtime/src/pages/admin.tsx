@@ -1272,6 +1272,39 @@ function ContentTab() {
                     </div>
                   ))}
                 </div>
+                <div className="mt-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
+                  <span className="font-semibold text-foreground">
+                    Selected US Wikidata rating:
+                  </span>{" "}
+                  {item.selectedRating ? (
+                    <>
+                      <span className="font-medium text-foreground">
+                        {item.selectedRating.label}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {" "}· {item.selectedRating.system} · safety record #
+                        {item.selectedRating.recordId ?? "unknown"} · refreshed{" "}
+                        {item.selectedRating.lastRefreshedAt
+                          ? new Date(item.selectedRating.lastRefreshedAt).toLocaleString()
+                          : "unknown"}
+                      </span>
+                      {item.selectedRating.sourceUrl ? (
+                        <a
+                          className="ml-2 font-medium text-primary hover:underline"
+                          href={item.selectedRating.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          View Wikidata record
+                        </a>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      No available US Wikidata classification
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex flex-wrap gap-2 flex-shrink-0">
                 <Button

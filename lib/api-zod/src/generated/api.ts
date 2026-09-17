@@ -262,7 +262,10 @@ export const GetTitleSafetyResponse = zod.object({
   "countryName": zod.string(),
   "system": zod.string(),
   "label": zod.string(),
-  "sourceName": zod.string()
+  "sourceName": zod.string(),
+  "recordId": zod.int().nullable(),
+  "lastRefreshedAt": zod.string().nullable(),
+  "sourceUrl": zod.string().nullable()
 }),zod.null()])
 })
 
@@ -1055,7 +1058,17 @@ export const SearchAdminContentResponseItem = zod.object({
   "externalId": zod.string().nullish(),
   "status": zod.enum(['mapped', 'missing', 'error']),
   "lastRefreshedAt": zod.string().nullish()
-}))
+})),
+  "selectedRating": zod.union([zod.object({
+  "region": zod.enum(['US', 'GB', 'DE', 'FR', 'AU', 'BR']),
+  "countryName": zod.string(),
+  "system": zod.string(),
+  "label": zod.string(),
+  "sourceName": zod.string(),
+  "recordId": zod.int().nullable(),
+  "lastRefreshedAt": zod.string().nullable(),
+  "sourceUrl": zod.string().nullable()
+}),zod.null()])
 })
 export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseItem)
 

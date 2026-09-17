@@ -16,7 +16,7 @@ import {
   catalogSyncItemsTable,
   titleAliasesTable,
 } from "@workspace/db";
-import { and, eq, sql, desc, gte, lte, ilike, inArray } from "drizzle-orm";
+import { and, eq, sql, desc, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
 import {
   UpdateAdminContributionBody,
   UpdateAdminReportBody,
@@ -31,6 +31,7 @@ import {
   refreshWikidataBatch,
   refreshWikidataTitle,
 } from "../lib/wikidata";
+import { resolvePreferredRating } from "../lib/ratingRegions";
 import { retryFailedCatalogTitles, startCatalogRefresh } from "../lib/catalog-refresh";
 
 const router: IRouter = Router();
@@ -438,6 +439,16 @@ router.get("/content", async (req, res) => {
         .from(providerMappingsTable)
         .where(inArray(providerMappingsTable.titleId, ids))
     : [];
+  const safetyRecords = ids.length
+    ? await db
+        .select()
+        .from(safetyRecordsTable)
+        .where(and(
+          inArray(safetyRecordsTable.titleId, ids),
+          isNull(safetyRecordsTable.seasonNumber),
+          isNull(safetyRecordsTable.episodeNumber),
+        ))
+    : [];
   return res.json(
     titles.map((t) => ({
       id: t.id,
@@ -453,6 +464,10 @@ router.get("/content", async (req, res) => {
           status: m.status,
           lastRefreshedAt: m.lastRefreshedAt?.toISOString() ?? null,
         })),
+      selectedRating: resolvePreferredRating(
+        safetyRecords.filter((record) => record.titleId === t.id),
+        "US",
+      ),
     })),
   );
 });

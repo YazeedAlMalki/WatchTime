@@ -3,6 +3,7 @@ import request from "supertest";
 import {
   db,
   providerMappingsTable,
+  safetyRecordsTable,
   titleAliasesTable,
   titlesTable,
   usersTable,
@@ -68,6 +69,58 @@ afterEach(async () => {
 });
 
 describe("admin title aliases", () => {
+  it("shows the Wikidata record selected by the public rating resolver", async () => {
+    const olderUpdatedAt = new Date("2026-01-01T00:00:00.000Z");
+    const newerUpdatedAt = new Date("2026-02-01T00:00:00.000Z");
+    const [newer] = await db.insert(safetyRecordsTable).values({
+      titleId: createdTitleIds[0],
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      url: "https://www.wikidata.org/wiki/Q123",
+      updatedAt: newerUpdatedAt,
+      items: [{
+        category: "MPAA",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "Newer official record",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+    await db.insert(safetyRecordsTable).values({
+      titleId: createdTitleIds[0],
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      url: "https://www.wikidata.org/wiki/Q456",
+      updatedAt: olderUpdatedAt,
+      items: [{
+        category: "MPAA",
+        label: "PG",
+        score: null,
+        maxScore: null,
+        description: "Older official record",
+      }],
+    });
+
+    const response = await request(app).get("/api/admin/content?q=Alias%20Test%20One");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveLength(1);
+    expect(response.body[0].selectedRating).toEqual({
+      region: "US",
+      countryName: "United States",
+      system: "MPAA",
+      label: "PG-13",
+      sourceName: "Wikidata",
+      recordId: newer.id,
+      lastRefreshedAt: newerUpdatedAt.toISOString(),
+      sourceUrl: "https://www.wikidata.org/wiki/Q123",
+    });
+  });
+
   it("shows provenance and collisions", async () => {
     const response = await request(app).get("/api/admin/content-aliases?q=Shared");
     expect(response.status).toBe(200);

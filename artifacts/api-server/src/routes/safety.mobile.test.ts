@@ -338,6 +338,9 @@ describe("shared rating-region preference", () => {
         system: expectedSystem,
         label: expectedLabel,
         sourceName: "Wikidata",
+        recordId: expect.any(Number),
+        lastRefreshedAt: expect.any(String),
+        sourceUrl: null,
       });
     },
   );
@@ -454,6 +457,9 @@ describe("shared rating-region preference", () => {
       system: "MPAA",
       label: "PG",
       sourceName: "Wikidata",
+      recordId: expect.any(Number),
+      lastRefreshedAt: expect.any(String),
+      sourceUrl: null,
     });
   });
 

@@ -13,4 +13,10 @@ export interface RegionalRating {
   system: string;
   label: string;
   sourceName: string;
+  /** @nullable */
+  recordId: number | null;
+  /** @nullable */
+  lastRefreshedAt: string | null;
+  /** @nullable */
+  sourceUrl: string | null;
 }

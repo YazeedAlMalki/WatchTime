@@ -475,6 +475,12 @@ export interface RegionalRating {
   system: string;
   label: string;
   sourceName: string;
+  /** @nullable */
+  recordId: number | null;
+  /** @nullable */
+  lastRefreshedAt: string | null;
+  /** @nullable */
+  sourceUrl: string | null;
 }
 
 export interface SafetyInfo {
@@ -911,6 +917,7 @@ export interface ContentMapping {
   /** @nullable */
   imdbId?: string | null;
   mappings: ProviderMapping[];
+  selectedRating: RegionalRating | null;
 }
 
 export interface AnalyticsPoint {

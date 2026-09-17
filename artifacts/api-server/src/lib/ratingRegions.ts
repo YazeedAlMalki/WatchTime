@@ -6,6 +6,7 @@ import {
 export type { RatingRegion } from "@workspace/rating-regions";
 
 type RatingRecord = {
+  id?: number | null;
   tier?: number | null;
   updatedAt?: Date | string | null;
   url?: string | null;
@@ -67,5 +68,10 @@ export function resolvePreferredRating(records: RatingRecord[], region: RatingRe
     system: preferredSystem.system,
     label: match.item.label,
     sourceName: match.record.sourceName,
+    recordId: match.record.id ?? null,
+    lastRefreshedAt: match.record.updatedAt instanceof Date
+      ? match.record.updatedAt.toISOString()
+      : match.record.updatedAt ?? null,
+    sourceUrl: match.record.url ?? null,
   } : null;
 }

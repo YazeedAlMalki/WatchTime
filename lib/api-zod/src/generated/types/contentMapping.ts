@@ -7,6 +7,7 @@
  */
 import type { ContentMappingType } from './contentMappingType';
 import type { ProviderMapping } from './providerMapping';
+import type { RegionalRating } from './regionalRating';
 
 export interface ContentMapping {
   id: number;
@@ -17,4 +18,5 @@ export interface ContentMapping {
   /** @nullable */
   imdbId?: string | null;
   mappings: ProviderMapping[];
+  selectedRating: RegionalRating | null;
 }
