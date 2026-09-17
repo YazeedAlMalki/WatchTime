@@ -280,6 +280,83 @@ describe("admin title aliases", () => {
     ]));
   });
 
+  it("removes withdrawn provider aliases without removing an editorial correction", async () => {
+    const sourceItem: SourceItem = {
+      key: "movie:alias-withdrawal-test",
+      source: "wikipedia",
+      type: "movie",
+      name: "Alias Test One",
+      imdbId: "tt-alias-test-1",
+      aliases: [
+        {
+          alias: "Provider Retained Title",
+          language: "en",
+          sourceName: "Provider catalog",
+          sourceUrl: "https://example.test/provider",
+        },
+        {
+          alias: "Provider Withdrawn Title",
+          language: "en",
+          sourceName: "Provider catalog",
+          sourceUrl: "https://example.test/provider",
+        },
+      ],
+      popularity: 0,
+      wikiPage: "Alias Test One",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      extract: "Provider summary",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [sourceItem]);
+    const [providerAlias] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]))
+      .then((aliases) => aliases.filter((alias) => alias.alias === "Provider Retained Title"));
+    const edit = await request(app)
+      .patch(`/api/admin/content-aliases/${providerAlias.id}`)
+      .send({
+        alias: "Corrected Provider Title",
+        language: "en",
+        sourceUrl: "https://example.test/editorial",
+      });
+    expect(edit.status).toBe(200);
+
+    await runCatalogSync({
+      dryRun: false,
+      allowPartial: false,
+    }, [{ ...sourceItem, aliases: [] }]);
+
+    const [title] = await db.select().from(titlesTable)
+      .where(eq(titlesTable.id, createdTitleIds[0]));
+    expect(title.altTitles).toEqual(["Shared Local Title", "Corrected Provider Title"]);
+    expect(await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0])))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          alias: "Corrected Provider Title",
+          sourceName: "Admin editorial",
+          isEditorial: true,
+        }),
+      ]));
+    expect(title.altTitles).not.toContain("Provider Withdrawn Title");
+
+    const withdrawnReport = await request(app).get("/api/admin/content-aliases?q=Withdrawn");
+    expect(withdrawnReport.status).toBe(200);
+    expect(withdrawnReport.body).toEqual([]);
+    const correctionReport = await request(app).get("/api/admin/content-aliases?q=Corrected");
+    expect(correctionReport.status).toBe(200);
+    expect(correctionReport.body).toEqual([
+      expect.objectContaining({
+        titleId: createdTitleIds[0],
+        alias: "Corrected Provider Title",
+        isEditorial: true,
+      }),
+    ]);
+  });
+
   it("migrates a legacy provider alias to provider ownership without losing its value", async () => {
     const [legacyAlias] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));

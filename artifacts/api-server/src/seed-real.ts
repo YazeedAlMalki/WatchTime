@@ -954,6 +954,19 @@ async function syncAliases(tx: any, titleId: number, canonicalName: string, item
     }
   }
 
+  // Provider responses are authoritative for provider-owned aliases. Remove
+  // only rows with explicit provider provenance; editorial corrections remain
+  // untouched even when they replaced an alias from an earlier response.
+  for (const current of existing) {
+    if (
+      current.isEditorial === false &&
+      current.sourceUrl &&
+      !sourceAliases.has(current.normalizedAlias)
+    ) {
+      await tx.delete(titleAliasesTable).where(eq(titleAliasesTable.id, current.id));
+    }
+  }
+
   const aliases = await tx.select({ alias: titleAliasesTable.alias }).from(titleAliasesTable)
     .where(eq(titleAliasesTable.titleId, titleId))
     .orderBy(titleAliasesTable.id);
