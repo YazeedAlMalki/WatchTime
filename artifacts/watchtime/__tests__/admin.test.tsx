@@ -161,10 +161,10 @@ describe("admin alternate-title review", () => {
     );
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["/api/admin/content-aliases"],
-    });
+    }, { throwOnError: true });
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["/api/admin/content"],
-    });
+    }, { throwOnError: true });
 
     render([uniqueAlias()]);
     expect(container.textContent).toContain("Corrected Local Title");
@@ -228,13 +228,72 @@ describe("admin alternate-title review", () => {
     );
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["/api/admin/content-aliases"],
-    });
+    }, { throwOnError: true });
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["/api/admin/content"],
-    });
+    }, { throwOnError: true });
 
     render([uniqueAlias()]);
     expect(container.textContent).toContain("Unique");
     expect(container.textContent).not.toContain("2 titles");
+  });
+
+  it("keeps the edited alias visible and offers a retry when refresh fails", async () => {
+    mocks.queryClient.invalidateQueries.mockRejectedValueOnce(
+      new Error("Alias refresh unavailable"),
+    );
+    render();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Corrected Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain("Retry refresh");
+    expect(container.textContent).toContain("2 titles");
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: "Alternate title updated, but refresh failed",
+      description:
+        "The saved change may not be reflected in the review table yet. Retry the refresh below.",
+      variant: "destructive",
+    });
+
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+    expect(container.textContent).not.toContain("Alternate-title refresh failed");
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps the removed alias visible and offers a retry when refresh fails", async () => {
+    mocks.queryClient.invalidateQueries.mockRejectedValueOnce(
+      new Error("Alias refresh unavailable"),
+    );
+    render();
+    confirmSpy.mockReturnValue(true);
+
+    act(() => button(container, "Remove").click());
+    await flushEffects();
+
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain("Retry refresh");
+    expect(container.textContent).toContain("2 titles");
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: "Alternate title removed, but refresh failed",
+      description:
+        "The removal succeeded, but the review table may still be stale. Retry the refresh below.",
+      variant: "destructive",
+    });
+
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+    expect(container.textContent).not.toContain("Alternate-title refresh failed");
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(4);
   });
 });

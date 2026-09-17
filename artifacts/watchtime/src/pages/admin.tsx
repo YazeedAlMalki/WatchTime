@@ -1312,12 +1312,30 @@ export function AliasReview({
     language: "",
     sourceUrl: "",
   });
+  const [refreshError, setRefreshError] = useState(false);
+  const [isRefreshingAliasViews, setIsRefreshingAliasViews] = useState(false);
 
   const refreshAliasViews = async () => {
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: getListAdminContentAliasesQueryKey() }),
-      qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() }),
-    ]);
+    setRefreshError(false);
+    setIsRefreshingAliasViews(true);
+    try {
+      await Promise.all([
+        qc.invalidateQueries(
+          { queryKey: getListAdminContentAliasesQueryKey() },
+          { throwOnError: true },
+        ),
+        qc.invalidateQueries(
+          { queryKey: getSearchAdminContentQueryKey() },
+          { throwOnError: true },
+        ),
+      ]);
+      return true;
+    } catch {
+      setRefreshError(true);
+      return false;
+    } finally {
+      setIsRefreshingAliasViews(false);
+    }
   };
 
   const errorDescription = (error: unknown) => {
@@ -1363,8 +1381,17 @@ export function AliasReview({
       {
         onSuccess: async () => {
           setEditingId(null);
-          await refreshAliasViews();
-          toast({ title: "Alternate title updated" });
+          const refreshed = await refreshAliasViews();
+          toast(
+            refreshed
+              ? { title: "Alternate title updated" }
+              : {
+                  title: "Alternate title updated, but refresh failed",
+                  description:
+                    "The saved change may not be reflected in the review table yet. Retry the refresh below.",
+                  variant: "destructive",
+                },
+          );
         },
         onError: (error) =>
           toast({
@@ -1389,8 +1416,17 @@ export function AliasReview({
       {
         onSuccess: async () => {
           if (editingId === alias.id) setEditingId(null);
-          await refreshAliasViews();
-          toast({ title: "Alternate title removed" });
+          const refreshed = await refreshAliasViews();
+          toast(
+            refreshed
+              ? { title: "Alternate title removed" }
+              : {
+                  title: "Alternate title removed, but refresh failed",
+                  description:
+                    "The removal succeeded, but the review table may still be stale. Retry the refresh below.",
+                  variant: "destructive",
+                },
+          );
         },
         onError: (error) =>
           toast({
@@ -1418,6 +1454,34 @@ export function AliasReview({
           {aliases?.length ?? 0} aliases
         </span>
       </div>
+      {refreshError && (
+        <div
+          role="alert"
+          className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/20 dark:text-orange-300"
+        >
+          <div>
+            <p className="font-semibold">Alternate-title refresh failed</p>
+            <p>
+              Your change was saved, but the review data may be stale. Retry
+              the refresh to check the latest collision information.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0 gap-1.5"
+            onClick={() => void refreshAliasViews()}
+            disabled={isRefreshingAliasViews}
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 ${
+                isRefreshingAliasViews ? "animate-spin" : ""
+              }`}
+            />
+            {isRefreshingAliasViews ? "Retrying…" : "Retry refresh"}
+          </Button>
+        </div>
+      )}
       {isLoading ? (
         <div className="h-24 animate-pulse bg-secondary/30 rounded-2xl" />
       ) : !aliases?.length ? (
