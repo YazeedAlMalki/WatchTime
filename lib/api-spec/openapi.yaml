@@ -861,6 +861,10 @@ paths:
         - name: q
           in: query
           schema: { type: string }
+        - name: ownership
+          in: query
+          description: Filter aliases by their source ownership
+          schema: { type: string, enum: [provider, editorial] }
       responses:
         "200":
           description: Alternate titles with provenance and collision counts

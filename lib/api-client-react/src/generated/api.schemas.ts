@@ -1070,7 +1070,19 @@ q?: string;
 
 export type ListAdminContentAliasesParams = {
 q?: string;
+/**
+ * Filter aliases by their source ownership
+ */
+ownership?: ListAdminContentAliasesOwnership;
 };
+
+export type ListAdminContentAliasesOwnership = typeof ListAdminContentAliasesOwnership[keyof typeof ListAdminContentAliasesOwnership];
+
+
+export const ListAdminContentAliasesOwnership = {
+  provider: 'provider',
+  editorial: 'editorial',
+} as const;
 
 export type RefreshAdminContentBatch200 = {
   ok: boolean;

@@ -470,6 +470,16 @@ async function refreshTitleAliasSearchList(tx: any, titleId: number) {
 
 router.get("/content-aliases", async (req, res) => {
   const q = String(req.query.q ?? "").trim();
+  const ownership = String(req.query.ownership ?? "").trim();
+  if (ownership && ownership !== "provider" && ownership !== "editorial") {
+    return res.status(400).json({ error: "Invalid alias ownership filter" });
+  }
+  const ownershipFilter =
+    ownership === "provider"
+      ? eq(titleAliasesTable.isEditorial, false)
+      : ownership === "editorial"
+        ? eq(titleAliasesTable.isEditorial, true)
+        : undefined;
   const rows = await db.select({
     alias: titleAliasesTable,
     titleName: titlesTable.name,
@@ -477,7 +487,10 @@ router.get("/content-aliases", async (req, res) => {
     titleYear: titlesTable.year,
   }).from(titleAliasesTable)
     .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
-    .where(q ? ilike(titleAliasesTable.alias, `%${q}%`) : undefined)
+    .where(and(
+      q ? ilike(titleAliasesTable.alias, `%${q}%`) : undefined,
+      ownershipFilter,
+    ))
     .orderBy(titleAliasesTable.normalizedAlias, titlesTable.name)
     .limit(200);
   const normalized = [...new Set(rows.map((row) => row.alias.normalizedAlias))];

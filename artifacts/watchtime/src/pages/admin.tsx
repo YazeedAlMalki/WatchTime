@@ -30,6 +30,7 @@ import {
   getListCatalogRefreshesQueryKey,
   type RefreshAdminContentBatch200,
   type AdminContentAlias,
+  type ListAdminContentAliasesOwnership,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Redirect } from "wouter";
@@ -926,6 +927,9 @@ function ContentTab() {
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
+  const [aliasOwnership, setAliasOwnership] = useState<
+    ListAdminContentAliasesOwnership | "all"
+  >("all");
   const [batchProvider, setBatchProvider] = useState<
     "does_the_dog_die" | "wikidata"
   >("does_the_dog_die");
@@ -943,7 +947,10 @@ function ContentTab() {
     debouncedQ ? { q: debouncedQ } : undefined,
   );
   const { data: aliases, isLoading: aliasesLoading } =
-    useListAdminContentAliases(debouncedQ ? { q: debouncedQ } : undefined);
+    useListAdminContentAliases({
+      ...(debouncedQ ? { q: debouncedQ } : {}),
+      ...(aliasOwnership !== "all" ? { ownership: aliasOwnership } : {}),
+    });
   const refresh = useRefreshAdminContent();
   const batchRefresh = useRefreshAdminContentBatch();
 
@@ -1290,7 +1297,12 @@ function ContentTab() {
           ))}
         </div>
       )}
-      <AliasReview aliases={aliases} isLoading={aliasesLoading} />
+      <AliasReview
+        aliases={aliases}
+        isLoading={aliasesLoading}
+        ownership={aliasOwnership}
+        onOwnershipChange={setAliasOwnership}
+      />
     </div>
   );
 }
@@ -1298,9 +1310,15 @@ function ContentTab() {
 export function AliasReview({
   aliases,
   isLoading,
+  ownership,
+  onOwnershipChange,
 }: {
   aliases: AdminContentAlias[] | undefined;
   isLoading: boolean;
+  ownership: ListAdminContentAliasesOwnership | "all";
+  onOwnershipChange: (
+    ownership: ListAdminContentAliasesOwnership | "all",
+  ) => void;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -1452,7 +1470,7 @@ export function AliasReview({
 
   return (
     <div className="pt-5 mt-2 border-t border-border">
-      <div className="flex items-center justify-between gap-3 mb-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
         <div>
           <h3 className="font-display font-bold text-foreground">
             Alternate title provenance
@@ -1462,9 +1480,21 @@ export function AliasReview({
             titles.
           </p>
         </div>
-        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-          {aliases?.length ?? 0} aliases
-        </span>
+        <div className="flex items-center gap-3">
+          <Select value={ownership} onValueChange={onOwnershipChange}>
+            <SelectTrigger className="w-44 rounded-xl" aria-label="Alias ownership">
+              <SelectValue placeholder="All ownership" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All ownership</SelectItem>
+              <SelectItem value="provider">Provider-owned</SelectItem>
+              <SelectItem value="editorial">Editorial</SelectItem>
+            </SelectContent>
+          </Select>
+          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+            {aliases?.length ?? 0} aliases
+          </span>
+        </div>
       </div>
       {refreshError && (
         <div

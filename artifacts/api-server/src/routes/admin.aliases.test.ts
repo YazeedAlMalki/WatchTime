@@ -82,6 +82,53 @@ describe("admin title aliases", () => {
     });
   });
 
+  it("filters aliases by provider or editorial ownership", async () => {
+    await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: "Provider Local Title",
+      normalizedAlias: "providerlocaltitle",
+      language: "en",
+      sourceName: "Provider catalog",
+      sourceUrl: "https://example.test/provider",
+      isEditorial: false,
+    });
+
+    const providerResponse = await request(app)
+      .get("/api/admin/content-aliases?ownership=provider");
+    expect(providerResponse.status).toBe(200);
+    expect(providerResponse.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          alias: "Provider Local Title",
+          sourceName: "Provider catalog",
+          isEditorial: false,
+          titleId: createdTitleIds[0],
+        }),
+      ]),
+    );
+    expect(providerResponse.body.every((alias: { isEditorial: boolean }) => !alias.isEditorial)).toBe(true);
+
+    const editorialResponse = await request(app)
+      .get("/api/admin/content-aliases?ownership=editorial");
+    expect(editorialResponse.status).toBe(200);
+    expect(editorialResponse.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          alias: "Shared Local Title",
+          sourceName: "Editorial test",
+          isEditorial: true,
+        }),
+      ]),
+    );
+    expect(editorialResponse.body.every((alias: { isEditorial: boolean }) => alias.isEditorial)).toBe(true);
+  });
+
+  it("rejects an unknown alias ownership filter", async () => {
+    const response = await request(app)
+      .get("/api/admin/content-aliases?ownership=unknown");
+    expect(response.status).toBe(400);
+  });
+
   it("edits an alias without changing either catalog identity", async () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));

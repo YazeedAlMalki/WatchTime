@@ -5,7 +5,12 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ListAdminContentAliasesOwnership } from './listAdminContentAliasesOwnership';
 
 export type ListAdminContentAliasesParams = {
 q?: string;
+/**
+ * Filter aliases by their source ownership
+ */
+ownership?: ListAdminContentAliasesOwnership;
 };

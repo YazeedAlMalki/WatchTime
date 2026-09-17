@@ -66,6 +66,7 @@ export * from './importNormalizedRecordKind';
 export * from './importNormalizedRecordType';
 export * from './integrationHealth';
 export * from './integrationHealthStatus';
+export * from './listAdminContentAliasesOwnership';
 export * from './listAdminContentAliasesParams';
 export * from './listAdminContributionsParams';
 export * from './listAdminContributionsStatus';
