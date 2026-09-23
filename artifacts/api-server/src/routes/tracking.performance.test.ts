@@ -105,7 +105,7 @@ afterAll(async () => {
 
 type QuerySample = { sql: string; rows: number; values: unknown[] };
 
-async function measuredPageFor(path: string, limit: number, offset: number) {
+async function measuredPageFor(path: string, limit: number, boundary?: { beforeId?: number; before?: string }) {
   const samples: QuerySample[] = [];
   const originalQuery = pool.query.bind(pool);
   const querySpy = vi.spyOn(pool, "query").mockImplementation(((...args: unknown[]) => {
@@ -121,7 +121,7 @@ async function measuredPageFor(path: string, limit: number, offset: number) {
   }) as typeof pool.query);
   try {
     const start = performance.now();
-    const response = await supertest(app).get(`${path}?limit=${limit}&offset=${offset}`);
+    const response = await supertest(app).get(path).query({ limit, ...boundary });
     return { response, samples, milliseconds: performance.now() - start };
   } finally {
     querySpy.mockRestore();
@@ -129,14 +129,15 @@ async function measuredPageFor(path: string, limit: number, offset: number) {
 }
 
 const measuredPage = (limit: number, offset: number) =>
-  measuredPageFor("/api/me/shows", limit, offset);
+  measuredPageFor("/api/me/shows", limit,
+    offset === 0 ? undefined : { beforeId: offset === SHOW_COUNT ? titleIds[0] : titleIds[SHOW_COUNT - offset] });
 
 describe("large personal library", () => {
   it("keeps My Shows queries and payloads bounded while reporting mixed-progress latency", async () => {
     const measurements: Array<{ offset: number; milliseconds: number; bytes: number }> = [];
     let mainQuery: QuerySample | undefined;
-    // Progress desc means these pages exercise caught-up, half-watched and
-    // unwatched shows (including the NOT EXISTS next-episode lookup).
+    // ID-desc pages contain a mix of progress levels (including the
+    // NOT EXISTS next-episode lookup) rather than grouping by progress.
     for (const offset of [0, 160, 320]) {
       const { response, samples, milliseconds } = await measuredPage(PAGE_SIZE, offset);
       expect(response.status).toBe(200);
@@ -146,16 +147,14 @@ describe("large personal library", () => {
       expect(samples.every((sample) => sample.rows <= PAGE_SIZE)).toBe(true);
       expect(Buffer.byteLength(response.text)).toBeLessThan(PAGE_SIZE * 1000);
       measurements.push({ offset, milliseconds: Math.round(milliseconds), bytes: Buffer.byteLength(response.text) });
-      if (offset === 0) {
-        expect(response.body.every((show: any) => show.watchedEpisodes === EPISODES_PER_SHOW && show.nextEpisode === null)).toBe(true);
+      expect(response.body.map((show: any) => show.title.id))
+        .toEqual(titleIds.slice(SHOW_COUNT - offset - PAGE_SIZE, SHOW_COUNT - offset).reverse());
+      for (const count of [0, 8, 40, 72, 80]) {
+        expect(response.body.filter((show: any) => show.watchedEpisodes === count)).toHaveLength(4);
       }
-      if (offset === 160) {
-        expect(response.body.every((show: any) => show.watchedEpisodes === 40 && show.nextEpisode !== null)).toBe(true);
-        mainQuery = samples[0];
-      }
-      if (offset === 320) {
-        expect(response.body.every((show: any) => show.watchedEpisodes === 0 && show.nextEpisode !== null)).toBe(true);
-      }
+      expect(response.body.every((show: any) =>
+        (show.nextEpisode === null) === (show.watchedEpisodes === EPISODES_PER_SHOW))).toBe(true);
+      if (offset === 160) mainQuery = samples[0];
     }
     const largerPage = await measuredPage(50, 160);
     expect(largerPage.response.status).toBe(200);
@@ -195,7 +194,15 @@ describe("large personal library", () => {
 
   it("bounds movie and watchlist reads independently of collection size", async () => {
     for (const path of ["/api/me/movies", "/api/me/watchlist"]) {
-      const { response, samples } = await measuredPageFor(path, PAGE_SIZE, 40);
+      const first = await supertest(app).get(path).query({ limit: PAGE_SIZE });
+      expect(first.status).toBe(200);
+      const second = await supertest(app).get(path).query({
+        limit: PAGE_SIZE, before: first.body.at(-1).collectionCursor,
+      });
+      expect(second.status).toBe(200);
+      const { response, samples } = await measuredPageFor(path, PAGE_SIZE, {
+        before: second.body.at(-1).collectionCursor,
+      });
       expect(response.status).toBe(200);
       expect(response.body).toHaveLength(PAGE_SIZE);
       expect(samples).toHaveLength(1);

@@ -109,3 +109,74 @@ it("requests and displays each review region with the selected record's provenan
     window.fetch = originalFetch;
   }
 });
+
+it("shows a regional request failure instead of an empty result and retries the selected region", async () => {
+  // The preceding browser test leaves the location on its last selected region.
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  const requests: string[] = [];
+  const originalFetch = window.fetch;
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    const region = url.searchParams.get("region");
+    requests.push(url.toString());
+    if (region === "GB" && requests.filter((request) =>
+      new URL(request).searchParams.get("region") === "GB",
+    ).length === 1) {
+      return new Response(JSON.stringify({ error: "Unavailable" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (region === "FR") {
+      return new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify([{
+      id: 101,
+      name: `${region} title`,
+      type: "movie",
+      mappings: [],
+      selectedRating: null,
+    }]), { headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await userEvent.click(page.getByRole("tab", { name: "Content" }));
+    const selector = page.getByRole("combobox", { name: "Review Wikidata region" });
+    await expect.element(page.getByText("US title")).toBeVisible();
+
+    await userEvent.click(selector);
+    await userEvent.click(page.getByRole("option", { name: /^GB ·/ }));
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load titles for GB.");
+    await expect.element(page.getByText("No titles found")).not.toBeInTheDocument();
+    await expect.element(page.getByText("US title")).not.toBeInTheDocument();
+    await expect.element(selector).toHaveTextContent(/GB ·/);
+
+    await userEvent.click(page.getByRole("button", { name: "Retry GB titles" }));
+    await expect.element(page.getByText("GB title")).toBeVisible();
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+    await expect.element(selector).toHaveTextContent(/GB ·/);
+    expect(requests.filter((request) =>
+      new URL(request).searchParams.get("region") === "GB",
+    )).toHaveLength(2);
+
+    await userEvent.click(selector);
+    await userEvent.click(page.getByRole("option", { name: /^FR ·/ }));
+    await expect.element(page.getByText("No titles found")).toBeVisible();
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});

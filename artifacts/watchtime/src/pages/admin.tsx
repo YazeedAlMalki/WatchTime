@@ -975,7 +975,13 @@ function ContentTab({
     return () => clearTimeout(t);
   }, [q]);
 
-  const { data: content, isLoading } = useSearchAdminContent(
+  const {
+    data: content,
+    isLoading,
+    isError: contentError,
+    isFetching: contentFetching,
+    refetch: retryContent,
+  } = useSearchAdminContent(
     {
       region: ratingRegion,
       ...(debouncedQ ? { q: debouncedQ } : {}),
@@ -1297,6 +1303,25 @@ function ContentTab({
       </div>
       {isLoading ? (
         <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
+      ) : contentError ? (
+        <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
+          <p className="font-medium text-foreground">
+            Could not load titles for {ratingRegion}.
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The regional content request failed. Try again to review these titles.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 rounded-xl"
+            onClick={() => void retryContent()}
+            disabled={contentFetching}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            {contentFetching ? "Retrying…" : `Retry ${ratingRegion} titles`}
+          </Button>
+        </div>
       ) : !content?.length ? (
         <EmptyState
           icon={Database}
