@@ -12,8 +12,5 @@ export type GetMyWatchlistParams = {
  * @maximum 50
  */
 limit?: number;
-/**
- * @minimum 0
- */
-offset?: number;
+before?: string;
 };

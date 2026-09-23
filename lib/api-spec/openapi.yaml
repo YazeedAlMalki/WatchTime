@@ -406,13 +406,14 @@ paths:
       operationId: getMyShows
       tags: [tracking]
       summary: Tracked shows with progress and next episode to watch
+      description: Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh.
       parameters:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 50, default: 24 }
-        - name: offset
+        - name: beforeId
           in: query
-          schema: { type: integer, minimum: 0, default: 0 }
+          schema: { type: integer, minimum: 1 }
       responses:
         "200":
           description: Tracked shows
@@ -429,13 +430,14 @@ paths:
       operationId: getMyMovies
       tags: [tracking]
       summary: Tracked (watched) movies
+      description: Ordered by watchedAt descending, then watch-entry ID descending. Pass the last item's collectionCursor as before for the next page. Removed items do not shift the boundary; new items above it appear on refresh.
       parameters:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 50, default: 24 }
-        - name: offset
+        - name: before
           in: query
-          schema: { type: integer, minimum: 0, default: 0 }
+          schema: { type: string }
       responses:
         "200":
           description: Watched movies
@@ -452,13 +454,14 @@ paths:
       operationId: getMyWatchlist
       tags: [tracking]
       summary: Watchlist titles
+      description: Ordered by saved-at descending, then watchlist-entry ID descending. Pass the last item's collectionCursor as before for the next page. Removed items do not shift the boundary; new items above it appear on refresh.
       parameters:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 50, default: 24 }
-        - name: offset
+        - name: before
           in: query
-          schema: { type: integer, minimum: 0, default: 0 }
+          schema: { type: string }
       responses:
         "200":
           description: Watchlist
@@ -1214,6 +1217,9 @@ components:
         status: { type: ["string", "null"] }
         inWatchlist: { type: ["boolean", "null"] }
         watched: { type: ["boolean", "null"] }
+        collectionCursor:
+          type: string
+          description: Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.
     SeasonSummary:
       type: object
       required: [seasonNumber, name, episodeCount]

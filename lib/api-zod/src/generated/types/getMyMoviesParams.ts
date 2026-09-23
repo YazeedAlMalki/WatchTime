@@ -12,8 +12,5 @@ export type GetMyMoviesParams = {
  * @maximum 50
  */
 limit?: number;
-/**
- * @minimum 0
- */
-offset?: number;
+before?: string;
 };

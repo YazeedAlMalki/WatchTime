@@ -13,7 +13,7 @@ export type GetMyShowsParams = {
  */
 limit?: number;
 /**
- * @minimum 0
+ * @minimum 1
  */
-offset?: number;
+beforeId?: number;
 };

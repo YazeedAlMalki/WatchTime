@@ -32,4 +32,6 @@ export interface Title {
   inWatchlist?: boolean | null;
   /** @nullable */
   watched?: boolean | null;
+  /** Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses. */
+  collectionCursor?: string;
 }

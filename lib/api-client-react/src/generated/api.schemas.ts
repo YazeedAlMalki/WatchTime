@@ -284,6 +284,8 @@ export interface Title {
   inWatchlist?: boolean | null;
   /** @nullable */
   watched?: boolean | null;
+  /** Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses. */
+  collectionCursor?: string;
 }
 
 export interface SeasonSummary {
@@ -1027,9 +1029,9 @@ export type GetMyShowsParams = {
  */
 limit?: number;
 /**
- * @minimum 0
+ * @minimum 1
  */
-offset?: number;
+beforeId?: number;
 };
 
 export type GetMyMoviesParams = {
@@ -1038,10 +1040,7 @@ export type GetMyMoviesParams = {
  * @maximum 50
  */
 limit?: number;
-/**
- * @minimum 0
- */
-offset?: number;
+before?: string;
 };
 
 export type GetMyWatchlistParams = {
@@ -1050,10 +1049,7 @@ export type GetMyWatchlistParams = {
  * @maximum 50
  */
 limit?: number;
-/**
- * @minimum 0
- */
-offset?: number;
+before?: string;
 };
 
 export type ListAdminContributionsParams = {

@@ -23,19 +23,19 @@ const PAGE_SIZE = 24;
 export default function MyShowsPage() {
   const showsQuery = useInfiniteQuery({
     queryKey: [...getGetMyShowsQueryKey(), "infinite"],
-    initialPageParam: 0,
+    initialPageParam: undefined as number | undefined,
     queryFn: ({ pageParam, signal }) =>
-      getMyShows({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
-    getNextPageParam: (lastPage, pages) =>
-      lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined,
+      getMyShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
+    getNextPageParam: (lastPage) =>
+      lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.title.id : undefined,
   });
   const moviesQuery = useInfiniteQuery({
     queryKey: [...getGetMyMoviesQueryKey(), "infinite"],
-    initialPageParam: 0,
+    initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
-      getMyMovies({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
-    getNextPageParam: (lastPage, pages) =>
-      lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined,
+      getMyMovies({ limit: PAGE_SIZE, before: pageParam }, { signal }),
+    getNextPageParam: (lastPage) =>
+      lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.collectionCursor : undefined,
   });
   const shows = showsQuery.data?.pages.flat() ?? [];
   const movies = moviesQuery.data?.pages.flat() ?? [];

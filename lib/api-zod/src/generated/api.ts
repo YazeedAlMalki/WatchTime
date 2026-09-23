@@ -86,7 +86,8 @@ export const ListTitlesResponseItem = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 })
 export const ListTitlesResponse = zod.array(ListTitlesResponseItem)
 
@@ -113,7 +114,8 @@ export const GetTrendingTitlesResponseItem = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 })
 export const GetTrendingTitlesResponse = zod.array(GetTrendingTitlesResponseItem)
 
@@ -139,7 +141,8 @@ export const GetTitleResponse = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 }).and(zod.object({
   "altTitles": zod.array(zod.string()),
   "cast": zod.array(zod.object({
@@ -221,7 +224,8 @@ export const GetSimilarTitlesResponseItem = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 })
 export const GetSimilarTitlesResponse = zod.array(GetSimilarTitlesResponseItem)
 
@@ -401,19 +405,18 @@ export const UnmarkEpisodeWatchedResponse = zod.object({
 
 
 /**
+ * Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh.
  * @summary Tracked shows with progress and next episode to watch
  */
 export const getMyShowsQueryLimitDefault = 24;
 export const getMyShowsQueryLimitMax = 50;
 
-export const getMyShowsQueryOffsetDefault = 0;
-export const getMyShowsQueryOffsetMin = 0;
 
 
 
 export const GetMyShowsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyShowsQueryLimitMax).default(getMyShowsQueryLimitDefault),
-  "offset": zod.coerce.number().int().min(getMyShowsQueryOffsetMin).default(getMyShowsQueryOffsetDefault)
+  "beforeId": zod.coerce.number().int().min(1).optional()
 })
 
 export const GetMyShowsResponseItem = zod.object({
@@ -431,7 +434,8 @@ export const GetMyShowsResponseItem = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 }),
   "watchedEpisodes": zod.int(),
   "totalEpisodes": zod.int(),
@@ -451,19 +455,17 @@ export const GetMyShowsResponse = zod.array(GetMyShowsResponseItem)
 
 
 /**
+ * Ordered by watchedAt descending, then watch-entry ID descending. Pass the last item's collectionCursor as before for the next page. Removed items do not shift the boundary; new items above it appear on refresh.
  * @summary Tracked (watched) movies
  */
 export const getMyMoviesQueryLimitDefault = 24;
 export const getMyMoviesQueryLimitMax = 50;
 
-export const getMyMoviesQueryOffsetDefault = 0;
-export const getMyMoviesQueryOffsetMin = 0;
-
 
 
 export const GetMyMoviesQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyMoviesQueryLimitMax).default(getMyMoviesQueryLimitDefault),
-  "offset": zod.coerce.number().int().min(getMyMoviesQueryOffsetMin).default(getMyMoviesQueryOffsetDefault)
+  "before": zod.coerce.string().optional()
 })
 
 export const GetMyMoviesResponseItem = zod.object({
@@ -480,25 +482,24 @@ export const GetMyMoviesResponseItem = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 })
 export const GetMyMoviesResponse = zod.array(GetMyMoviesResponseItem)
 
 
 /**
+ * Ordered by saved-at descending, then watchlist-entry ID descending. Pass the last item's collectionCursor as before for the next page. Removed items do not shift the boundary; new items above it appear on refresh.
  * @summary Watchlist titles
  */
 export const getMyWatchlistQueryLimitDefault = 24;
 export const getMyWatchlistQueryLimitMax = 50;
 
-export const getMyWatchlistQueryOffsetDefault = 0;
-export const getMyWatchlistQueryOffsetMin = 0;
-
 
 
 export const GetMyWatchlistQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyWatchlistQueryLimitMax).default(getMyWatchlistQueryLimitDefault),
-  "offset": zod.coerce.number().int().min(getMyWatchlistQueryOffsetMin).default(getMyWatchlistQueryOffsetDefault)
+  "before": zod.coerce.string().optional()
 })
 
 export const GetMyWatchlistResponseItem = zod.object({
@@ -515,7 +516,8 @@ export const GetMyWatchlistResponseItem = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 })
 export const GetMyWatchlistResponse = zod.array(GetMyWatchlistResponseItem)
 
@@ -553,7 +555,8 @@ export const GetMyRecommendationsResponseItem = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 }))
 })
 export const GetMyRecommendationsResponse = zod.array(GetMyRecommendationsResponseItem)
@@ -780,7 +783,8 @@ export const GetPublicStatsResponse = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 })),
   "trendingMovies": zod.array(zod.object({
   "id": zod.int(),
@@ -796,7 +800,8 @@ export const GetPublicStatsResponse = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 })),
   "trendingAnime": zod.array(zod.object({
   "id": zod.int(),
@@ -812,7 +817,8 @@ export const GetPublicStatsResponse = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 })),
   "trendingDocumentaries": zod.array(zod.object({
   "id": zod.int(),
@@ -828,7 +834,8 @@ export const GetPublicStatsResponse = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 })),
   "mostSafetyChecked": zod.array(zod.object({
   "id": zod.int(),
@@ -844,7 +851,8 @@ export const GetPublicStatsResponse = zod.object({
   "runtimeMinutes": zod.int().nullish(),
   "status": zod.string().nullish(),
   "inWatchlist": zod.boolean().nullish(),
-  "watched": zod.boolean().nullish()
+  "watched": zod.boolean().nullish(),
+  "collectionCursor": zod.string().optional().describe('Boundary for the next page of a watched-movies or watchlist collection. Only included in those collection responses.')
 }))
 })
 

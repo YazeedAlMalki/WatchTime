@@ -15,11 +15,11 @@ const PAGE_SIZE = 24;
 export default function WatchlistPage() {
   const watchlistQuery = useInfiniteQuery({
     queryKey: [...getGetMyWatchlistQueryKey(), "infinite"],
-    initialPageParam: 0,
+    initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
-      getMyWatchlist({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
-    getNextPageParam: (lastPage, pages) =>
-      lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined,
+      getMyWatchlist({ limit: PAGE_SIZE, before: pageParam }, { signal }),
+    getNextPageParam: (lastPage) =>
+      lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.collectionCursor : undefined,
   });
   const watchlist = watchlistQuery.data?.pages.flat() ?? [];
   const isLoading = watchlistQuery.isLoading;

@@ -1475,6 +1475,7 @@ export const getGetMyShowsUrl = (params?: GetMyShowsParams,) => {
 }
 
 /**
+ * Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh.
  * @summary Tracked shows with progress and next episode to watch
  */
 export const getMyShows = async (params?: GetMyShowsParams, options?: Parameters<typeof customFetch>[1]): Promise<TrackedShow[]> => {
@@ -1559,6 +1560,7 @@ export const getGetMyMoviesUrl = (params?: GetMyMoviesParams,) => {
 }
 
 /**
+ * Ordered by watchedAt descending, then watch-entry ID descending. Pass the last item's collectionCursor as before for the next page. Removed items do not shift the boundary; new items above it appear on refresh.
  * @summary Tracked (watched) movies
  */
 export const getMyMovies = async (params?: GetMyMoviesParams, options?: Parameters<typeof customFetch>[1]): Promise<Title[]> => {
@@ -1643,6 +1645,7 @@ export const getGetMyWatchlistUrl = (params?: GetMyWatchlistParams,) => {
 }
 
 /**
+ * Ordered by saved-at descending, then watchlist-entry ID descending. Pass the last item's collectionCursor as before for the next page. Removed items do not shift the boundary; new items above it appear on refresh.
  * @summary Watchlist titles
  */
 export const getMyWatchlist = async (params?: GetMyWatchlistParams, options?: Parameters<typeof customFetch>[1]): Promise<Title[]> => {

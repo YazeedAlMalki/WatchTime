@@ -12,7 +12,7 @@ import {
   and,
   eq,
   desc,
-  asc,
+  lt,
   sql,
   inArray,
   ne,
@@ -33,17 +33,32 @@ const MAX_COLLECTION_LIMIT = 50;
 
 function getCollectionPage(query: Record<string, unknown>) {
   const limit = Number(query.limit ?? DEFAULT_COLLECTION_LIMIT);
-  const offset = Number(query.offset ?? 0);
+  const beforeId = query.beforeId == null ? undefined : Number(query.beforeId);
   if (
+    query.offset !== undefined ||
     !Number.isInteger(limit) ||
     limit < 1 ||
     limit > MAX_COLLECTION_LIMIT ||
-    !Number.isInteger(offset) ||
-    offset < 0
+    (beforeId !== undefined && (!Number.isSafeInteger(beforeId) || beforeId < 1))
   ) {
     return null;
   }
-  return { limit, offset };
+  return { limit, beforeId };
+}
+
+function getCollectionCursor(query: Record<string, unknown>) {
+  if (query.before === undefined) return null;
+  if (typeof query.before !== "string") return undefined;
+  const match = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z):([1-9]\d*)$/.exec(query.before);
+  if (!match) return undefined;
+  const at = new Date(match[1]);
+  const id = Number(match[2]);
+  if (Number.isNaN(at.getTime()) || at.toISOString() !== match[1] || !Number.isSafeInteger(id)) return undefined;
+  return { at, id };
+}
+
+function collectionCursor(at: Date, id: number) {
+  return `${at.toISOString()}:${id}`;
 }
 
 function setPrivateCollectionCache(res: Response) {
@@ -199,7 +214,7 @@ router.delete("/episodes/:episodeId/watched", requireAuth, async (req, res) => {
 router.get("/me/shows", requireAuth, async (req, res) => {
   const userId = req.userId!;
   const page = getCollectionPage(req.query);
-  if (!page) return res.status(400).json({ error: "Invalid pagination" });
+  if (!page || req.query.before !== undefined) return res.status(400).json({ error: "Invalid pagination" });
   setPrivateCollectionCache(res);
 
   const watchedCounts = db
@@ -220,7 +235,6 @@ router.get("/me/shows", requireAuth, async (req, res) => {
     select count(*)::int from ${episodesTable} episode_count
     where episode_count.title_id = ${titlesTable.id}
   )`;
-  const progress = sql<number>`coalesce(${watchedCounts.watchedEpisodes}, 0)::float / greatest(${totalEpisodes}, 1)`;
   const rows = await db
     .select({
       title: titlesTable,
@@ -240,10 +254,15 @@ router.get("/me/shows", requireAuth, async (req, res) => {
     .from(titlesTable)
     .leftJoin(watchedCounts, eq(watchedCounts.titleId, titlesTable.id))
     .leftJoin(followed, eq(followed.titleId, titlesTable.id))
-    .where(and(ne(titlesTable.type, "movie"), or(isNotNull(watchedCounts.titleId), isNotNull(followed.titleId))))
-    .orderBy(desc(progress), asc(titlesTable.id))
-    .limit(page.limit)
-    .offset(page.offset);
+    .where(and(
+      ne(titlesTable.type, "movie"),
+      or(isNotNull(watchedCounts.titleId), isNotNull(followed.titleId)),
+      page.beforeId === undefined ? undefined : lt(titlesTable.id, page.beforeId),
+    ))
+    // A progress-based order moves rows across the boundary when an episode is marked.
+    // Immutable title IDs keep already-seen rows out of subsequent pages.
+    .orderBy(desc(titlesTable.id))
+    .limit(page.limit);
   const nextIds = rows.flatMap((row) => row.nextEpisodeId == null ? [] : [row.nextEpisodeId]);
   const nextEpisodes = nextIds.length
     ? await db.select().from(episodesTable).where(inArray(episodesTable.id, nextIds))
@@ -262,32 +281,55 @@ router.get("/me/shows", requireAuth, async (req, res) => {
 
 router.get("/me/movies", requireAuth, async (req, res) => {
   const page = getCollectionPage(req.query);
-  if (!page) return res.status(400).json({ error: "Invalid pagination" });
+  const cursor = getCollectionCursor(req.query);
+  if (!page || cursor === undefined || page.beforeId !== undefined) return res.status(400).json({ error: "Invalid pagination" });
   setPrivateCollectionCache(res);
+  // JS Date (and the API cursor) has millisecond precision; PostgreSQL timestamps
+  // can have microseconds. Compare the same precision used in the response.
+  const watchedSort = sql<Date>`date_trunc('milliseconds', ${watchedTitlesTable.watchedAt})`;
   const rows = await db
-    .select({ title: titlesTable })
+    .select({ title: titlesTable, watchedAt: watchedTitlesTable.watchedAt, entryId: watchedTitlesTable.id })
     .from(watchedTitlesTable)
     .innerJoin(titlesTable, eq(titlesTable.id, watchedTitlesTable.titleId))
-    .where(and(eq(watchedTitlesTable.userId, req.userId!), eq(titlesTable.type, "movie")))
-    .orderBy(desc(watchedTitlesTable.watchedAt), desc(watchedTitlesTable.id))
-    .limit(page.limit)
-    .offset(page.offset);
-  return res.json(rows.map((r) => toTitleJson(r.title, { watched: true })));
+    .where(and(
+      eq(watchedTitlesTable.userId, req.userId!),
+      eq(titlesTable.type, "movie"),
+      cursor === null ? undefined : or(
+        lt(watchedSort, cursor.at),
+        and(eq(watchedSort, cursor.at), lt(watchedTitlesTable.id, cursor.id)),
+      ),
+    ))
+    .orderBy(desc(watchedSort), desc(watchedTitlesTable.id))
+    .limit(page.limit);
+  return res.json(rows.map((r) => ({
+    ...toTitleJson(r.title, { watched: true }),
+    collectionCursor: collectionCursor(r.watchedAt, r.entryId),
+  })));
 });
 
 router.get("/me/watchlist", requireAuth, async (req, res) => {
   const page = getCollectionPage(req.query);
-  if (!page) return res.status(400).json({ error: "Invalid pagination" });
+  const cursor = getCollectionCursor(req.query);
+  if (!page || cursor === undefined || page.beforeId !== undefined) return res.status(400).json({ error: "Invalid pagination" });
   setPrivateCollectionCache(res);
+  const savedSort = sql<Date>`date_trunc('milliseconds', ${watchlistTable.createdAt})`;
   const rows = await db
-    .select({ title: titlesTable })
+    .select({ title: titlesTable, createdAt: watchlistTable.createdAt, entryId: watchlistTable.id })
     .from(watchlistTable)
     .innerJoin(titlesTable, eq(titlesTable.id, watchlistTable.titleId))
-    .where(eq(watchlistTable.userId, req.userId!))
-    .orderBy(desc(watchlistTable.createdAt), desc(watchlistTable.id))
-    .limit(page.limit)
-    .offset(page.offset);
-  return res.json(rows.map((r) => toTitleJson(r.title, { inWatchlist: true })));
+    .where(and(
+      eq(watchlistTable.userId, req.userId!),
+      cursor === null ? undefined : or(
+        lt(savedSort, cursor.at),
+        and(eq(savedSort, cursor.at), lt(watchlistTable.id, cursor.id)),
+      ),
+    ))
+    .orderBy(desc(savedSort), desc(watchlistTable.id))
+    .limit(page.limit);
+  return res.json(rows.map((r) => ({
+    ...toTitleJson(r.title, { inWatchlist: true }),
+    collectionCursor: collectionCursor(r.createdAt, r.entryId),
+  })));
 });
 
 router.get("/me/recent", requireAuth, async (req, res) => {
