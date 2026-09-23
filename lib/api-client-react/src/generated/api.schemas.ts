@@ -1109,8 +1109,13 @@ export const ListAdminFeedbackCategory = {
 
 export type SearchAdminContentParams = {
 q?: string;
+/**
+ * Rating region used to select the official Wikidata record
+ */
+region?: SearchAdminContentRegion;
 };
 
+export type SearchAdminContentRegion = typeof SearchAdminContentRegion[keyof typeof SearchAdminContentRegion];
 export type ListAdminContentAliasesParams = {
 q?: string;
 /**
@@ -1155,3 +1160,12 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
+
+export const SearchAdminContentRegion = {
+  US: 'US',
+  GB: 'GB',
+  DE: 'DE',
+  FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
+} as const;

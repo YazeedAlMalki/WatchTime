@@ -32,6 +32,7 @@ import {
   type AdminContentAlias,
   type ListAdminContentAliasesOwnership,
 } from "@workspace/api-client-react";
+import { RATING_REGIONS, type RatingRegion } from "@workspace/rating-regions";
 import { useQueryClient } from "@tanstack/react-query";
 import { Redirect } from "wouter";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -927,6 +928,7 @@ function ContentTab() {
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
+  const [ratingRegion, setRatingRegion] = useState<RatingRegion>("US");
   const [aliasOwnership, setAliasOwnership] = useState<
     ListAdminContentAliasesOwnership | "all"
   >("all");
@@ -944,7 +946,10 @@ function ContentTab() {
   }, [q]);
 
   const { data: content, isLoading } = useSearchAdminContent(
-    debouncedQ ? { q: debouncedQ } : undefined,
+    {
+      region: ratingRegion,
+      ...(debouncedQ ? { q: debouncedQ } : {}),
+    },
   );
   const { data: aliases, isLoading: aliasesLoading } =
     useListAdminContentAliases({
@@ -1230,6 +1235,36 @@ function ContentTab() {
           onChange={(e) => setQ(e.target.value)}
         />
       </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label
+          htmlFor="admin-rating-region"
+          className="text-sm font-medium text-foreground"
+        >
+          Review Wikidata region
+        </label>
+        <Select
+          value={ratingRegion}
+          onValueChange={(value: RatingRegion) => setRatingRegion(value)}
+        >
+          <SelectTrigger
+            id="admin-rating-region"
+            className="w-56 rounded-xl"
+            aria-label="Review Wikidata region"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {RATING_REGIONS.map((region) => (
+              <SelectItem key={region.code} value={region.code}>
+                {region.code} · {region.countryName} ({region.system})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span className="text-xs text-muted-foreground">
+          Titles below use the selected official classification.
+        </span>
+      </div>
       {isLoading ? (
         <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
       ) : !content?.length ? (
@@ -1274,7 +1309,7 @@ function ContentTab() {
                 </div>
                 <div className="mt-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
                   <span className="font-semibold text-foreground">
-                    Selected US Wikidata rating:
+                    Selected {ratingRegion} Wikidata rating:
                   </span>{" "}
                   {item.selectedRating ? (
                     <>
@@ -1282,7 +1317,9 @@ function ContentTab() {
                         {item.selectedRating.label}
                       </span>
                       <span className="text-muted-foreground">
-                        {" "}· {item.selectedRating.system} · safety record #
+                        {" "}· {item.selectedRating.countryName} ·{" "}
+                        {item.selectedRating.system} ·{" "}
+                        {item.selectedRating.sourceName} · safety record #
                         {item.selectedRating.recordId ?? "unknown"} · refreshed{" "}
                         {item.selectedRating.lastRefreshedAt
                           ? new Date(item.selectedRating.lastRefreshedAt).toLocaleString()
@@ -1301,7 +1338,7 @@ function ContentTab() {
                     </>
                   ) : (
                     <span className="text-muted-foreground">
-                      No available US Wikidata classification
+                      No available {ratingRegion} Wikidata classification
                     </span>
                   )}
                 </div>

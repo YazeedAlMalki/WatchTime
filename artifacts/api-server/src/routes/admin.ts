@@ -31,7 +31,11 @@ import {
   refreshWikidataBatch,
   refreshWikidataTitle,
 } from "../lib/wikidata";
-import { resolvePreferredRating } from "../lib/ratingRegions";
+import {
+  resolvePreferredRating,
+  type RatingRegion,
+} from "../lib/ratingRegions";
+import { RATING_REGIONS_BY_CODE } from "@workspace/rating-regions";
 import { retryFailedCatalogTitles, startCatalogRefresh } from "../lib/catalog-refresh";
 
 const router: IRouter = Router();
@@ -426,6 +430,15 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
 
 router.get("/content", async (req, res) => {
   const q = req.query.q as string | undefined;
+  const regionParam = req.query.region;
+  if (
+    regionParam !== undefined &&
+    (typeof regionParam !== "string" ||
+      !RATING_REGIONS_BY_CODE[regionParam as RatingRegion])
+  ) {
+    return res.status(400).json({ error: "Invalid rating region" });
+  }
+  const region = (regionParam as RatingRegion | undefined) ?? "US";
   const titles = await db
     .select()
     .from(titlesTable)
@@ -466,7 +479,7 @@ router.get("/content", async (req, res) => {
         })),
       selectedRating: resolvePreferredRating(
         safetyRecords.filter((record) => record.titleId === t.id),
-        "US",
+        region,
       ),
     })),
   );

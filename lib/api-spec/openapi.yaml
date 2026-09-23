@@ -862,6 +862,13 @@ paths:
         - name: q
           in: query
           schema: { type: string }
+        - name: region
+          in: query
+          description: Rating region used to select the official Wikidata record
+          schema:
+            type: string
+            enum: [US, GB, DE, FR, AU, BR]
+            default: US
       responses:
         "200":
           description: Content mappings

@@ -111,6 +111,7 @@ export * from './safetySource';
 export * from './safetySourceItem';
 export * from './safetySourceStatus';
 export * from './searchAdminContentParams';
+export * from './searchAdminContentRegion';
 export * from './seasonDetail';
 export * from './seasonSummary';
 export * from './title';

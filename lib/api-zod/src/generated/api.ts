@@ -410,7 +410,6 @@ export const getMyShowsQueryOffsetDefault = 0;
 export const getMyShowsQueryOffsetMin = 0;
 
 
-
 export const GetMyShowsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyShowsQueryLimitMax).default(getMyShowsQueryLimitDefault),
   "offset": zod.coerce.number().int().min(getMyShowsQueryOffsetMin).default(getMyShowsQueryOffsetDefault)
@@ -460,7 +459,6 @@ export const getMyMoviesQueryOffsetDefault = 0;
 export const getMyMoviesQueryOffsetMin = 0;
 
 
-
 export const GetMyMoviesQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyMoviesQueryLimitMax).default(getMyMoviesQueryLimitDefault),
   "offset": zod.coerce.number().int().min(getMyMoviesQueryOffsetMin).default(getMyMoviesQueryOffsetDefault)
@@ -493,7 +491,6 @@ export const getMyWatchlistQueryLimitMax = 50;
 
 export const getMyWatchlistQueryOffsetDefault = 0;
 export const getMyWatchlistQueryOffsetMin = 0;
-
 
 
 export const GetMyWatchlistQueryParams = zod.object({
@@ -565,7 +562,6 @@ export const GetMyRecommendationsResponse = zod.array(GetMyRecommendationsRespon
 export const createImportBodyFileNameMax = 255;
 
 export const createImportBodyContentMax = 2097152;
-
 
 
 export const CreateImportBody = zod.object({
@@ -854,7 +850,6 @@ export const GetPublicStatsResponse = zod.object({
  */
 
 
-
 export const CreateFeedbackBody = zod.object({
   "category": zod.enum(['bug', 'feature', 'general']),
   "message": zod.string().min(1),
@@ -1078,12 +1073,13 @@ export const RetryCatalogRefreshResponse = zod.object({
   "runId": zod.int()
 })
 
-
 /**
  * @summary Search content items with provider mappings
  */
+export const searchAdminContentQueryRegionDefault = `US`;
 export const SearchAdminContentQueryParams = zod.object({
-  "q": zod.coerce.string().optional()
+  "q": zod.coerce.string().optional(),
+  "region": zod.enum(['US', 'GB', 'DE', 'FR', 'AU', 'BR']).default(searchAdminContentQueryRegionDefault).describe('Rating region used to select the official Wikidata record')
 })
 
 export const SearchAdminContentResponseItem = zod.object({
@@ -1146,7 +1142,6 @@ export const UpdateAdminContentAliasParams = zod.object({
 })
 
 export const updateAdminContentAliasBodyAliasMax = 300;
-
 
 
 export const UpdateAdminContentAliasBody = zod.object({
@@ -1213,7 +1208,6 @@ export const refreshAdminContentBatchBodyLimitMax = 25;
 
 export const refreshAdminContentBatchBodyOffsetDefault = 0;
 export const refreshAdminContentBatchBodyOffsetMin = 0;
-
 
 
 export const RefreshAdminContentBatchBody = zod.object({
@@ -1304,5 +1298,4 @@ export const GetAdminAuditLogResponse = zod.object({
   "createdAt": zod.string()
 }))
 })
-
 
