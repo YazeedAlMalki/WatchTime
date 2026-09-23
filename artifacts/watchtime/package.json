@@ -8,6 +8,7 @@
     "build": "vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "test": "vitest run --config vitest.config.ts",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
@@ -49,6 +50,7 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "@vitest/browser-playwright": "4.1.11",
     "@workspace/api-client-react": "workspace:*",
     "@workspace/dev-auth": "workspace:*",
     "@workspace/rating-regions": "workspace:*",
@@ -61,6 +63,7 @@
     "jsdom": "^20.0.3",
     "lucide-react": "catalog:",
     "next-themes": "^0.4.6",
+    "playwright": "^1.63.0",
     "react": "catalog:",
     "react-day-picker": "^9.11.1",
     "react-dom": "catalog:",

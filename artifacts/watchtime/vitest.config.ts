@@ -15,5 +15,6 @@ export default {
     environment: "jsdom",
     globals: true,
     include: ["__tests__/**/*.test.tsx"],
+    exclude: ["__tests__/**/*.browser.test.tsx"],
   },
 };

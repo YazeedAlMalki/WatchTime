@@ -230,10 +230,10 @@ describe("admin alternate-title review", () => {
 
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["/api/admin/content-aliases"],
-    });
+    }, { throwOnError: true });
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["/api/admin/content"],
-    });
+    }, { throwOnError: true });
     expect(mocks.toast).toHaveBeenCalledWith({
       title: "Could not update alternate title",
       description:

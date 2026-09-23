@@ -1116,6 +1116,17 @@ region?: SearchAdminContentRegion;
 };
 
 export type SearchAdminContentRegion = typeof SearchAdminContentRegion[keyof typeof SearchAdminContentRegion];
+
+
+export const SearchAdminContentRegion = {
+  US: 'US',
+  GB: 'GB',
+  DE: 'DE',
+  FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
+} as const;
+
 export type ListAdminContentAliasesParams = {
 q?: string;
 /**
@@ -1160,12 +1171,3 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
-
-export const SearchAdminContentRegion = {
-  US: 'US',
-  GB: 'GB',
-  DE: 'DE',
-  FR: 'FR',
-  AU: 'AU',
-  BR: 'BR',
-} as const;
