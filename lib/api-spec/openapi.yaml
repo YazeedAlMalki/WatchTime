@@ -406,6 +406,13 @@ paths:
       operationId: getMyShows
       tags: [tracking]
       summary: Tracked shows with progress and next episode to watch
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 24 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Tracked shows
@@ -422,6 +429,13 @@ paths:
       operationId: getMyMovies
       tags: [tracking]
       summary: Tracked (watched) movies
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 24 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Watched movies
@@ -438,6 +452,13 @@ paths:
       operationId: getMyWatchlist
       tags: [tracking]
       summary: Watchlist titles
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 24 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Watchlist

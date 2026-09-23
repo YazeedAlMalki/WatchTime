@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React from "react";
 import {
+  getMyMovies,
+  getMyShows,
   getGetMyRecentActivityQueryKey,
   getGetMyRecommendationsQueryKey,
   getGetMyShowsQueryKey,
-  useGetMyShows,
-  useGetMyMovies,
+  getGetMyMoviesQueryKey,
   useGetMyRecentActivity,
   useMarkEpisodeWatched,
 } from "@workspace/api-client-react";
@@ -13,13 +14,33 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { PlaySquare, Check, Clock } from "lucide-react";
 import { Link } from "wouter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OptimizedImage } from "@/components/ui/optimized-image";
 
+const PAGE_SIZE = 24;
+
 export default function MyShowsPage() {
-  const { data: shows, isLoading: showsLoading } = useGetMyShows();
-  const { data: movies, isLoading: moviesLoading } = useGetMyMovies();
+  const showsQuery = useInfiniteQuery({
+    queryKey: [...getGetMyShowsQueryKey(), "infinite"],
+    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) =>
+      getMyShows({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
+    getNextPageParam: (lastPage, pages) =>
+      lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined,
+  });
+  const moviesQuery = useInfiniteQuery({
+    queryKey: [...getGetMyMoviesQueryKey(), "infinite"],
+    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) =>
+      getMyMovies({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
+    getNextPageParam: (lastPage, pages) =>
+      lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined,
+  });
+  const shows = showsQuery.data?.pages.flat() ?? [];
+  const movies = moviesQuery.data?.pages.flat() ?? [];
+  const showsLoading = showsQuery.isLoading;
+  const moviesLoading = moviesQuery.isLoading;
   const { data: history, isLoading: historyLoading } = useGetMyRecentActivity();
   const markWatched = useMarkEpisodeWatched();
   const queryClient = useQueryClient();
@@ -59,14 +80,14 @@ export default function MyShowsPage() {
                 <div key={i} className="h-40 rounded-2xl bg-secondary/30 animate-pulse" />
               ))}
             </div>
-          ) : shows?.length === 0 ? (
+          ) : shows.length === 0 ? (
             <div className="text-center py-20 text-muted-foreground border-2 border-dashed border-border rounded-3xl">
               <p>You aren't tracking any shows yet.</p>
               <Link href="/browse"><Button variant="outline" className="mt-4 rounded-full">Find Shows</Button></Link>
             </div>
           ) : (
             <div className="flex flex-col gap-6">
-              {shows?.map(show => {
+              {shows.map(show => {
                 const progress = Math.round((show.watchedEpisodes / show.totalEpisodes) * 100) || 0;
                 return (
                   <div key={show.title.id} className="flex flex-col sm:flex-row bg-card border border-border rounded-2xl overflow-hidden shadow-sm hover-elevate transition-all">
@@ -106,6 +127,16 @@ export default function MyShowsPage() {
                   </div>
                 );
               })}
+              {showsQuery.hasNextPage && (
+                <Button
+                  variant="outline"
+                  className="self-center rounded-full px-8"
+                  disabled={showsQuery.isFetchingNextPage}
+                  onClick={() => showsQuery.fetchNextPage()}
+                >
+                  {showsQuery.isFetchingNextPage ? "Loading more…" : "Load more shows"}
+                </Button>
+              )}
             </div>
           )}
         </TabsContent>
@@ -117,15 +148,27 @@ export default function MyShowsPage() {
                 <div key={i} className="aspect-[2/3] rounded-xl bg-secondary/30 animate-pulse" />
               ))}
             </div>
-          ) : movies?.length === 0 ? (
+          ) : movies.length === 0 ? (
             <div className="text-center py-20 text-muted-foreground border-2 border-dashed border-border rounded-3xl">
               <p>You haven't marked any movies as watched.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-              {movies?.map((movie) => (
-                <PosterCard key={movie.id} title={movie} />
-              ))}
+            <div className="flex flex-col gap-8">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
+                {movies.map((movie) => (
+                  <PosterCard key={movie.id} title={movie} />
+                ))}
+              </div>
+              {moviesQuery.hasNextPage && (
+                <Button
+                  variant="outline"
+                  className="self-center rounded-full px-8"
+                  disabled={moviesQuery.isFetchingNextPage}
+                  onClick={() => moviesQuery.fetchNextPage()}
+                >
+                  {moviesQuery.isFetchingNextPage ? "Loading more…" : "Load more movies"}
+                </Button>
+              )}
             </div>
           )}
         </TabsContent>

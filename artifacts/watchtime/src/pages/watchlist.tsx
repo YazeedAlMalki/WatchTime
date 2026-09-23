@@ -1,19 +1,35 @@
 import React from "react";
-import { useGetMyWatchlist, useRemoveFromWatchlist } from "@workspace/api-client-react";
+import {
+  getGetMyWatchlistQueryKey,
+  getMyWatchlist,
+  useRemoveFromWatchlist,
+} from "@workspace/api-client-react";
 import { PosterCard } from "@/components/ui/poster-card";
 import { Bookmark, Search } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 
+const PAGE_SIZE = 24;
+
 export default function WatchlistPage() {
-  const { data: watchlist, isLoading } = useGetMyWatchlist();
+  const watchlistQuery = useInfiniteQuery({
+    queryKey: [...getGetMyWatchlistQueryKey(), "infinite"],
+    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) =>
+      getMyWatchlist({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
+    getNextPageParam: (lastPage, pages) =>
+      lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined,
+  });
+  const watchlist = watchlistQuery.data?.pages.flat() ?? [];
+  const isLoading = watchlistQuery.isLoading;
   const removeWatchlist = useRemoveFromWatchlist();
   const queryClient = useQueryClient();
 
   const handleRemove = (id: number) => {
     removeWatchlist.mutate({ id }, {
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/me/watchlist"] })
+      onSuccess: () =>
+        queryClient.invalidateQueries({ queryKey: getGetMyWatchlistQueryKey() })
     });
   };
 
@@ -32,7 +48,7 @@ export default function WatchlistPage() {
             <div key={i} className="aspect-[2/3] rounded-xl bg-secondary/30 animate-pulse" />
           ))}
         </div>
-      ) : watchlist?.length === 0 ? (
+      ) : watchlist.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-32 text-center text-muted-foreground bg-card border border-border rounded-2xl shadow-sm">
           <Bookmark className="w-12 h-12 mb-4 opacity-20" />
           <h3 className="text-xl font-display font-medium text-foreground mb-2">Your watchlist is empty</h3>
@@ -42,14 +58,26 @@ export default function WatchlistPage() {
           </Link>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-          {watchlist?.map((title) => (
-            <PosterCard 
-              key={title.id} 
-              title={{...title, inWatchlist: true}} 
-              onWatchlistToggle={handleRemove} 
-            />
-          ))}
+        <div className="flex flex-col gap-8">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
+            {watchlist.map((title) => (
+              <PosterCard
+                key={title.id}
+                title={{...title, inWatchlist: true}}
+                onWatchlistToggle={handleRemove}
+              />
+            ))}
+          </div>
+          {watchlistQuery.hasNextPage && (
+            <Button
+              variant="outline"
+              className="self-center rounded-full px-8"
+              disabled={watchlistQuery.isFetchingNextPage}
+              onClick={() => watchlistQuery.fetchNextPage()}
+            >
+              {watchlistQuery.isFetchingNextPage ? "Loading more…" : "Load more titles"}
+            </Button>
+          )}
         </div>
       )}
     </div>

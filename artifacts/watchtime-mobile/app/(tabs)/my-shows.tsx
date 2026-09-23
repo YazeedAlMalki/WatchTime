@@ -19,8 +19,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  useGetMyShows,
-  useGetMyMovies,
+  getMyShows,
+  getMyMovies,
   useGetMyRecentActivity,
   useMarkEpisodeWatched,
   getGetMyShowsQueryKey,
@@ -30,6 +30,7 @@ import {
   type TrackedShow,
   type RecentActivityItem,
 } from '@workspace/api-client-react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { EmptyState, ErrorState, Loading, PosterCard } from '@/components/ui';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
@@ -37,6 +38,7 @@ import colors from '@/constants/colors';
 // ─── Tab bar ──────────────────────────────────────────────────────────────────
 
 type Tab = 'shows' | 'movies' | 'history';
+const PAGE_SIZE = 24;
 
 function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
   const c = useColors();
@@ -295,12 +297,30 @@ export default function MyShowsScreen() {
   const [showSearch, setShowSearch] = useState('');
   const [showFilter, setShowFilter] = useState<ShowFilter>('all');
 
-  const shows = useGetMyShows({ query: { enabled: !!isSignedIn } as any });
-  const movies = useGetMyMovies({ query: { enabled: !!isSignedIn } as any });
+  const shows = useInfiniteQuery({
+    queryKey: [...getGetMyShowsQueryKey(), 'infinite'],
+    initialPageParam: 0,
+    enabled: !!isSignedIn,
+    queryFn: ({ pageParam, signal }) =>
+      getMyShows({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
+    getNextPageParam: (lastPage, pages) =>
+      lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined,
+  });
+  const movies = useInfiniteQuery({
+    queryKey: [...getGetMyMoviesQueryKey(), 'infinite'],
+    initialPageParam: 0,
+    enabled: !!isSignedIn,
+    queryFn: ({ pageParam, signal }) =>
+      getMyMovies({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
+    getNextPageParam: (lastPage, pages) =>
+      lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined,
+  });
   const history = useGetMyRecentActivity({ query: { enabled: !!isSignedIn } as any });
 
   // Client-side filter for the TV Shows tab
-  const filteredShows = (shows.data ?? []).filter(show => {
+  const allShows = shows.data?.pages.flat() ?? [];
+  const allMovies = movies.data?.pages.flat() ?? [];
+  const filteredShows = allShows.filter(show => {
     const matchesSearch = !showSearch.trim() ||
       show.title.name.toLowerCase().includes(showSearch.toLowerCase());
     const matchesFilter =
@@ -429,6 +449,11 @@ export default function MyShowsScreen() {
           keyExtractor={(s) => String(s.title.id)}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: bottomPad, gap: 12 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
+          onEndReached={() => {
+            if (shows.hasNextPage && !shows.isFetchingNextPage) shows.fetchNextPage();
+          }}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={shows.isFetchingNextPage ? <ActivityIndicator color={c.primary} /> : null}
           ListEmptyComponent={
             <EmptyState
               icon="tv"
@@ -440,12 +465,17 @@ export default function MyShowsScreen() {
         />
       ) : activeTab === 'movies' ? (
         <FlatList
-          data={movies.data ?? []}
+          data={allMovies}
           keyExtractor={(m) => String(m.id)}
           numColumns={3}
           columnWrapperStyle={{ gap: 12, paddingHorizontal: 16 }}
           contentContainerStyle={{ paddingTop: 12, paddingBottom: bottomPad, gap: 16 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
+          onEndReached={() => {
+            if (movies.hasNextPage && !movies.isFetchingNextPage) movies.fetchNextPage();
+          }}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={movies.isFetchingNextPage ? <ActivityIndicator color={c.primary} /> : null}
           ListEmptyComponent={
             <EmptyState
               icon="film"

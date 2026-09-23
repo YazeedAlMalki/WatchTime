@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import {
   db,
   usersTable,
@@ -18,6 +18,8 @@ import {
   ne,
   notInArray,
   arrayOverlaps,
+  or,
+  isNotNull,
 } from "drizzle-orm";
 import { MarkEpisodeWatchedBody, UpdateMeBody } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/auth";
@@ -26,6 +28,28 @@ import { toTitleJson, toEpisodeJson } from "../lib/serialize";
 const router: IRouter = Router();
 
 const CONTRIBUTION_THRESHOLD = 5;
+const DEFAULT_COLLECTION_LIMIT = 24;
+const MAX_COLLECTION_LIMIT = 50;
+
+function getCollectionPage(query: Record<string, unknown>) {
+  const limit = Number(query.limit ?? DEFAULT_COLLECTION_LIMIT);
+  const offset = Number(query.offset ?? 0);
+  if (
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > MAX_COLLECTION_LIMIT ||
+    !Number.isInteger(offset) ||
+    offset < 0
+  ) {
+    return null;
+  }
+  return { limit, offset };
+}
+
+function setPrivateCollectionCache(res: Response) {
+  res.set("Cache-Control", "private, no-cache");
+  res.set("Vary", "Authorization, Cookie");
+}
 
 router.get("/me", requireAuth, async (req, res) => {
   const userId = req.userId!;
@@ -174,72 +198,95 @@ router.delete("/episodes/:episodeId/watched", requireAuth, async (req, res) => {
 
 router.get("/me/shows", requireAuth, async (req, res) => {
   const userId = req.userId!;
-  const tracked = await db
-    .selectDistinct({ titleId: watchedEpisodesTable.titleId })
+  const page = getCollectionPage(req.query);
+  if (!page) return res.status(400).json({ error: "Invalid pagination" });
+  setPrivateCollectionCache(res);
+
+  const watchedCounts = db
+    .select({
+      titleId: watchedEpisodesTable.titleId,
+      watchedEpisodes: sql<number>`count(*)::int`.as("watched_episodes"),
+    })
     .from(watchedEpisodesTable)
-    .where(eq(watchedEpisodesTable.userId, userId));
-  const followed = await db
+    .where(eq(watchedEpisodesTable.userId, userId))
+    .groupBy(watchedEpisodesTable.titleId)
+    .as("watched_counts");
+  const followed = db
     .select({ titleId: watchedTitlesTable.titleId })
     .from(watchedTitlesTable)
-    .innerJoin(titlesTable, eq(titlesTable.id, watchedTitlesTable.titleId))
-    .where(and(eq(watchedTitlesTable.userId, userId), ne(titlesTable.type, "movie")));
-  const ids = [...new Set([...tracked.map((r) => r.titleId), ...followed.map((r) => r.titleId)])];
-  if (ids.length === 0) return res.json([]);
-
-  const titles = await db.select().from(titlesTable).where(inArray(titlesTable.id, ids));
-  const episodes = await db
-    .select()
-    .from(episodesTable)
-    .where(inArray(episodesTable.titleId, ids))
-    .orderBy(asc(episodesTable.seasonNumber), asc(episodesTable.episodeNumber));
-  const watchedRows = await db
-    .select({ episodeId: watchedEpisodesTable.episodeId, titleId: watchedEpisodesTable.titleId })
-    .from(watchedEpisodesTable)
-    .where(and(eq(watchedEpisodesTable.userId, userId), inArray(watchedEpisodesTable.titleId, ids)));
-  const watchedByTitle = new Map<number, Set<number>>();
-  for (const r of watchedRows) {
-    if (!watchedByTitle.has(r.titleId)) watchedByTitle.set(r.titleId, new Set());
-    watchedByTitle.get(r.titleId)!.add(r.episodeId);
-  }
-  const epsByTitle = new Map<number, typeof episodes>();
-  for (const e of episodes) {
-    if (!epsByTitle.has(e.titleId)) epsByTitle.set(e.titleId, []);
-    epsByTitle.get(e.titleId)!.push(e);
-  }
-  const result = titles
-    .filter((t) => t.type !== "movie")
-    .map((t) => {
-      const eps = epsByTitle.get(t.id) ?? [];
-      const watched = watchedByTitle.get(t.id) ?? new Set<number>();
-      const next = eps.find((e) => !watched.has(e.id));
-      return {
-        title: toTitleJson(t, { inWatchlist: undefined, watched: true }),
-        watchedEpisodes: watched.size,
-        totalEpisodes: eps.length,
-        nextEpisode: next ? toEpisodeJson(next, false) : null,
-      };
+    .where(eq(watchedTitlesTable.userId, userId))
+    .as("followed_titles");
+  const totalEpisodes = sql<number>`(
+    select count(*)::int from ${episodesTable} episode_count
+    where episode_count.title_id = ${titlesTable.id}
+  )`;
+  const progress = sql<number>`coalesce(${watchedCounts.watchedEpisodes}, 0)::float / greatest(${totalEpisodes}, 1)`;
+  const rows = await db
+    .select({
+      title: titlesTable,
+      watchedEpisodes: sql<number>`coalesce(${watchedCounts.watchedEpisodes}, 0)::int`,
+      totalEpisodes,
+      nextEpisodeId: sql<number | null>`(
+        select e.id from ${episodesTable} e
+        where e.title_id = ${titlesTable.id}
+          and not exists (
+            select 1 from ${watchedEpisodesTable} we
+            where we.user_id = ${userId} and we.episode_id = e.id
+          )
+        order by e.season_number asc, e.episode_number asc, e.id asc
+        limit 1
+      )`,
     })
-    .sort((a, b) => (b.watchedEpisodes / Math.max(b.totalEpisodes, 1)) - (a.watchedEpisodes / Math.max(a.totalEpisodes, 1)));
+    .from(titlesTable)
+    .leftJoin(watchedCounts, eq(watchedCounts.titleId, titlesTable.id))
+    .leftJoin(followed, eq(followed.titleId, titlesTable.id))
+    .where(and(ne(titlesTable.type, "movie"), or(isNotNull(watchedCounts.titleId), isNotNull(followed.titleId))))
+    .orderBy(desc(progress), asc(titlesTable.id))
+    .limit(page.limit)
+    .offset(page.offset);
+  const nextIds = rows.flatMap((row) => row.nextEpisodeId == null ? [] : [row.nextEpisodeId]);
+  const nextEpisodes = nextIds.length
+    ? await db.select().from(episodesTable).where(inArray(episodesTable.id, nextIds))
+    : [];
+  const nextById = new Map(nextEpisodes.map((episode) => [episode.id, episode]));
+  const result = rows.map((row) => ({
+    title: toTitleJson(row.title, { inWatchlist: undefined, watched: true }),
+    watchedEpisodes: row.watchedEpisodes,
+    totalEpisodes: row.totalEpisodes,
+    nextEpisode: row.nextEpisodeId == null
+      ? null
+      : toEpisodeJson(nextById.get(row.nextEpisodeId)!, false),
+  }));
   return res.json(result);
 });
 
 router.get("/me/movies", requireAuth, async (req, res) => {
+  const page = getCollectionPage(req.query);
+  if (!page) return res.status(400).json({ error: "Invalid pagination" });
+  setPrivateCollectionCache(res);
   const rows = await db
     .select({ title: titlesTable })
     .from(watchedTitlesTable)
     .innerJoin(titlesTable, eq(titlesTable.id, watchedTitlesTable.titleId))
     .where(and(eq(watchedTitlesTable.userId, req.userId!), eq(titlesTable.type, "movie")))
-    .orderBy(desc(watchedTitlesTable.watchedAt));
+    .orderBy(desc(watchedTitlesTable.watchedAt), desc(watchedTitlesTable.id))
+    .limit(page.limit)
+    .offset(page.offset);
   return res.json(rows.map((r) => toTitleJson(r.title, { watched: true })));
 });
 
 router.get("/me/watchlist", requireAuth, async (req, res) => {
+  const page = getCollectionPage(req.query);
+  if (!page) return res.status(400).json({ error: "Invalid pagination" });
+  setPrivateCollectionCache(res);
   const rows = await db
     .select({ title: titlesTable })
     .from(watchlistTable)
     .innerJoin(titlesTable, eq(titlesTable.id, watchlistTable.titleId))
     .where(eq(watchlistTable.userId, req.userId!))
-    .orderBy(desc(watchlistTable.createdAt));
+    .orderBy(desc(watchlistTable.createdAt), desc(watchlistTable.id))
+    .limit(page.limit)
+    .offset(page.offset);
   return res.json(rows.map((r) => toTitleJson(r.title, { inWatchlist: true })));
 });
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   FlatList,
+  ActivityIndicator,
   Platform,
   Pressable,
   RefreshControl,
@@ -14,13 +15,16 @@ import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  useGetMyWatchlist,
+  getMyWatchlist,
   useRemoveFromWatchlist,
   getGetMyWatchlistQueryKey,
 } from '@workspace/api-client-react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { EmptyState, ErrorState, Loading, PosterCard } from '@/components/ui';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
+
+const PAGE_SIZE = 24;
 
 export default function WatchlistScreen() {
   const c = useColors();
@@ -28,7 +32,15 @@ export default function WatchlistScreen() {
   const insets = useSafeAreaInsets();
   const { isSignedIn } = useAppAuth();
   const queryClient = useQueryClient();
-  const watchlist = useGetMyWatchlist({ query: { enabled: !!isSignedIn } as any });
+  const watchlist = useInfiniteQuery({
+    queryKey: [...getGetMyWatchlistQueryKey(), 'infinite'],
+    initialPageParam: 0,
+    enabled: !!isSignedIn,
+    queryFn: ({ pageParam, signal }) =>
+      getMyWatchlist({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
+    getNextPageParam: (lastPage, pages) =>
+      lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined,
+  });
   const remove = useRemoveFromWatchlist({
     mutation: {
       onSuccess: () =>
@@ -69,7 +81,7 @@ export default function WatchlistScreen() {
   if (watchlist.isLoading) return <Loading />;
   if (watchlist.isError) return <ErrorState onRetry={() => watchlist.refetch()} />;
 
-  const data = watchlist.data ?? [];
+  const data = watchlist.data?.pages.flat() ?? [];
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
@@ -97,6 +109,15 @@ export default function WatchlistScreen() {
               onRefresh={() => watchlist.refetch()}
               tintColor={c.primary}
             />
+          }
+          onEndReached={() => {
+            if (watchlist.hasNextPage && !watchlist.isFetchingNextPage) {
+              watchlist.fetchNextPage();
+            }
+          }}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            watchlist.isFetchingNextPage ? <ActivityIndicator color={c.primary} /> : null
           }
           renderItem={({ item }) => (
             <View style={{ width: 104 }}>

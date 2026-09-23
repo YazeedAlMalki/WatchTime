@@ -109,11 +109,11 @@ jest.mock('@tanstack/react-query', () => {
 jest.mock('@workspace/api-client-react', () => ({
   setBaseUrl: (...args: any[]) => mockSetBaseUrl(...args),
   setAuthTokenGetter: (...args: any[]) => mockSetAuthTokenGetter(...args),
-  useGetMyShows: (options: any) => {
+  useGetMyShows: (_params: any, options: any) => {
     mockQueryEnabled.shows.push(options?.query?.enabled);
     return { data: [], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false, refetch: jest.fn() };
   },
-  useGetMyWatchlist: (options: any) => {
+  useGetMyWatchlist: (_params: any, options: any) => {
     mockQueryEnabled.watchlist.push(options?.query?.enabled);
     return { data: [], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false, refetch: jest.fn() };
   },

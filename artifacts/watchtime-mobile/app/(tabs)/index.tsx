@@ -136,8 +136,8 @@ function UpNextCard({ show }: { show: TrackedShow }) {
 
 function SignedInHome({ startupReady }: { startupReady: boolean }) {
   const c = useColors();
-  const shows = useGetMyShows({ query: { enabled: startupReady } as any });
-  const watchlist = useGetMyWatchlist({ query: { enabled: startupReady } as any });
+  const shows = useGetMyShows(undefined, { query: { enabled: startupReady } as any });
+  const watchlist = useGetMyWatchlist(undefined, { query: { enabled: startupReady } as any });
   const recs = useGetMyRecommendations({ query: { enabled: startupReady } as any });
   const insets = useSafeAreaInsets();
 

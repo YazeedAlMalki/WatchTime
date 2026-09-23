@@ -403,6 +403,19 @@ export const UnmarkEpisodeWatchedResponse = zod.object({
 /**
  * @summary Tracked shows with progress and next episode to watch
  */
+export const getMyShowsQueryLimitDefault = 24;
+export const getMyShowsQueryLimitMax = 50;
+
+export const getMyShowsQueryOffsetDefault = 0;
+export const getMyShowsQueryOffsetMin = 0;
+
+
+
+export const GetMyShowsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(getMyShowsQueryLimitMax).default(getMyShowsQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(getMyShowsQueryOffsetMin).default(getMyShowsQueryOffsetDefault)
+})
+
 export const GetMyShowsResponseItem = zod.object({
   "title": zod.object({
   "id": zod.int(),
@@ -440,6 +453,19 @@ export const GetMyShowsResponse = zod.array(GetMyShowsResponseItem)
 /**
  * @summary Tracked (watched) movies
  */
+export const getMyMoviesQueryLimitDefault = 24;
+export const getMyMoviesQueryLimitMax = 50;
+
+export const getMyMoviesQueryOffsetDefault = 0;
+export const getMyMoviesQueryOffsetMin = 0;
+
+
+
+export const GetMyMoviesQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(getMyMoviesQueryLimitMax).default(getMyMoviesQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(getMyMoviesQueryOffsetMin).default(getMyMoviesQueryOffsetDefault)
+})
+
 export const GetMyMoviesResponseItem = zod.object({
   "id": zod.int(),
   "type": zod.enum(['movie', 'tv', 'anime', 'documentary']),
@@ -462,6 +488,19 @@ export const GetMyMoviesResponse = zod.array(GetMyMoviesResponseItem)
 /**
  * @summary Watchlist titles
  */
+export const getMyWatchlistQueryLimitDefault = 24;
+export const getMyWatchlistQueryLimitMax = 50;
+
+export const getMyWatchlistQueryOffsetDefault = 0;
+export const getMyWatchlistQueryOffsetMin = 0;
+
+
+
+export const GetMyWatchlistQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(getMyWatchlistQueryLimitMax).default(getMyWatchlistQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(getMyWatchlistQueryOffsetMin).default(getMyWatchlistQueryOffsetDefault)
+})
+
 export const GetMyWatchlistResponseItem = zod.object({
   "id": zod.int(),
   "type": zod.enum(['movie', 'tv', 'anime', 'documentary']),

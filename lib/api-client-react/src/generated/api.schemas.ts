@@ -1020,6 +1020,42 @@ seasonNumber?: number;
 episodeNumber?: number;
 };
 
+export type GetMyShowsParams = {
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type GetMyMoviesParams = {
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type GetMyWatchlistParams = {
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
 export type ListAdminContributionsParams = {
 status?: ListAdminContributionsStatus;
 };

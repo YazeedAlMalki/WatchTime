@@ -40,6 +40,9 @@ import type {
   FeedbackItem,
   FeedbackModeration,
   GetAdminAuditLogParams,
+  GetMyMoviesParams,
+  GetMyShowsParams,
+  GetMyWatchlistParams,
   GetTitleSafetyParams,
   GetTrendingTitlesParams,
   HealthStatus,
@@ -1456,20 +1459,27 @@ export const useUnmarkEpisodeWatched = <TError = ErrorType<void>,
       return useMutation(getUnmarkEpisodeWatchedMutationOptions(options));
     }
 
-export const getGetMyShowsUrl = () => {
+export const getGetMyShowsUrl = (params?: GetMyShowsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/me/shows`
+  return stringifiedParams.length > 0 ? `/api/me/shows?${stringifiedParams}` : `/api/me/shows`
 }
 
 /**
  * @summary Tracked shows with progress and next episode to watch
  */
-export const getMyShows = async ( options?: Parameters<typeof customFetch>[1]): Promise<TrackedShow[]> => {
+export const getMyShows = async (params?: GetMyShowsParams, options?: Parameters<typeof customFetch>[1]): Promise<TrackedShow[]> => {
 
-  return customFetch<TrackedShow[]>(getGetMyShowsUrl(),
+  return customFetch<TrackedShow[]>(getGetMyShowsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1482,23 +1492,23 @@ export const getMyShows = async ( options?: Parameters<typeof customFetch>[1]): 
 
 
 
-export const getGetMyShowsQueryKey = () => {
+export const getGetMyShowsQueryKey = (params?: GetMyShowsParams,) => {
     return [
-    `/api/me/shows`
+    `/api/me/shows`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetMyShowsQueryOptions = <TData = Awaited<ReturnType<typeof getMyShows>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyShows>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetMyShowsQueryOptions = <TData = Awaited<ReturnType<typeof getMyShows>>, TError = ErrorType<void>>(params?: GetMyShowsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyShows>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetMyShowsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetMyShowsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyShows>>> = ({ signal }) => getMyShows({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyShows>>> = ({ signal }) => getMyShows(params, { signal, ...requestOptions });
 
 
 
@@ -1516,11 +1526,11 @@ export type GetMyShowsQueryError = ErrorType<void>
  */
 
 export function useGetMyShows<TData = Awaited<ReturnType<typeof getMyShows>>, TError = ErrorType<void>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyShows>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetMyShowsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyShows>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetMyShowsQueryOptions(options)
+  const queryOptions = getGetMyShowsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1533,20 +1543,27 @@ export function useGetMyShows<TData = Awaited<ReturnType<typeof getMyShows>>, TE
 
 
 
-export const getGetMyMoviesUrl = () => {
+export const getGetMyMoviesUrl = (params?: GetMyMoviesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/me/movies`
+  return stringifiedParams.length > 0 ? `/api/me/movies?${stringifiedParams}` : `/api/me/movies`
 }
 
 /**
  * @summary Tracked (watched) movies
  */
-export const getMyMovies = async ( options?: Parameters<typeof customFetch>[1]): Promise<Title[]> => {
+export const getMyMovies = async (params?: GetMyMoviesParams, options?: Parameters<typeof customFetch>[1]): Promise<Title[]> => {
 
-  return customFetch<Title[]>(getGetMyMoviesUrl(),
+  return customFetch<Title[]>(getGetMyMoviesUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1559,23 +1576,23 @@ export const getMyMovies = async ( options?: Parameters<typeof customFetch>[1]):
 
 
 
-export const getGetMyMoviesQueryKey = () => {
+export const getGetMyMoviesQueryKey = (params?: GetMyMoviesParams,) => {
     return [
-    `/api/me/movies`
+    `/api/me/movies`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetMyMoviesQueryOptions = <TData = Awaited<ReturnType<typeof getMyMovies>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyMovies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetMyMoviesQueryOptions = <TData = Awaited<ReturnType<typeof getMyMovies>>, TError = ErrorType<void>>(params?: GetMyMoviesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyMovies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetMyMoviesQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetMyMoviesQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyMovies>>> = ({ signal }) => getMyMovies({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyMovies>>> = ({ signal }) => getMyMovies(params, { signal, ...requestOptions });
 
 
 
@@ -1593,11 +1610,11 @@ export type GetMyMoviesQueryError = ErrorType<void>
  */
 
 export function useGetMyMovies<TData = Awaited<ReturnType<typeof getMyMovies>>, TError = ErrorType<void>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyMovies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetMyMoviesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyMovies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetMyMoviesQueryOptions(options)
+  const queryOptions = getGetMyMoviesQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1610,20 +1627,27 @@ export function useGetMyMovies<TData = Awaited<ReturnType<typeof getMyMovies>>, 
 
 
 
-export const getGetMyWatchlistUrl = () => {
+export const getGetMyWatchlistUrl = (params?: GetMyWatchlistParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/me/watchlist`
+  return stringifiedParams.length > 0 ? `/api/me/watchlist?${stringifiedParams}` : `/api/me/watchlist`
 }
 
 /**
  * @summary Watchlist titles
  */
-export const getMyWatchlist = async ( options?: Parameters<typeof customFetch>[1]): Promise<Title[]> => {
+export const getMyWatchlist = async (params?: GetMyWatchlistParams, options?: Parameters<typeof customFetch>[1]): Promise<Title[]> => {
 
-  return customFetch<Title[]>(getGetMyWatchlistUrl(),
+  return customFetch<Title[]>(getGetMyWatchlistUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1636,23 +1660,23 @@ export const getMyWatchlist = async ( options?: Parameters<typeof customFetch>[1
 
 
 
-export const getGetMyWatchlistQueryKey = () => {
+export const getGetMyWatchlistQueryKey = (params?: GetMyWatchlistParams,) => {
     return [
-    `/api/me/watchlist`
+    `/api/me/watchlist`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetMyWatchlistQueryOptions = <TData = Awaited<ReturnType<typeof getMyWatchlist>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyWatchlist>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetMyWatchlistQueryOptions = <TData = Awaited<ReturnType<typeof getMyWatchlist>>, TError = ErrorType<void>>(params?: GetMyWatchlistParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyWatchlist>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetMyWatchlistQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetMyWatchlistQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyWatchlist>>> = ({ signal }) => getMyWatchlist({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyWatchlist>>> = ({ signal }) => getMyWatchlist(params, { signal, ...requestOptions });
 
 
 
@@ -1670,11 +1694,11 @@ export type GetMyWatchlistQueryError = ErrorType<void>
  */
 
 export function useGetMyWatchlist<TData = Awaited<ReturnType<typeof getMyWatchlist>>, TError = ErrorType<void>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyWatchlist>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetMyWatchlistParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyWatchlist>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetMyWatchlistQueryOptions(options)
+  const queryOptions = getGetMyWatchlistQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
