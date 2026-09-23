@@ -121,6 +121,69 @@ describe("admin title aliases", () => {
     });
   });
 
+  it("matches the public rating tie-breaker regardless of record insertion order", async () => {
+    const updatedAt = new Date("2026-02-01T00:00:00.000Z");
+    const makeRecord = (label: string, tier: number, url: string) => ({
+      titleId: createdTitleIds[0],
+      sourceName: "Wikidata",
+      tier,
+      isCommunity: false,
+      status: "available" as const,
+      url,
+      updatedAt,
+      items: [{
+        category: "MPAA",
+        label,
+        score: null,
+        maxScore: null,
+        description: "Equal-freshness tie-breaker",
+      }],
+    });
+    const records = [
+      makeRecord("AAA", 2, "https://example.test/a"),
+      makeRecord("PG-13", 1, "https://example.test/z"),
+      makeRecord("PG", 1, "https://example.test/z"),
+      makeRecord("PG", 1, "https://example.test/a"),
+    ];
+
+    const readSelectedRatings = async () => {
+      const [publicResponse, adminResponse] = await Promise.all([
+        request(app).get(`/api/safety?titleId=${createdTitleIds[0]}`),
+        request(app).get("/api/admin/content?q=Alias%20Test%20One"),
+      ]);
+      expect(publicResponse.status).toBe(200);
+      expect(adminResponse.status).toBe(200);
+      expect(adminResponse.body).toHaveLength(1);
+      expect(publicResponse.body.preferredRating).toEqual(adminResponse.body[0].selectedRating);
+      return publicResponse.body.preferredRating;
+    };
+
+    await db.insert(safetyRecordsTable).values(records);
+    const firstSelected = await readSelectedRatings();
+    expect(firstSelected).toEqual({
+      region: "US",
+      countryName: "United States",
+      system: "MPAA",
+      label: "PG",
+      sourceName: "Wikidata",
+      recordId: expect.any(Number),
+      lastRefreshedAt: updatedAt.toISOString(),
+      sourceUrl: "https://example.test/a",
+    });
+
+    await db.delete(safetyRecordsTable).where(eq(safetyRecordsTable.titleId, createdTitleIds[0]));
+    await db.insert(safetyRecordsTable).values([...records].reverse());
+    const secondSelected = await readSelectedRatings();
+
+    expect(secondSelected).toEqual({
+      ...firstSelected,
+      recordId: expect.any(Number),
+    });
+    expect(secondSelected.recordId).not.toBe(firstSelected.recordId);
+    expect(secondSelected.sourceUrl).toBe(firstSelected.sourceUrl);
+    expect(secondSelected.lastRefreshedAt).toBe(firstSelected.lastRefreshedAt);
+  });
+
   it("shows provenance and collisions", async () => {
     const response = await request(app).get("/api/admin/content-aliases?q=Shared");
     expect(response.status).toBe(200);

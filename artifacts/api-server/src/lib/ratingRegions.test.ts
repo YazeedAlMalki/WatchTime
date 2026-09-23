@@ -115,4 +115,55 @@ describe("resolvePreferredRating", () => {
     expect(resolvePreferredRating([first, second], "US")?.label).toBe("PG");
     expect(resolvePreferredRating([second, first], "US")?.label).toBe("PG");
   });
+
+  it("uses tier, label, and source URL as stable tie-breakers", () => {
+    const timestamp = new Date("2026-02-01T00:00:00.000Z");
+    const candidates = [
+      {
+        ...records[0],
+        id: 1,
+        tier: 2,
+        updatedAt: timestamp,
+        url: "https://example.test/a",
+        items: [{ category: "MPAA", label: "AAA" }],
+      },
+      {
+        ...records[0],
+        id: 2,
+        tier: 1,
+        updatedAt: timestamp,
+        url: "https://example.test/z",
+        items: [{ category: "MPAA", label: "PG-13" }],
+      },
+      {
+        ...records[0],
+        id: 3,
+        tier: 1,
+        updatedAt: timestamp,
+        url: "https://example.test/z",
+        items: [{ category: "MPAA", label: "PG" }],
+      },
+      {
+        ...records[0],
+        id: 4,
+        tier: 1,
+        updatedAt: timestamp,
+        url: "https://example.test/a",
+        items: [{ category: "MPAA", label: "PG" }],
+      },
+    ];
+
+    const expected = {
+      region: "US",
+      countryName: "United States",
+      system: "MPAA",
+      label: "PG",
+      sourceName: "Wikidata",
+      recordId: 4,
+      lastRefreshedAt: timestamp.toISOString(),
+      sourceUrl: "https://example.test/a",
+    };
+    expect(resolvePreferredRating(candidates, "US")).toEqual(expected);
+    expect(resolvePreferredRating([...candidates].reverse(), "US")).toEqual(expected);
+  });
 });

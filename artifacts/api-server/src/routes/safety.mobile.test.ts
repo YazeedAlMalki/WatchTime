@@ -466,13 +466,14 @@ describe("shared rating-region preference", () => {
   it("uses the newest available Wikidata rating regardless of insertion order", async () => {
     const olderUpdatedAt = new Date("2026-01-01T00:00:00.000Z");
     const newerUpdatedAt = new Date("2026-02-01T00:00:00.000Z");
-    const makeRecord = (label: string, updatedAt: Date) => ({
+    const makeRecord = (label: string, updatedAt: Date, url: string) => ({
       titleId,
       sourceName: "Wikidata",
       tier: 2,
       isCommunity: false,
       status: "available" as const,
       updatedAt,
+      url,
       items: [{
         category: "MPAA",
         label,
@@ -483,21 +484,31 @@ describe("shared rating-region preference", () => {
     });
 
     await db.insert(safetyRecordsTable).values([
-      makeRecord("PG-13", newerUpdatedAt),
-      makeRecord("PG", olderUpdatedAt),
+      makeRecord("PG-13", newerUpdatedAt, "https://example.test/newer"),
+      makeRecord("PG", olderUpdatedAt, "https://example.test/older"),
     ]);
     const firstResponse = await supertest(app).get(`/api/safety?titleId=${titleId}`);
     expect(firstResponse.status).toBe(200);
-    expect(firstResponse.body.preferredRating.label).toBe("PG-13");
+    expect(firstResponse.body.preferredRating).toMatchObject({
+      label: "PG-13",
+      recordId: expect.any(Number),
+      lastRefreshedAt: newerUpdatedAt.toISOString(),
+      sourceUrl: "https://example.test/newer",
+    });
 
     await db.delete(safetyRecordsTable).where(eq(safetyRecordsTable.titleId, titleId));
     await db.insert(safetyRecordsTable).values([
-      makeRecord("PG", olderUpdatedAt),
-      makeRecord("PG-13", newerUpdatedAt),
+      makeRecord("PG", olderUpdatedAt, "https://example.test/older"),
+      makeRecord("PG-13", newerUpdatedAt, "https://example.test/newer"),
     ]);
     const secondResponse = await supertest(app).get(`/api/safety?titleId=${titleId}`);
     expect(secondResponse.status).toBe(200);
-    expect(secondResponse.body.preferredRating.label).toBe("PG-13");
+    expect(secondResponse.body.preferredRating).toEqual({
+      ...firstResponse.body.preferredRating,
+      recordId: expect.any(Number),
+    });
+    expect(secondResponse.body.preferredRating.recordId)
+      .not.toBe(firstResponse.body.preferredRating.recordId);
   });
 });
 
