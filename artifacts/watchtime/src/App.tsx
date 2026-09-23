@@ -11,7 +11,10 @@ const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function hasSessionHint(): boolean {
   return (
-    document.cookie.split(";").some((cookie) => cookie.trim().startsWith("__session=")) ||
+    document.cookie.split(";").some((cookie) => {
+      const name = cookie.trim().split("=")[0];
+      return name === "__session" || name === "__client";
+    }) ||
     window.localStorage.getItem("watchtime.devDemoActive") === "1"
   );
 }
@@ -27,6 +30,10 @@ function PublicLanding() {
   );
 }
 
+function SessionLoading() {
+  return <div className="min-h-[100dvh] bg-background" aria-label="Loading session" />;
+}
+
 function AppRouter() {
   const [location] = useLocation();
   const needsAuth = location !== "/" || hasSessionHint();
@@ -40,7 +47,7 @@ function AppRouter() {
   }
 
   return (
-    <Suspense fallback={location === "/" ? <PublicLanding /> : null}>
+    <Suspense fallback={<SessionLoading />}>
       <AuthenticatedApp />
     </Suspense>
   );
