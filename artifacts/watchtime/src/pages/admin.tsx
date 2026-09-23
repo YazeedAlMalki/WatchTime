@@ -34,7 +34,12 @@ import {
 } from "@workspace/api-client-react";
 import { RATING_REGIONS, type RatingRegion } from "@workspace/rating-regions";
 import { useQueryClient } from "@tanstack/react-query";
-import { Redirect } from "wouter";
+import { Redirect, useLocation, useSearch } from "wouter";
+import {
+  adminContentUrl,
+  readAdminContentUrl,
+  type AdminTab,
+} from "./admin-content-url";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +81,15 @@ import {
 import { useToast } from "@/hooks/use-toast";
 
 export default function AdminPage() {
+  const [, setLocation] = useLocation();
+  const search = useSearch();
+  const { tab, region } = readAdminContentUrl(search);
+  const selectTab = (nextTab: string) => {
+    setLocation(adminContentUrl(search, nextTab as AdminTab, region));
+  };
+  const selectRegion = (nextRegion: RatingRegion) => {
+    setLocation(adminContentUrl(search, "content", nextRegion));
+  };
   const { data: me, isLoading: meLoading } = useGetMe();
   const { data: dashboard } = useGetAdminDashboard({
     query: { enabled: !!me?.isAdmin, queryKey: getGetAdminDashboardQueryKey() },
@@ -105,7 +119,7 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <Tabs defaultValue="dashboard" className="w-full">
+      <Tabs value={tab} onValueChange={selectTab} className="w-full">
         <TabsList className="bg-secondary/50 p-1 rounded-xl mb-8 flex-wrap h-auto gap-1">
           <TabsTrigger
             value="dashboard"
@@ -231,7 +245,7 @@ export default function AdminPage() {
 
         {/* Content */}
         <TabsContent value="content" className="outline-none">
-          <ContentTab />
+          <ContentTab ratingRegion={region} onRatingRegionChange={selectRegion} />
         </TabsContent>
 
         {/* Integrations */}
@@ -923,12 +937,17 @@ function BreakdownCard({
 
 /* ─── Content ─── */
 
-function ContentTab() {
+function ContentTab({
+  ratingRegion,
+  onRatingRegionChange,
+}: {
+  ratingRegion: RatingRegion;
+  onRatingRegionChange: (region: RatingRegion) => void;
+}) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
-  const [ratingRegion, setRatingRegion] = useState<RatingRegion>("US");
   const [aliasOwnership, setAliasOwnership] = useState<
     ListAdminContentAliasesOwnership | "all"
   >("all");
@@ -1244,7 +1263,7 @@ function ContentTab() {
         </label>
         <Select
           value={ratingRegion}
-          onValueChange={(value: RatingRegion) => setRatingRegion(value)}
+          onValueChange={(value: RatingRegion) => onRatingRegionChange(value)}
         >
           <SelectTrigger
             id="admin-rating-region"
