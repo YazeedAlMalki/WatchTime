@@ -116,6 +116,86 @@ describe("resolvePreferredRating", () => {
     expect(resolvePreferredRating([second, first], "US")?.label).toBe("PG");
   });
 
+  it("uses stable content when refresh timestamps are missing", () => {
+    const candidates = [
+      {
+        ...records[0],
+        id: 1,
+        tier: 1,
+        updatedAt: null,
+        url: "https://example.test/z",
+        items: [{ category: "MPAA", label: "PG-13" }],
+      },
+      {
+        ...records[0],
+        id: 2,
+        tier: 1,
+        updatedAt: undefined,
+        url: "https://example.test/a",
+        items: [{ category: "MPAA", label: "PG" }],
+      },
+    ];
+
+    expect(resolvePreferredRating(candidates, "US")?.label).toBe("PG");
+    expect(resolvePreferredRating([...candidates].reverse(), "US")?.label).toBe("PG");
+  });
+
+  it("uses stable content when refresh timestamps are invalid", () => {
+    const candidates = [
+      {
+        ...records[0],
+        id: 1,
+        tier: 1,
+        updatedAt: "not-a-date",
+        url: "https://example.test/z",
+        items: [{ category: "MPAA", label: "PG-13" }],
+      },
+      {
+        ...records[0],
+        id: 2,
+        tier: 1,
+        updatedAt: "2026-not-a-date",
+        url: "https://example.test/a",
+        items: [{ category: "MPAA", label: "PG" }],
+      },
+    ];
+
+    expect(resolvePreferredRating(candidates, "US")?.label).toBe("PG");
+    expect(resolvePreferredRating([...candidates].reverse(), "US")?.label).toBe("PG");
+  });
+
+  it("uses a stable empty value when source URLs are missing", () => {
+    const timestamp = new Date("2026-02-01T00:00:00.000Z");
+    const candidates = [
+      {
+        ...records[0],
+        id: 1,
+        tier: 1,
+        updatedAt: timestamp,
+        items: [{ category: "MPAA", label: "PG" }],
+      },
+      {
+        ...records[0],
+        id: 2,
+        tier: 1,
+        updatedAt: timestamp,
+        url: "https://example.test/source",
+        items: [{ category: "MPAA", label: "PG" }],
+      },
+    ];
+
+    expect(resolvePreferredRating(candidates, "US")).toMatchObject({
+      label: "PG",
+      recordId: 1,
+      sourceUrl: null,
+    });
+    expect(resolvePreferredRating([...candidates].reverse(), "US")).toMatchObject({
+      label: "PG",
+      recordId: 1,
+      sourceUrl: null,
+    });
+  });
+
   it("uses tier, label, and source URL as stable tie-breakers", () => {
     const timestamp = new Date("2026-02-01T00:00:00.000Z");
     const candidates = [
