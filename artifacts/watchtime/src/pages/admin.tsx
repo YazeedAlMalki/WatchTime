@@ -83,12 +83,15 @@ import { useToast } from "@/hooks/use-toast";
 export default function AdminPage() {
   const [, setLocation] = useLocation();
   const search = useSearch();
-  const { tab, region } = readAdminContentUrl(search);
+  const { tab, region, q } = readAdminContentUrl(search);
   const selectTab = (nextTab: string) => {
     setLocation(adminContentUrl(search, nextTab as AdminTab, region));
   };
   const selectRegion = (nextRegion: RatingRegion) => {
     setLocation(adminContentUrl(search, "content", nextRegion));
+  };
+  const selectContentSearch = (term: string) => {
+    setLocation(adminContentUrl(search, "content", region, term), { replace: true });
   };
   const { data: me, isLoading: meLoading } = useGetMe();
   const { data: dashboard } = useGetAdminDashboard({
@@ -245,7 +248,12 @@ export default function AdminPage() {
 
         {/* Content */}
         <TabsContent value="content" className="outline-none">
-          <ContentTab ratingRegion={region} onRatingRegionChange={selectRegion} />
+          <ContentTab
+            ratingRegion={region}
+            onRatingRegionChange={selectRegion}
+            q={q}
+            onSearchChange={selectContentSearch}
+          />
         </TabsContent>
 
         {/* Integrations */}
@@ -940,14 +948,17 @@ function BreakdownCard({
 function ContentTab({
   ratingRegion,
   onRatingRegionChange,
+  q,
+  onSearchChange,
 }: {
   ratingRegion: RatingRegion;
   onRatingRegionChange: (region: RatingRegion) => void;
+  q: string;
+  onSearchChange: (term: string) => void;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState(q);
   const [aliasOwnership, setAliasOwnership] = useState<
     ListAdminContentAliasesOwnership | "all"
   >("all");
@@ -1251,7 +1262,7 @@ function ContentTab({
           className="pl-9 rounded-xl"
           placeholder="Search titles…"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => onSearchChange(e.target.value)}
         />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
