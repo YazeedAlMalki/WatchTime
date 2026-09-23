@@ -987,8 +987,13 @@ function ContentTab({
       ...(debouncedQ ? { q: debouncedQ } : {}),
     },
   );
-  const { data: aliases, isLoading: aliasesLoading } =
-    useListAdminContentAliases({
+  const {
+    data: aliases,
+    isLoading: aliasesLoading,
+    isError: aliasesError,
+    isFetching: aliasesFetching,
+    refetch: retryAliases,
+  } = useListAdminContentAliases({
       ...(debouncedQ ? { q: debouncedQ } : {}),
       ...(aliasOwnership !== "all" ? { ownership: aliasOwnership } : {}),
     });
@@ -1425,6 +1430,9 @@ function ContentTab({
       <AliasReview
         aliases={aliases}
         isLoading={aliasesLoading}
+        isError={aliasesError}
+        isFetching={aliasesFetching}
+        onRetry={() => void retryAliases()}
         ownership={aliasOwnership}
         onOwnershipChange={setAliasOwnership}
       />
@@ -1435,11 +1443,17 @@ function ContentTab({
 export function AliasReview({
   aliases,
   isLoading,
+  isError,
+  isFetching,
+  onRetry,
   ownership,
   onOwnershipChange,
 }: {
   aliases: AdminContentAlias[] | undefined;
   isLoading: boolean;
+  isError: boolean;
+  isFetching: boolean;
+  onRetry: () => void;
   ownership: ListAdminContentAliasesOwnership | "all";
   onOwnershipChange: (
     ownership: ListAdminContentAliasesOwnership | "all",
@@ -1617,7 +1631,7 @@ export function AliasReview({
             </SelectContent>
           </Select>
           <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-            {aliases?.length ?? 0} aliases
+            {isError ? "Aliases unavailable" : `${aliases?.length ?? 0} aliases`}
           </span>
         </div>
       </div>
@@ -1651,6 +1665,23 @@ export function AliasReview({
       )}
       {isLoading ? (
         <div className="h-24 animate-pulse bg-secondary/30 rounded-2xl" />
+      ) : isError ? (
+        <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
+          <p className="font-medium text-foreground">Could not load alternate titles.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The alternate-title request failed. Try again to review these aliases.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 rounded-xl"
+            onClick={onRetry}
+            disabled={isFetching}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            {isFetching ? "Retrying…" : "Retry alternate titles"}
+          </Button>
+        </div>
       ) : !aliases?.length ? (
         <EmptyState
           icon={BookOpen}

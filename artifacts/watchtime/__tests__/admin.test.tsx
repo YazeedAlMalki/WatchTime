@@ -127,7 +127,17 @@ describe("admin alternate-title review", () => {
 
   function render(aliases: AdminContentAlias[] = [initialAlias]) {
     act(() => {
-      root.render(<AliasReview aliases={aliases} isLoading={false} />);
+      root.render(
+        <AliasReview
+          aliases={aliases}
+          isLoading={false}
+          isError={false}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="all"
+          onOwnershipChange={() => {}}
+        />,
+      );
     });
   }
 
