@@ -4,6 +4,7 @@ import {
   createDoesTheDogDieClient,
   normalizeDoesTheDogDieSafetyItems,
   normalizeDoesTheDogDieTopicStats,
+  refreshDoesTheDogDieBatch,
   refreshDoesTheDogDieTitle,
   resolveDoesTheDogDieMatch,
   type CatalogTitleForDoesTheDogDie,
@@ -16,7 +17,7 @@ import {
   safetyRecordsTable,
   titlesTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 
 const movie: CatalogTitleForDoesTheDogDie = {
   id: 1,
@@ -263,5 +264,85 @@ describe("Does the Dog Die refresh persistence", () => {
     ));
     expect(mapping).toMatchObject({ externalId: "10752", status: "mapped" });
     expect(record.items[0]).toMatchObject({ label: "a dog dies", score: 57 });
+  });
+});
+
+describe("Does the Dog Die batch refresh pagination", () => {
+  let createdTitleIds: number[] = [];
+
+  beforeAll(async () => {
+    const titles = await db.insert(titlesTable).values(
+      [1, 2, 3, 4].map((index) => ({
+        type: "movie" as const,
+        name: `__ddd_batch_resume_test_${index}__`,
+        year: null,
+        imdbId: null,
+        popularity: 0,
+      })),
+    ).returning({ id: titlesTable.id });
+    createdTitleIds = titles.map((title) => title.id).sort((left, right) => left - right);
+  });
+
+  afterAll(async () => {
+    await db.delete(titlesTable).where(inArray(titlesTable.id, createdTitleIds));
+  });
+
+  it("resumes on adjacent title batches without overlap and returns an empty end batch", async () => {
+    const catalog = await db
+      .select({ id: titlesTable.id })
+      .from(titlesTable)
+      .orderBy(asc(titlesTable.id));
+    const firstOffset = catalog.findIndex((title) => title.id === createdTitleIds[0]);
+    expect(firstOffset).toBeGreaterThanOrEqual(0);
+
+    const refreshTitle = async (titleId: number) => ({
+      ok: true as const,
+      titleId,
+      titleName: `catalog-title-${titleId}`,
+      externalId: `provider-title-${titleId}`,
+      items: 0,
+    });
+
+    const firstBatch = await refreshDoesTheDogDieBatch({
+      limit: 2,
+      offset: firstOffset,
+      refreshTitle,
+      delayMs: 0,
+    });
+    const secondBatch = await refreshDoesTheDogDieBatch({
+      limit: 2,
+      offset: firstOffset + firstBatch.processed,
+      refreshTitle,
+      delayMs: 0,
+    });
+    const endOffset = catalog.length + 1_000;
+    const endBatch = await refreshDoesTheDogDieBatch({
+      limit: 2,
+      offset: endOffset,
+      refreshTitle,
+      delayMs: 0,
+    });
+
+    const firstIds = firstBatch.results.map((result) => result.titleId);
+    const secondIds = secondBatch.results.map((result) => result.titleId);
+    expect(firstBatch).toMatchObject({
+      offset: firstOffset,
+      limit: 2,
+      processed: 2,
+    });
+    expect(secondBatch).toMatchObject({
+      offset: firstOffset + 2,
+      limit: 2,
+      processed: 2,
+    });
+    expect(firstIds).toEqual(createdTitleIds.slice(0, 2));
+    expect(secondIds).toEqual(createdTitleIds.slice(2, 4));
+    expect(new Set([...firstIds, ...secondIds]).size).toBe(4);
+    expect(endBatch).toEqual({
+      offset: endOffset,
+      limit: 2,
+      processed: 0,
+      results: [],
+    });
   });
 });

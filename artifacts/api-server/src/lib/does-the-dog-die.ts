@@ -535,6 +535,7 @@ export async function refreshDoesTheDogDieBatch(options: {
   offset: number;
   client?: ReturnType<typeof createDoesTheDogDieClient>;
   delayMs?: number;
+  refreshTitle?: (titleId: number) => Promise<DoesTheDogDieRefreshResult>;
 }) {
   const limit = Math.min(Math.max(Math.trunc(options.limit), 1), 25);
   const offset = Math.max(Math.trunc(options.offset), 0);
@@ -545,11 +546,13 @@ export async function refreshDoesTheDogDieBatch(options: {
     .limit(limit)
     .offset(offset);
   const results: DoesTheDogDieRefreshResult[] = [];
+  const refreshTitle = options.refreshTitle ??
+    ((titleId: number) => refreshDoesTheDogDieTitle(titleId, options.client));
   for (const [index, title] of titles.entries()) {
     if (index > 0 && options.delayMs !== 0) {
       await new Promise((resolve) => setTimeout(resolve, options.delayMs ?? 250));
     }
-    results.push(await refreshDoesTheDogDieTitle(title.id, options.client));
+    results.push(await refreshTitle(title.id));
   }
   return { offset, limit, processed: results.length, results };
 }
