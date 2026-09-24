@@ -99,7 +99,8 @@ describe("admin alternate-title review", () => {
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-    mocks.queryClient.invalidateQueries.mockClear();
+    mocks.queryClient.invalidateQueries.mockReset();
+    mocks.queryClient.invalidateQueries.mockResolvedValue(undefined);
     mocks.toast.mockClear();
     mocks.updateMutation.mutate.mockReset();
     mocks.deleteMutation.mutate.mockReset();
@@ -369,6 +370,108 @@ describe("admin alternate-title review", () => {
     );
     expect(container.textContent).toContain(currentAlias.alias);
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(4);
+  });
+
+  it("edits the authoritative conflict correction while list refresh is pending and failed", async () => {
+    let rejectRefresh!: (reason?: unknown) => void;
+    const pendingRefresh = new Promise<void>((_resolve, reject) => {
+      rejectRefresh = reject;
+    });
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      () => pendingRefresh,
+    );
+    const currentCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer Admin Correction",
+      language: "de",
+      sourceName: "Admin editorial",
+      sourceUrl: "https://example.test/newer-correction",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    let mutationCount = 0;
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: {
+          onSuccess?: () => Promise<void>;
+          onError?: (error: unknown) => Promise<void>;
+        },
+      ) => {
+        mutationCount += 1;
+        if (mutationCount === 1) {
+          void options?.onError?.({
+            data: {
+              code: "stale_alias",
+              error: "This alternate title changed while you were editing.",
+              current: currentCorrection,
+            },
+          });
+        } else {
+          void options?.onSuccess?.();
+        }
+      },
+    );
+    render();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale correction",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("A newer correction is already saved");
+    render([]);
+    act(() => button(container, "Edit current correction").click());
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for current correction"]',
+      )?.value,
+    ).toBe("Newer Admin Correction");
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Language for current correction"]',
+      )?.value,
+    ).toBe("de");
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Source link for current correction"]',
+      )?.value,
+    ).toBe("https://example.test/newer-correction");
+
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for current correction",
+        "Follow-up correction",
+      );
+      button(container, "Save").click();
+    });
+
+    expect(mocks.updateMutation.mutate).toHaveBeenNthCalledWith(
+      2,
+      {
+        id: currentCorrection.id,
+        data: {
+          alias: "Follow-up correction",
+          language: "de",
+          sourceUrl: "https://example.test/newer-correction",
+          expectedUpdatedAt: currentCorrection.updatedAt,
+        },
+      },
+      expect.any(Object),
+    );
+
+    await act(async () => {
+      rejectRefresh(new Error("Alias refresh unavailable"));
+      await Promise.resolve();
+    });
+    await flushEffects();
+    expect(container.textContent).toContain("Alternate-title refresh failed");
   });
 
   it("requires removal confirmation and refreshes collision badges after removal", async () => {

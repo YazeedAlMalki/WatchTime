@@ -1665,6 +1665,17 @@ export function AliasReview({
     });
   };
 
+  const startEditingConflict = () => {
+    if (!conflictAlias) return;
+    setEditingId(conflictAlias.id);
+    setDraft({
+      alias: conflictAlias.alias,
+      language: conflictAlias.language ?? "",
+      sourceUrl: conflictAlias.sourceUrl ?? "",
+      expectedUpdatedAt: conflictAlias.updatedAt,
+    });
+  };
+
   const saveAlias = () => {
     if (editingId === null) return;
     const alias = draft.alias.trim();
@@ -1689,6 +1700,7 @@ export function AliasReview({
       {
         onSuccess: async () => {
           setEditingId(null);
+          setConflictAlias(null);
           const refreshed = await refreshAliasViews();
           toast(
             refreshed
@@ -1904,6 +1916,84 @@ export function AliasReview({
                   <dd>{new Date(conflictAlias.updatedAt).toLocaleString()}</dd>
                 </div>
               </dl>
+              {editingId === conflictAlias.id ? (
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <label className="grid gap-1.5 text-xs font-semibold">
+                    Alternate title
+                    <Input
+                      value={draft.alias}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          alias: event.target.value,
+                        }))
+                      }
+                      maxLength={300}
+                      aria-label="Alternate title for current correction"
+                    />
+                  </label>
+                  <label className="grid gap-1.5 text-xs font-semibold">
+                    Language
+                    <Input
+                      value={draft.language}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          language: event.target.value,
+                        }))
+                      }
+                      placeholder="Unknown"
+                      aria-label="Language for current correction"
+                    />
+                  </label>
+                  <label className="grid gap-1.5 text-xs font-semibold">
+                    Source link
+                    <Input
+                      value={draft.sourceUrl}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          sourceUrl: event.target.value,
+                        }))
+                      }
+                      type="url"
+                      placeholder="https://…"
+                      aria-label="Source link for current correction"
+                    />
+                  </label>
+                  <div className="flex gap-2 sm:col-span-3">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={saveAlias}
+                      disabled={updateAlias.isPending}
+                    >
+                      <Save className="w-3.5 h-3.5" /> Save
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setEditingId(null)}
+                      disabled={updateAlias.isPending}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-4 gap-1.5"
+                  onClick={startEditingConflict}
+                  disabled={updateAlias.isPending}
+                >
+                  <Pencil className="w-3.5 h-3.5" /> Edit current correction
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -1950,7 +2040,7 @@ export function AliasReview({
               {aliases.map((alias) => (
                 <tr key={alias.id}>
                   <td className="px-4 py-3 font-medium text-foreground min-w-52">
-                    {editingId === alias.id ? (
+                    {editingId === alias.id && !conflictAlias ? (
                       <Input
                         value={draft.alias}
                         onChange={(event) =>
@@ -1976,7 +2066,7 @@ export function AliasReview({
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground min-w-36">
-                    {editingId === alias.id ? (
+                    {editingId === alias.id && !conflictAlias ? (
                       <Input
                         value={draft.language}
                         onChange={(event) =>
@@ -1993,7 +2083,7 @@ export function AliasReview({
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingId === alias.id ? (
+                    {editingId === alias.id && !conflictAlias ? (
                       <Input
                         value={draft.sourceUrl}
                         onChange={(event) =>
@@ -2036,7 +2126,7 @@ export function AliasReview({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
-                      {editingId === alias.id ? (
+                      {editingId === alias.id && !conflictAlias ? (
                         <>
                           <Button
                             size="sm"
