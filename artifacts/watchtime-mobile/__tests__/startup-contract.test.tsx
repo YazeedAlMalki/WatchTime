@@ -1,12 +1,16 @@
 import React from 'react';
-import { act, cleanup, render, waitFor } from '@testing-library/react-native';
-import { InteractionManager } from 'react-native';
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { InteractionManager, Pressable, Text, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 
 const mockUseAuth = jest.fn();
 const mockUseFonts = jest.fn();
+
+const mockStartupStateUpdates = jest.fn();
 const mockRequestAnimationFrame = jest.fn();
 const mockCancelAnimationFrame = jest.fn();
+
+const mockCancelInteraction = jest.fn();
 const mockMarkStartup = jest.fn();
 const mockSetBaseUrl = jest.fn();
 const mockSetAuthTokenGetter = jest.fn();
@@ -17,8 +21,32 @@ const mockQueryEnabled = {
   trending: [] as boolean[],
 };
 
+jest.mock('@/lib/home-startup', () => {
+  const actual = jest.requireActual('@/lib/home-startup');
+  return {
+    ...actual,
+    startHomeStartup: (setStartupReady: (ready: boolean) => void) =>
+      actual.startHomeStartup((ready: boolean) => {
+        mockStartupStateUpdates(ready);
+        setStartupReady(ready);
+      }),
+  };
+});
+const mockTrendingQueryState: { current: Record<string, any> } = {
+  current: {
+    data: [],
+    dataUpdatedAt: 0,
+    isError: false,
+    isLoading: false,
+    isRefetching: false,
+  },
+};
+const mockTrendingRefetch = jest.fn();
+
 jest.mock('@clerk/expo', () => {
   const React = require('react');
+
+  const { Pressable, Text, View } = require('react-native');
 
   return {
     ClerkProvider: ({ children }: any) => children,
@@ -61,6 +89,7 @@ jest.mock('expo-splash-screen', () => ({
 
 jest.mock('expo-router', () => {
   const React = require('react');
+
   const { View } = require('react-native');
 
   const Stack: any = ({ children }: any) => (
@@ -80,6 +109,8 @@ jest.mock('expo-status-bar', () => ({
 
 jest.mock('react-native-gesture-handler', () => {
   const React = require('react');
+
+  const { Pressable, Text, View } = require('react-native');
   return {
     GestureHandlerRootView: ({ children }: any) => children,
   };
@@ -96,6 +127,8 @@ jest.mock('react-native-safe-area-context', () => ({
 
 jest.mock('@tanstack/react-query', () => {
   const React = require('react');
+
+  const { Pressable, Text, View } = require('react-native');
 
   class QueryClient {}
 
@@ -124,12 +157,8 @@ jest.mock('@workspace/api-client-react', () => ({
   useGetTrendingTitles: (_params: any, options: any) => {
     mockQueryEnabled.trending.push(options?.query?.enabled);
     return {
-      data: [],
-      dataUpdatedAt: 0,
-      isError: false,
-      isLoading: false,
-      isRefetching: false,
-      refetch: jest.fn(),
+      ...mockTrendingQueryState.current,
+      refetch: mockTrendingRefetch,
     };
   },
   useMarkEpisodeWatched: () => ({ isPending: false, mutate: jest.fn() }),
@@ -144,13 +173,21 @@ jest.mock('@/components/ErrorBoundary', () => ({
 
 jest.mock('@/components/ui', () => {
   const React = require('react');
-  const { Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
 
   return {
     EmptyState: () => <View />,
-    ErrorState: () => <View />,
+    ErrorState: ({ message = "Couldn't load data", onRetry }: any) => (
+      <View>
+        <Text>{message}</Text>
+        <Pressable testID="retry-button" onPress={onRetry}>
+          <Text>Retry</Text>
+        </Pressable>
+      </View>
+    ),
     Loading: () => <View testID="loading" />,
-    PosterCard: () => <View />,
+    PosterCard: ({ title }: any) => <Text>{title.name}</Text>,
     SectionHeader: ({ title }: any) => <Text>{title}</Text>,
   };
 });
@@ -185,17 +222,13 @@ describe('mobile startup contracts', () => {
   let pendingFrames: Array<(time: number) => void> = [];
 
   beforeEach(() => {
-    mockUseFonts.mockReset().mockReturnValue([true, null]);
-    mockUseAuth.mockReset().mockReturnValue({
-      getToken: jest.fn(),
-      isLoaded: true,
-      isSignedIn: true,
-    });
+    mockUseFonts.mockReturnValue([true, null]);
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
     jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation((task?: any) => {
       if (typeof task === 'function') {
         pendingInteractions.push(task);
       }
-      return { cancel: jest.fn() } as any;
+      return { cancel: mockCancelInteraction } as any;
     });
     mockRequestAnimationFrame.mockImplementation((callback: (time: number) => void) => {
       pendingFrames.push(callback);
@@ -217,6 +250,14 @@ describe('mobile startup contracts', () => {
     mockQueryEnabled.watchlist.length = 0;
     mockQueryEnabled.recommendations.length = 0;
     mockQueryEnabled.trending.length = 0;
+    mockTrendingQueryState.current = {
+      data: [],
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockTrendingRefetch.mockReset();
     jest.clearAllMocks();
   });
 
@@ -336,31 +377,8 @@ describe('mobile startup contracts', () => {
     });
   });
 
-  it('keeps signed-out trending disabled until the post-first-frame gate opens', async () => {
-    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
-
-    await render(<HomeScreen />);
-
-    expect(InteractionManager.runAfterInteractions).toHaveBeenCalledTimes(1);
-    expect(mockQueryEnabled.trending).toEqual([false]);
-
-    await act(async () => {
-      pendingInteractions[0]?.();
-    });
-
-    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
-    expect(mockQueryEnabled.trending).toEqual([false]);
-
-    await act(async () => {
-      pendingFrames[0]?.(0);
-    });
-
-    await waitFor(() => {
-      expect(mockQueryEnabled.trending.at(-1)).toBe(true);
-    });
-  });
-
   it('does not enable remounted signed-in home queries from a stale startup frame', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
     const firstHome = await render(<HomeScreen />);
 
     expect(mockQueryEnabled.shows).toEqual([false]);
@@ -373,8 +391,10 @@ describe('mobile startup contracts', () => {
 
     expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
 
-    firstHome.unmount();
-    await render(<HomeScreen />);
+    await act(async () => {
+      firstHome.unmount();
+    });
+    const secondHome = await render(<HomeScreen />);
 
     expect(InteractionManager.runAfterInteractions).toHaveBeenCalledTimes(2);
     expect(mockQueryEnabled.shows).toEqual([false, false]);
@@ -407,5 +427,133 @@ describe('mobile startup contracts', () => {
       expect(mockQueryEnabled.watchlist).toEqual([false, false, true]);
       expect(mockQueryEnabled.recommendations).toEqual([false, false, true]);
     });
+
+    await act(async () => {
+      secondHome.unmount();
+    });
   });
+
+  it('keeps signed-out trending disabled until the post-first-frame gate opens', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
+
+    await render(<HomeScreen />);
+
+    expect(InteractionManager.runAfterInteractions).toHaveBeenCalledTimes(1);
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
+    await act(async () => {
+      pendingInteractions[0]?.();
+    });
+
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+
+    await waitFor(() => {
+      expect(mockQueryEnabled.trending.at(-1)).toBe(true);
+    });
+  });
+
+  it('does not update startup state or enable feeds when callbacks fire after unmount', async () => {
+    const home = await render(<HomeScreen />);
+
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
+
+    await act(async () => {
+      pendingInteractions[0]?.();
+    });
+
+    expect(pendingFrames).toHaveLength(1);
+    const scheduledFrameCount = mockRequestAnimationFrame.mock.calls.length;
+    await act(async () => {
+      home.unmount();
+    });
+
+    expect(mockCancelInteraction).toHaveBeenCalled();
+    mockStartupStateUpdates.mockClear();
+    await act(async () => {
+      pendingInteractions[0]?.();
+    });
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(scheduledFrameCount);
+    expect(mockStartupStateUpdates).not.toHaveBeenCalled();
+
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+
+    expect(mockStartupStateUpdates).not.toHaveBeenCalled();
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
+    expect(mockQueryEnabled.trending).toEqual([]);
+  });
+
+  it('keeps the signed-out home usable through a slow feed, failure, retry, and recovery', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
+    mockTrendingQueryState.current = {
+      data: undefined,
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: true,
+      isRefetching: false,
+    };
+
+    const screen = await render(<HomeScreen />);
+
+    await act(async () => {
+      pendingInteractions[0]?.();
+    });
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+
+    expect(screen.getByText('Track your shows.')).toBeTruthy();
+    expect(screen.getByText('Sign in to get started')).toBeTruthy();
+    expect(screen.getByText('Trending Now')).toBeTruthy();
+    expect(screen.getByTestId('loading')).toBeTruthy();
+
+    mockTrendingQueryState.current = {
+      data: undefined,
+      dataUpdatedAt: 0,
+      isError: true,
+      isLoading: false,
+      isRefetching: false,
+    };
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText("Couldn't load trending titles")).toBeTruthy();
+    expect(screen.getByTestId('retry-button')).toBeTruthy();
+    expect(mockMarkStartup).toHaveBeenCalledWith('trending-error');
+
+    fireEvent.press(screen.getByTestId('retry-button'));
+    expect(mockTrendingRefetch).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('trending-retry');
+
+    mockTrendingQueryState.current = {
+      data: [{ id: 1, name: 'Recovered trending title' }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText('Track your shows.')).toBeTruthy();
+    expect(screen.getByText('Recovered trending title')).toBeTruthy();
+    expect(mockMarkStartup).toHaveBeenCalledWith('trending-loaded');
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
 });

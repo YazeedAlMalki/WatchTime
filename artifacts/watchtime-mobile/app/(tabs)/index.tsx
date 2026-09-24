@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   FlatList,
-  InteractionManager,
   Platform,
   Pressable,
   RefreshControl,
@@ -33,6 +32,7 @@ import { EmptyState, ErrorState, Loading, PosterCard, SectionHeader } from '@/co
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
 import { markStartup } from '@/lib/startup-metrics';
+import { startHomeStartup } from '@/lib/home-startup';
 
 function UpNextCard({ show }: { show: TrackedShow }) {
   const c = useColors();
@@ -335,19 +335,7 @@ export default function HomeScreen() {
   const [startupReady, setStartupReady] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    const interaction = InteractionManager.runAfterInteractions(() => {
-      requestAnimationFrame(() => {
-        if (!cancelled) {
-          setStartupReady(true);
-        }
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      interaction.cancel();
-    };
+    return startHomeStartup(setStartupReady);
   }, []);
 
   if (!isLoaded) return <Loading />;
