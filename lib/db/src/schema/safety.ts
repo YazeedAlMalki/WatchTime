@@ -11,6 +11,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { titlesTable } from "./catalog";
 import { usersTable } from "./users";
 
@@ -45,6 +46,9 @@ export const safetyRecordsTable = pgTable("safety_records", {
     table.seasonNumber,
     table.episodeNumber,
   ),
+  uniqueIndex("safety_records_title_source_unique_idx")
+    .on(table.titleId, table.sourceName)
+    .where(sql`${table.seasonNumber} is null and ${table.episodeNumber} is null`),
 ]);
 
 export const contributionStatusEnum = pgEnum("contribution_status", [

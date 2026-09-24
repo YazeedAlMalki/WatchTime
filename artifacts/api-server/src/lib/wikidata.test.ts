@@ -162,7 +162,7 @@ describe("Wikidata refresh persistence", () => {
     if (healthBefore) await db.insert(integrationHealthTable).values(healthBefore);
   });
 
-  it("is repeatable, consolidates pre-existing official duplicates, and preserves other providers", async () => {
+  it("is repeatable, preserves provider scope, and protects record granularity", async () => {
     await db.insert(safetyRecordsTable).values([
       {
         titleId,
@@ -182,10 +182,11 @@ describe("Wikidata refresh persistence", () => {
       },
       {
         titleId,
+        seasonNumber: 1,
         sourceName: WIKIDATA_PROVIDER,
         tier: 2,
         isCommunity: false,
-        url: "https://www.wikidata.org/wiki/Q43",
+        url: "https://www.wikidata.org/wiki/Q43-season",
         status: "available",
         items: [{
           category: "MPAA",
@@ -195,6 +196,24 @@ describe("Wikidata refresh persistence", () => {
           description: "US rating · Wikidata property P1657",
         }],
         updatedAt: new Date("2020-01-02T00:00:00.000Z"),
+      },
+      {
+        titleId,
+        seasonNumber: 1,
+        episodeNumber: 1,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        url: "https://www.wikidata.org/wiki/Q43-episode",
+        status: "available",
+        items: [{
+          category: "MPAA",
+          label: "G",
+          score: null,
+          maxScore: null,
+          description: "US rating · Wikidata property P1657",
+        }],
+        updatedAt: new Date("2020-01-03T00:00:00.000Z"),
       },
       {
         titleId,
@@ -239,7 +258,11 @@ describe("Wikidata refresh persistence", () => {
     });
 
     const records = await db.select().from(safetyRecordsTable).where(eq(safetyRecordsTable.titleId, titleId));
-    expect(records.filter((record) => record.sourceName === WIKIDATA_PROVIDER)).toHaveLength(1);
+    expect(records.filter((record) =>
+      record.sourceName === WIKIDATA_PROVIDER &&
+      record.seasonNumber === null &&
+      record.episodeNumber === null,
+    )).toHaveLength(1);
     expect(records.find((record) => record.sourceName === WIKIDATA_PROVIDER)?.items[0]).toMatchObject({
       category: "MPAA",
       label: "PG-13",
@@ -248,6 +271,66 @@ describe("Wikidata refresh persistence", () => {
     });
     expect(records.find((record) => record.sourceName === "WatchTime Community")).toBeDefined();
     expect(records.find((record) => record.sourceName === "Does the Dog Die?")).toBeDefined();
+    expect(records.filter((record) =>
+      record.sourceName === WIKIDATA_PROVIDER &&
+      record.seasonNumber === 1 &&
+      record.episodeNumber === null,
+    )).toHaveLength(1);
+    expect(records.filter((record) =>
+      record.sourceName === WIKIDATA_PROVIDER &&
+      record.seasonNumber === 1 &&
+      record.episodeNumber === 1,
+    )).toHaveLength(1);
+
+    await expect(db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: WIKIDATA_PROVIDER,
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      items: [],
+    })).rejects.toThrow();
+
+    await db.insert(safetyRecordsTable).values([
+      {
+        titleId,
+        seasonNumber: 2,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        status: "available",
+        items: [],
+      },
+      {
+        titleId,
+        seasonNumber: 2,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        status: "available",
+        items: [],
+      },
+      {
+        titleId,
+        seasonNumber: 2,
+        episodeNumber: 1,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        status: "available",
+        items: [],
+      },
+      {
+        titleId,
+        seasonNumber: 2,
+        episodeNumber: 1,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        status: "available",
+        items: [],
+      },
+    ]);
   });
 
   it("does not replace a verified mapping or safety record when the provider fails", async () => {

@@ -416,54 +416,29 @@ describe("shared rating-region preference", () => {
     },
   );
 
-  it("uses another available Wikidata record when an unavailable one has the same classification", async () => {
-    await db.insert(safetyRecordsTable).values([
-      {
-        titleId,
-        sourceName: "Wikidata",
-        tier: 2,
-        isCommunity: false,
-        status: "stale",
-        items: [{
-          category: "MPAA",
-          label: "Stale official rating",
-          score: null,
-          maxScore: null,
-          description: "Must not be selected",
-        }],
-      },
-      {
-        titleId,
-        sourceName: "Wikidata",
-        tier: 2,
-        isCommunity: false,
-        status: "available",
-        items: [{
-          category: "MPAA",
-          label: "PG",
-          score: null,
-          maxScore: null,
-          description: "Current official rating",
-        }],
-      },
-    ]);
+  it("does not select an unavailable Wikidata title-level rating", async () => {
+    await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "stale",
+      items: [{
+        category: "MPAA",
+        label: "Stale official rating",
+        score: null,
+        maxScore: null,
+        description: "Must not be selected",
+      }],
+    });
 
     const safety = await supertest(app).get(`/api/safety?titleId=${titleId}`);
 
     expect(safety.status).toBe(200);
-    expect(safety.body.preferredRating).toEqual({
-      region: "US",
-      countryName: "United States",
-      system: "MPAA",
-      label: "PG",
-      sourceName: "Wikidata",
-      recordId: expect.any(Number),
-      lastRefreshedAt: expect.any(String),
-      sourceUrl: null,
-    });
+    expect(safety.body.preferredRating).toBeNull();
   });
 
-  it("uses the newest available Wikidata rating regardless of insertion order", async () => {
+  it("returns the current available Wikidata rating after it is replaced", async () => {
     const olderUpdatedAt = new Date("2026-01-01T00:00:00.000Z");
     const newerUpdatedAt = new Date("2026-02-01T00:00:00.000Z");
     const makeRecord = (label: string, updatedAt: Date, url: string) => ({
@@ -483,10 +458,9 @@ describe("shared rating-region preference", () => {
       }],
     });
 
-    await db.insert(safetyRecordsTable).values([
-      makeRecord("PG-13", newerUpdatedAt, "https://example.test/newer"),
-      makeRecord("PG", olderUpdatedAt, "https://example.test/older"),
-    ]);
+    const [newerRecord] = await db.insert(safetyRecordsTable)
+      .values(makeRecord("PG-13", newerUpdatedAt, "https://example.test/newer"))
+      .returning();
     const firstResponse = await supertest(app).get(`/api/safety?titleId=${titleId}`);
     expect(firstResponse.status).toBe(200);
     expect(firstResponse.body.preferredRating).toMatchObject({
@@ -496,19 +470,19 @@ describe("shared rating-region preference", () => {
       sourceUrl: "https://example.test/newer",
     });
 
-    await db.delete(safetyRecordsTable).where(eq(safetyRecordsTable.titleId, titleId));
-    await db.insert(safetyRecordsTable).values([
-      makeRecord("PG", olderUpdatedAt, "https://example.test/older"),
-      makeRecord("PG-13", newerUpdatedAt, "https://example.test/newer"),
-    ]);
+    await db.update(safetyRecordsTable).set(makeRecord(
+      "PG",
+      olderUpdatedAt,
+      "https://example.test/older",
+    )).where(eq(safetyRecordsTable.id, newerRecord.id));
     const secondResponse = await supertest(app).get(`/api/safety?titleId=${titleId}`);
     expect(secondResponse.status).toBe(200);
-    expect(secondResponse.body.preferredRating).toEqual({
-      ...firstResponse.body.preferredRating,
-      recordId: expect.any(Number),
+    expect(secondResponse.body.preferredRating).toMatchObject({
+      label: "PG",
+      recordId: newerRecord.id,
+      lastRefreshedAt: olderUpdatedAt.toISOString(),
+      sourceUrl: "https://example.test/older",
     });
-    expect(secondResponse.body.preferredRating.recordId)
-      .not.toBe(firstResponse.body.preferredRating.recordId);
   });
 });
 

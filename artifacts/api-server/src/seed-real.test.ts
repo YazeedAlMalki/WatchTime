@@ -172,24 +172,23 @@ describe("real catalog sync", () => {
       altTitles: ["Existing Alias"],
     })
       .where(eq(titlesTable.id, title.id));
-    await db.insert(safetyRecordsTable).values({
-      titleId: title.id,
-      sourceName: "Common Sense Media",
+    await db.update(safetyRecordsTable).set({
       tier: 1,
       status: "available",
       isCommunity: true,
       items: [{ category: "test", label: "verified", score: null, maxScore: null, description: "populated" }],
-    });
-    await db.insert(safetyRecordsTable).values({
-      titleId: title.id,
-      sourceName: "Does the Dog Die",
-      tier: 2,
+    }).where(and(
+      eq(safetyRecordsTable.titleId, title.id),
+      eq(safetyRecordsTable.sourceName, "Common Sense Media"),
+    ));
+    await db.update(safetyRecordsTable).set({
       status: "available",
       isCommunity: true,
       items: [{ category: "legacy", label: "verified", score: null, maxScore: null, description: "legacy populated" }],
-    });
-    await db.update(safetyRecordsTable).set({ status: "provider_unavailable", isCommunity: false, items: [] })
-      .where(and(eq(safetyRecordsTable.titleId, title.id), eq(safetyRecordsTable.sourceName, "Does the Dog Die?")));
+    }).where(and(
+      eq(safetyRecordsTable.titleId, title.id),
+      eq(safetyRecordsTable.sourceName, "Does the Dog Die?"),
+    ));
     fetchMock.mockImplementationOnce(async () => jsonResponse({
       ...showPayload,
       summary: null,
@@ -290,13 +289,14 @@ describe("real catalog sync", () => {
     expect(actual).toMatchObject(expected);
   });
 
-  it("merges duplicate community safety items without losing approved contributions", async () => {
+  it("merges duplicate season-level community safety items without losing approved contributions", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(showPayload)));
     await runCatalogSync({ dryRun: false, allowPartial: false }, [testItem]);
     const [title] = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
     await db.insert(safetyRecordsTable).values([
       {
         titleId: title.id,
+        seasonNumber: 1,
         sourceName: "WatchTime Community",
         tier: 3,
         isCommunity: true,
@@ -312,6 +312,7 @@ describe("real catalog sync", () => {
       },
       {
         titleId: title.id,
+        seasonNumber: 1,
         sourceName: "WatchTime Community",
         tier: 3,
         isCommunity: true,
