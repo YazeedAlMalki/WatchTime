@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { View } from 'react-native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ClerkProvider, useAuth } from '@clerk/expo';
@@ -21,6 +22,7 @@ import colors from '@/constants/colors';
 import { getDevDemoToken } from '@/lib/dev-demo-session';
 import { AppAuthProvider } from '@/lib/app-auth';
 import { markStartup } from '@/lib/startup-metrics';
+import { ExpoPreviewReadiness } from '@/components/ExpoPreviewReadiness';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
@@ -116,10 +118,13 @@ export default function RootLayout() {
             <QueryClientProvider client={queryClient}>
               <AuthTokenBridge />
               <StartupFrameMarker />
-              <GestureHandlerRootView>
+              <GestureHandlerRootView style={{ flex: 1 }}>
                 <KeyboardProvider>
                   <StatusBar style="light" />
-                  <RootLayoutNav />
+                  <View style={{ flex: 1 }}>
+                    <ExpoPreviewReadiness />
+                    <RootLayoutNav />
+                  </View>
                 </KeyboardProvider>
               </GestureHandlerRootView>
             </QueryClientProvider>

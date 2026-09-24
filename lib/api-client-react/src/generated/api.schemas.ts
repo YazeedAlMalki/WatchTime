@@ -1242,4 +1242,3 @@ export const GetAdminAuditLogEntityType = {
   feedback: 'feedback',
   content: 'content',
 } as const;
-

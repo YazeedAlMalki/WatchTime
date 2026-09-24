@@ -4,7 +4,7 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
-    "dev": "if [ -n \"$REPLIT_EXPO_SESSION_SECRET\" ]; then pnpm exec create-launch login --session \"$REPLIT_EXPO_SESSION_SECRET\" || true; fi; EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT",
+    "dev": "if [ -n \"$REPLIT_EXPO_SESSION_SECRET\" ]; then\n  if pnpm exec create-launch login --session \"$REPLIT_EXPO_SESSION_SECRET\"; then\n    export EXPO_PUBLIC_REPLIT_EXPO_CLI_SESSION_STATE=ready\n    echo '[WatchTime preview] Replit-managed Expo CLI session: READY'\n  else\n    export EXPO_PUBLIC_REPLIT_EXPO_CLI_SESSION_STATE=blocked\n    echo '[WatchTime preview] Replit-managed Expo CLI session: NOT READY; refresh the Replit workspace, restart this workflow, and follow any managed sign-in steps in Preview on your phone. Do not use your Replit password as an Expo password.'\n  fi\nelse\n  export EXPO_PUBLIC_REPLIT_EXPO_CLI_SESSION_STATE=unavailable\n  echo '[WatchTime preview] Replit-managed Expo CLI session: UNAVAILABLE (session secret missing); refresh the Replit workspace and restart this workflow. Do not use your Replit password as an Expo password.'\nfi\nEXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
