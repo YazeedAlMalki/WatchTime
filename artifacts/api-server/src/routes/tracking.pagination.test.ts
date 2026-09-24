@@ -36,7 +36,9 @@ beforeAll(async () => {
     Array.from({ length: 5 }, (_, i) => ({ name: `__pagination_movie_${i}__`, type: "movie" as const })),
   ).returning({ id: titlesTable.id })).map(row => row.id);
   episodeIds = (await db.insert(episodesTable).values(
-    showIds.map(titleId => ({ titleId, seasonNumber: 1, episodeNumber: 1, name: "Pilot" })),
+    showIds.flatMap(titleId => [1, 2].map(episodeNumber => ({
+      titleId, seasonNumber: 1, episodeNumber, name: `Episode ${episodeNumber}`,
+    }))),
   ).returning({ id: episodesTable.id })).map(row => row.id);
   await db.insert(watchedTitlesTable).values([
     ...showIds.slice(0, 4).map(titleId => ({ userId: USER_ID, titleId })),
@@ -63,7 +65,7 @@ async function page(path: string, boundary?: number | string) {
   expect(response.headers["cache-control"]).toBe("private, no-cache");
   expect(response.headers.vary).toContain("Authorization");
   expect(response.headers.vary).toContain("Cookie");
-  return response.body as Array<{ id?: number; title?: { id: number }; watchedEpisodes?: number; collectionCursor?: string }>;
+  return response.body as Array<{ id?: number; title?: { id: number }; watchedEpisodes?: number; nextEpisode?: { id: number } | null; collectionCursor?: string }>;
 }
 
 function ids(rows: Awaited<ReturnType<typeof page>>) {
@@ -78,14 +80,20 @@ describe("personal collection page boundaries", () => {
     // Mark a show on each side of the boundary. Progress used to sort this
     // list, so either update could previously shift an offset page.
     await db.insert(watchedEpisodesTable).values([
-      { userId: USER_ID, titleId: showIds[3], episodeId: episodeIds[3] },
-      { userId: USER_ID, titleId: showIds[1], episodeId: episodeIds[1] },
+      { userId: USER_ID, titleId: showIds[3], episodeId: episodeIds[6] },
+      { userId: USER_ID, titleId: showIds[3], episodeId: episodeIds[7] },
+      { userId: USER_ID, titleId: showIds[1], episodeId: episodeIds[2] },
     ]);
     const second = await page("shows", ids(first).at(-1));
     expect(ids(second)).toEqual([showIds[1], showIds[0]]);
     expect(second[0].watchedEpisodes).toBe(1);
+    expect(second[0].nextEpisode?.id).toBe(episodeIds[3]);
     expect(await page("shows", ids(second).at(-1))).toEqual([]);
     expect(ids([...first, ...second])).toEqual([...showIds.slice(0, 4)].reverse());
+    // A fresh first page reflects completion without changing the ID boundary.
+    const refreshedFirst = await page("shows");
+    expect(ids(refreshedFirst)).toEqual(ids(first));
+    expect(refreshedFirst[0]).toMatchObject({ watchedEpisodes: 2, nextEpisode: null });
   });
 
   it("keeps unseen movies after a first-page removal and a newer membership addition", async () => {

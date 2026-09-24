@@ -20,6 +20,7 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   getMyShows,
+  orderTrackedShows,
   getMyMovies,
   useGetMyRecentActivity,
   useMarkEpisodeWatched,
@@ -318,7 +319,7 @@ export default function MyShowsScreen() {
   const history = useGetMyRecentActivity({ query: { enabled: !!isSignedIn } as any });
 
   // Client-side filter for the TV Shows tab
-  const allShows = shows.data?.pages.flat() ?? [];
+  const allShows = orderTrackedShows(shows.data?.pages.flat() ?? []);
   const allMovies = movies.data?.pages.flat() ?? [];
   const filteredShows = allShows.filter(show => {
     const matchesSearch = !showSearch.trim() ||
@@ -453,6 +454,11 @@ export default function MyShowsScreen() {
             if (shows.hasNextPage && !shows.isFetchingNextPage) shows.fetchNextPage();
           }}
           onEndReachedThreshold={0.4}
+          ListHeaderComponent={filteredShows.length ? (
+            <Text style={{ color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular', marginBottom: 4 }}>
+              In-progress shows first among loaded shows
+            </Text>
+          ) : null}
           ListFooterComponent={shows.isFetchingNextPage ? <ActivityIndicator color={c.primary} /> : null}
           ListEmptyComponent={
             <EmptyState

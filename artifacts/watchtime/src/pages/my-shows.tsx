@@ -2,6 +2,7 @@ import React from "react";
 import {
   getMyMovies,
   getMyShows,
+  orderTrackedShows,
   getGetMyRecentActivityQueryKey,
   getGetMyRecommendationsQueryKey,
   getGetMyShowsQueryKey,
@@ -37,7 +38,7 @@ export default function MyShowsPage() {
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.collectionCursor : undefined,
   });
-  const shows = showsQuery.data?.pages.flat() ?? [];
+  const shows = orderTrackedShows(showsQuery.data?.pages.flat() ?? []);
   const movies = moviesQuery.data?.pages.flat() ?? [];
   const showsLoading = showsQuery.isLoading;
   const moviesLoading = moviesQuery.isLoading;
@@ -87,6 +88,7 @@ export default function MyShowsPage() {
             </div>
           ) : (
             <div className="flex flex-col gap-6">
+              <p className="text-sm text-muted-foreground">In-progress shows appear first among the shows loaded so far.</p>
               {shows.map(show => {
                 const progress = Math.round((show.watchedEpisodes / show.totalEpisodes) * 100) || 0;
                 return (
