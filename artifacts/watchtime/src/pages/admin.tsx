@@ -20,6 +20,7 @@ import {
   useDeleteAdminContentAlias,
   useRefreshAdminContent,
   useRefreshAdminContentBatch,
+  useGetAdminContentRefreshBatch,
   useGetAdminAuditLog,
   getGetAdminDashboardQueryKey,
   getListAdminContributionsQueryKey,
@@ -28,7 +29,8 @@ import {
   getSearchAdminContentQueryKey,
   getListAdminContentAliasesQueryKey,
   getListCatalogRefreshesQueryKey,
-  type RefreshAdminContentBatch200,
+  getGetAdminContentRefreshBatchQueryKey,
+  type AdminContentRefreshBatch,
   type AdminContentAlias,
   type ListAdminContentAliasesOwnership,
 } from "@workspace/api-client-react";
@@ -967,8 +969,6 @@ function ContentTab({
   >("does_the_dog_die");
   const [batchLimit, setBatchLimit] = useState("10");
   const [batchOffset, setBatchOffset] = useState("0");
-  const [batchResult, setBatchResult] =
-    useState<RefreshAdminContentBatch200 | null>(null);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 400);
@@ -999,6 +999,7 @@ function ContentTab({
     });
   const refresh = useRefreshAdminContent();
   const batchRefresh = useRefreshAdminContentBatch();
+  const { data: batchStatus } = useGetAdminContentRefreshBatch();
 
   const doRefresh = (
     id: number,
@@ -1047,24 +1048,27 @@ function ContentTab({
       return;
     }
 
-    setBatchResult(null);
     batchRefresh.mutate(
       { data: { provider: batchProvider, limit, offset } },
       {
         onSuccess: (result) => {
-          setBatchResult(result);
           qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
+          qc.invalidateQueries({ queryKey: getGetAdminContentRefreshBatchQueryKey() });
           toast({
             title: "Batch refresh complete",
             description: `Processed ${result.processed} title${result.processed === 1 ? "" : "s"} starting at offset ${result.offset}.`,
           });
         },
-        onError: () =>
-          toast({ title: "Batch refresh failed", variant: "destructive" }),
+        onError: () => {
+          qc.invalidateQueries({ queryKey: getGetAdminContentRefreshBatchQueryKey() });
+          toast({ title: "Batch refresh failed", variant: "destructive" });
+        },
       },
     );
   };
 
+  const batchResult: AdminContentRefreshBatch | null =
+    batchStatus?.lastCompleted ?? null;
   const batchSummary = batchResult
     ? {
         mapped: batchResult.results.filter((result) => result.ok).length,
@@ -1076,10 +1080,10 @@ function ContentTab({
         ).length,
       }
     : null;
-  const nextBatchOffset = batchResult
-    ? batchResult.offset + batchResult.processed
-    : null;
-  const isRefreshing = refresh.isPending || batchRefresh.isPending;
+  const nextBatchOffset = batchResult?.nextOffset ?? null;
+  const activeBatch = batchStatus?.running;
+  const isBatchRunning = batchRefresh.isPending || Boolean(activeBatch);
+  const isRefreshing = refresh.isPending || isBatchRunning;
 
   return (
     <div className="flex flex-col gap-4">
@@ -1166,23 +1170,48 @@ function ContentTab({
               <RefreshCw
                 className={`w-4 h-4 ${batchRefresh.isPending ? "animate-spin" : ""}`}
               />
-              {batchRefresh.isPending ? "Refreshing…" : "Run batch refresh"}
+              {isBatchRunning ? "Batch refresh running…" : "Run batch refresh"}
             </Button>
           </div>
-          {batchRefresh.isPending && (
-            <div className="space-y-2" role="status" aria-live="polite">
+          {isBatchRunning && (
+            <div className="space-y-2 border-t border-primary/20 pt-3" role="status" aria-live="polite">
+              <p className="text-sm font-semibold text-foreground">
+                Batch request in progress
+              </p>
               <div className="h-2 overflow-hidden rounded-full bg-secondary">
                 <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
               </div>
               <p className="text-xs text-muted-foreground">
-                Refreshing up to {batchLimit} title
-                {batchLimit === "1" ? "" : "s"} from offset {batchOffset}. Each
-                title is spaced to respect provider rate limits.
+                {batchRefresh.isPending
+                  ? `Refreshing up to ${batchLimit} title${batchLimit === "1" ? "" : "s"} from offset ${batchOffset}.`
+                  : `Refreshing up to ${activeBatch?.limit ?? batchLimit} title${(activeBatch?.limit ?? Number(batchLimit)) === 1 ? "" : "s"} from offset ${activeBatch?.offset ?? batchOffset}.`}
+                {" "}Each title is spaced to respect provider rate limits.
               </p>
             </div>
           )}
           {batchResult && batchSummary && (
             <div className="border-t border-border/60 pt-3 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">
+                    Last completed batch
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {batchResult.provider === "wikidata"
+                      ? "Wikidata"
+                      : "Does the Dog Die"}{" "}
+                    ·{" "}
+                    {new Date(
+                      batchResult.completedAt ?? batchResult.startedAt,
+                    ).toLocaleString()}
+                  </p>
+                </div>
+                {batchResult.status === "failed" && (
+                  <span className="text-xs font-medium text-red-600 dark:text-red-400">
+                    Failed: {batchResult.error ?? "Unknown error"}
+                  </span>
+                )}
+              </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
                 <span className="font-medium">
                   Processed {batchResult.processed} of up to {batchResult.limit}
@@ -1203,24 +1232,22 @@ function ContentTab({
                   </span>
                 )}
               </div>
-              {batchResult.processed > 0 && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    Next resume offset:{" "}
-                    <span className="font-semibold text-foreground">
-                      {nextBatchOffset}
-                    </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  Next resume offset:{" "}
+                  <span className="font-semibold text-foreground">
+                    {nextBatchOffset}
                   </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="rounded-xl"
-                    onClick={() => setBatchOffset(String(nextBatchOffset))}
-                  >
-                    Use next offset
-                  </Button>
-                </div>
-              )}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={() => setBatchOffset(String(nextBatchOffset))}
+                >
+                  Use next offset
+                </Button>
+              </div>
               <div className="space-y-1.5">
                 {batchResult.results.map((result) => {
                   const outcome = result.ok

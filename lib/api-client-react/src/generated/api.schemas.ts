@@ -811,6 +811,7 @@ export interface AdminContentRefreshResult {
   error?: string;
 }
 
+export type AdminContentRefreshBatchProvider = typeof AdminContentRefreshBatchProvider[keyof typeof AdminContentRefreshBatchProvider];
 export type IntegrationHealthStatus = typeof IntegrationHealthStatus[keyof typeof IntegrationHealthStatus];
 
 
@@ -1158,9 +1159,11 @@ export type UpdateAdminContentAlias409 = AdminContentAliasConflict | {
 
 export type RefreshAdminContentBatch200 = {
   ok: boolean;
+  batchId: number;
   offset: number;
   limit: number;
   processed: number;
+  nextOffset: number;
   results: AdminContentRefreshResult[];
 };
 
@@ -1184,3 +1187,40 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
+
+export type AdminContentRefreshBatchStatusProperty = typeof AdminContentRefreshBatchStatusProperty[keyof typeof AdminContentRefreshBatchStatusProperty];
+
+export const AdminContentRefreshBatchStatusProperty = {
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export interface AdminContentRefreshBatch {
+  id: number;
+  provider: AdminContentRefreshBatchProvider;
+  status: AdminContentRefreshBatchStatusProperty;
+  limit: number;
+  offset: number;
+  processed: number;
+  mapped: number;
+  missing: number;
+  errors: number;
+  nextOffset: number;
+  results: AdminContentRefreshResult[];
+  startedAt: string;
+  /** @nullable */
+  completedAt: string | null;
+  /** @nullable */
+  error?: string | null;
+}
+
+export interface AdminContentRefreshBatchStatus {
+  lastCompleted: AdminContentRefreshBatch | null;
+  running: AdminContentRefreshBatch | null;
+}
+
+export const AdminContentRefreshBatchProvider = {
+  does_the_dog_die: 'does_the_dog_die',
+  wikidata: 'wikidata',
+} as const;

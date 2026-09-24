@@ -652,6 +652,8 @@ paths:
                 $ref: "#/components/schemas/AdminDashboard"
         "403":
           description: Forbidden
+        "500":
+          description: Safety batch refresh failed
   /admin/contributions:
     get:
       operationId: listAdminContributions
@@ -989,6 +991,19 @@ paths:
         "403":
           description: Forbidden
   /admin/content/refresh-batch:
+    get:
+      operationId: getAdminContentRefreshBatch
+      tags: [admin]
+      summary: Get the latest admin safety batch refresh status
+      responses:
+        "200":
+          description: Latest completed batch and any active batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminContentRefreshBatchStatus"
+        "403":
+          description: Forbidden
     post:
       operationId: refreshAdminContentBatch
       tags: [admin]
@@ -1006,18 +1021,22 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, offset, limit, processed, results]
+                required: [ok, batchId, offset, limit, processed, nextOffset, results]
                 properties:
                   ok: { type: boolean }
+                  batchId: { type: integer }
                   offset: { type: integer }
                   limit: { type: integer }
                   processed: { type: integer }
+                  nextOffset: { type: integer }
                   results:
                     type: array
                     items:
                       $ref: "#/components/schemas/AdminContentRefreshResult"
         "403":
           description: Forbidden
+        "500":
+          description: Safety batch refresh failed
   /admin/analytics:
     get:
       operationId: getAdminAnalytics
@@ -1583,6 +1602,43 @@ components:
         classifications: { type: integer }
         status: { type: string, enum: [provider_unavailable, missing, error] }
         error: { type: string }
+    AdminContentRefreshBatch:
+      type: object
+      required: [id, provider, status, limit, offset, processed, mapped, missing, errors, nextOffset, results, startedAt, completedAt]
+      properties:
+        id: { type: integer }
+        provider:
+          type: string
+          enum: [does_the_dog_die, wikidata]
+        status:
+          type: string
+          enum: [running, completed, failed]
+        limit: { type: integer }
+        offset: { type: integer }
+        processed: { type: integer }
+        mapped: { type: integer }
+        missing: { type: integer }
+        errors: { type: integer }
+        nextOffset: { type: integer }
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminContentRefreshResult"
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: ["string", "null"], format: date-time }
+        error: { type: ["string", "null"] }
+    AdminContentRefreshBatchStatus:
+      type: object
+      required: [lastCompleted, running]
+      properties:
+        lastCompleted:
+          oneOf:
+            - $ref: "#/components/schemas/AdminContentRefreshBatch"
+            - type: "null"
+        running:
+          oneOf:
+            - $ref: "#/components/schemas/AdminContentRefreshBatch"
+            - type: "null"
     IntegrationHealth:
       type: object
       required: [provider, status, successRatePercent, mappedTitles, missingMappings, sustainedFailureAlert]

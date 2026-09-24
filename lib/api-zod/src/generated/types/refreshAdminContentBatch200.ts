@@ -9,8 +9,10 @@ import type { AdminContentRefreshResult } from './adminContentRefreshResult';
 
 export type RefreshAdminContentBatch200 = {
   ok: boolean;
+  batchId: number;
   offset: number;
   limit: number;
   processed: number;
+  nextOffset: number;
   results: AdminContentRefreshResult[];
 };

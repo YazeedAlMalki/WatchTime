@@ -1216,6 +1216,61 @@ export const RefreshAdminContentResponse = zod.object({
 
 
 /**
+ * @summary Get the latest admin safety batch refresh status
+ */
+export const GetAdminContentRefreshBatchResponse = zod.object({
+  "lastCompleted": zod.union([zod.object({
+  "id": zod.int(),
+  "provider": zod.enum(['does_the_dog_die', 'wikidata']),
+  "status": zod.enum(['running', 'completed', 'failed']),
+  "limit": zod.int(),
+  "offset": zod.int(),
+  "processed": zod.int(),
+  "mapped": zod.int(),
+  "missing": zod.int(),
+  "errors": zod.int(),
+  "nextOffset": zod.int(),
+  "results": zod.array(zod.object({
+  "ok": zod.boolean(),
+  "titleId": zod.int(),
+  "titleName": zod.string(),
+  "externalId": zod.string().nullish(),
+  "classifications": zod.int().optional(),
+  "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
+  "error": zod.string().optional()
+})),
+  "startedAt": zod.coerce.date(),
+  "completedAt": zod.coerce.date().nullable(),
+  "error": zod.string().nullish()
+}),zod.null()]),
+  "running": zod.union([zod.object({
+  "id": zod.int(),
+  "provider": zod.enum(['does_the_dog_die', 'wikidata']),
+  "status": zod.enum(['running', 'completed', 'failed']),
+  "limit": zod.int(),
+  "offset": zod.int(),
+  "processed": zod.int(),
+  "mapped": zod.int(),
+  "missing": zod.int(),
+  "errors": zod.int(),
+  "nextOffset": zod.int(),
+  "results": zod.array(zod.object({
+  "ok": zod.boolean(),
+  "titleId": zod.int(),
+  "titleName": zod.string(),
+  "externalId": zod.string().nullish(),
+  "classifications": zod.int().optional(),
+  "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
+  "error": zod.string().optional()
+})),
+  "startedAt": zod.coerce.date(),
+  "completedAt": zod.coerce.date().nullable(),
+  "error": zod.string().nullish()
+}),zod.null()])
+})
+
+
+/**
  * @summary Refresh a bounded batch of catalog safety data
  */
 export const refreshAdminContentBatchBodyProviderDefault = `does_the_dog_die`;
@@ -1235,9 +1290,11 @@ export const RefreshAdminContentBatchBody = zod.object({
 
 export const RefreshAdminContentBatchResponse = zod.object({
   "ok": zod.boolean(),
+  "batchId": zod.int(),
   "offset": zod.int(),
   "limit": zod.int(),
   "processed": zod.int(),
+  "nextOffset": zod.int(),
   "results": zod.array(zod.object({
   "ok": zod.boolean(),
   "titleId": zod.int(),

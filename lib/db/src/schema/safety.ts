@@ -137,6 +137,16 @@ export const integrationHealthTable = pgTable("integration_health", {
   missingMappings: integer("missing_mappings").notNull().default(0),
 }, (table) => [index("integration_health_provider_idx").on(table.provider)]);
 
+export type SafetySyncRunResult = {
+  ok: boolean;
+  titleId: number;
+  titleName: string;
+  externalId?: string;
+  items?: number;
+  classifications?: number;
+  status?: "provider_unavailable" | "missing" | "error";
+  error?: string;
+};
 export const catalogSyncRunsTable = pgTable("catalog_sync_runs", {
   id: serial("id").primaryKey(),
   trigger: text("trigger").notNull(), // scheduled | manual | retry
@@ -168,4 +178,23 @@ export const catalogSyncItemsTable = pgTable("catalog_sync_items", {
 }, (table) => [
   uniqueIndex("catalog_sync_items_run_key_idx").on(table.runId, table.itemKey),
   index("catalog_sync_items_run_status_idx").on(table.runId, table.status),
+]);
+
+export const safetySyncRunsTable = pgTable("safety_sync_runs", {
+  id: serial("id").primaryKey(),
+  provider: text("provider").notNull(),
+  status: text("status").notNull().default("running"), // running | completed | failed
+  limit: integer("limit").notNull(),
+  offset: integer("offset").notNull(),
+  processed: integer("processed").notNull().default(0),
+  mapped: integer("mapped").notNull().default(0),
+  missing: integer("missing").notNull().default(0),
+  errors: integer("errors").notNull().default(0),
+  results: jsonb("results").$type<SafetySyncRunResult[]>().notNull().default([]),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("safety_sync_runs_status_created_idx").on(table.status, table.createdAt),
 ]);
