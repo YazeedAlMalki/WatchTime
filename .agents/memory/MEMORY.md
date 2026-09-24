@@ -16,3 +16,4 @@
 - [Clerk browser-test cookies](clerk-browser-test-cookies.md) — synthetic Clerk browser sign-ins may lack __session; do not treat them as proof of that hint path.
 - [Lazy-route test synchronization](lazy-route-test-synchronization.md) — cold module transforms can outlast short polling; await the import directly before asserting loaded UI.
 - [PostgreSQL pool query instrumentation](pg-pool-query-instrumentation.md) — async-only pool.connect mocks hang callback-based pool.query; wrap query instead.
+- [Vitest browser closed dialogs](vitest-browser-closed-dialogs.md) — closed native dialogs disappear from role locators; check the DOM open property for their closed state.
