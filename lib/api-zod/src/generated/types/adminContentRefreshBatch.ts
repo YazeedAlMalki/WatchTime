@@ -20,6 +20,8 @@ export interface AdminContentRefreshBatch {
   missing: number;
   errors: number;
   nextOffset: number;
+  /** @nullable */
+  catalogFingerprint: string | null;
   results: AdminContentRefreshResult[];
   startedAt: Date;
   /** @nullable */

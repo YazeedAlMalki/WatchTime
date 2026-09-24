@@ -16,4 +16,6 @@ export interface AdminContentRefreshBatchInput {
   limit?: number;
   /** @minimum 0 */
   offset?: number;
+  /** @pattern ^[a-f0-9]{64}$ */
+  catalogFingerprint?: string;
 }

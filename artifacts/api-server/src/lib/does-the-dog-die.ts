@@ -533,18 +533,21 @@ export async function refreshDoesTheDogDieTitle(
 export async function refreshDoesTheDogDieBatch(options: {
   limit: number;
   offset: number;
+  titleSelection?: { id: number; name: string }[];
   client?: ReturnType<typeof createDoesTheDogDieClient>;
   delayMs?: number;
   refreshTitle?: (titleId: number) => Promise<DoesTheDogDieRefreshResult>;
 }) {
   const limit = Math.min(Math.max(Math.trunc(options.limit), 1), 25);
   const offset = Math.max(Math.trunc(options.offset), 0);
-  const titles = await db
-    .select({ id: titlesTable.id, name: titlesTable.name })
-    .from(titlesTable)
-    .orderBy(titlesTable.id)
-    .limit(limit)
-    .offset(offset);
+  const titles = options.titleSelection
+    ? options.titleSelection.slice(0, limit)
+    : await db
+        .select({ id: titlesTable.id, name: titlesTable.name })
+        .from(titlesTable)
+        .orderBy(titlesTable.id)
+        .limit(limit)
+        .offset(offset);
   const results: DoesTheDogDieRefreshResult[] = [];
   const refreshTitle = options.refreshTitle ??
     ((titleId: number) => refreshDoesTheDogDieTitle(titleId, options.client));

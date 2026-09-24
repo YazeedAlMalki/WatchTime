@@ -283,8 +283,12 @@ describe('mobile startup contracts', () => {
   let pendingFrames: Array<(time: number) => void> = [];
 
   beforeEach(() => {
-    mockUseFonts.mockReturnValue([true, null]);
-    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
+    mockUseFonts.mockReset().mockReturnValue([true, null]);
+    mockUseAuth.mockReset().mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: true,
+    });
     jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation((task?: any) => {
       if (typeof task === 'function') {
         pendingInteractions.push(task);

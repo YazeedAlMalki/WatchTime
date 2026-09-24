@@ -186,6 +186,7 @@ export const safetySyncRunsTable = pgTable("safety_sync_runs", {
   status: text("status").notNull().default("running"), // running | completed | failed
   limit: integer("limit").notNull(),
   offset: integer("offset").notNull(),
+  catalogFingerprint: text("catalog_fingerprint"),
   processed: integer("processed").notNull().default(0),
   mapped: integer("mapped").notNull().default(0),
   missing: integer("missing").notNull().default(0),

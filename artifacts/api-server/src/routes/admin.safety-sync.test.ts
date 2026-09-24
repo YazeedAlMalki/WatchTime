@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-import { db, safetySyncRunsTable } from "@workspace/db";
-import { inArray } from "drizzle-orm";
+import { db, safetySyncRunsTable, titlesTable } from "@workspace/db";
+import { eq, inArray } from "drizzle-orm";
 
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
@@ -18,10 +18,14 @@ vi.mock("../middlewares/auth", () => ({
 import app from "../app";
 
 const runIds: number[] = [];
+const titleIds: number[] = [];
 
 afterEach(async () => {
   if (runIds.length) {
     await db.delete(safetySyncRunsTable).where(inArray(safetySyncRunsTable.id, runIds.splice(0)));
+  }
+  if (titleIds.length) {
+    await db.delete(titlesTable).where(inArray(titlesTable.id, titleIds.splice(0)));
   }
 });
 
@@ -76,6 +80,62 @@ describe("admin safety sync status", () => {
       nextOffset: 6,
       completedAt: null,
     });
+  });
+
+  it("blocks a paused continuation if a title was removed from the catalog", async () => {
+    const [firstCatalogTitle] = await db
+      .select({ id: titlesTable.id })
+      .from(titlesTable)
+      .orderBy(titlesTable.id)
+      .limit(1);
+    const firstTestId = (firstCatalogTitle?.id ?? 1) - 3;
+    const insertedTitles = await db.insert(titlesTable).values(
+      [1, 2, 3].map((index) => ({
+        id: firstTestId + index - 1,
+        type: "movie" as const,
+        name: `__safety_snapshot_resume_test_${index}__`,
+        year: null,
+        imdbId: null,
+        popularity: 0,
+      })),
+    ).returning({ id: titlesTable.id });
+    const createdIds = insertedTitles.map(({ id }) => id).sort((left, right) => left - right);
+    titleIds.push(...createdIds);
+    expect(createdIds[0]).toBe(firstTestId);
+
+    const firstBatch = await request(app)
+      .post("/api/admin/content/refresh-batch")
+      .send({
+        provider: "does_the_dog_die",
+        limit: 1,
+        offset: 0,
+      })
+      .expect(200);
+    runIds.push(firstBatch.body.batchId);
+    expect(firstBatch.body.results[0].titleId).toBe(createdIds[0]);
+    expect(firstBatch.body.catalogFingerprint).toMatch(/^[a-f0-9]{64}$/);
+
+    await db.delete(titlesTable).where(eq(titlesTable.id, createdIds[0]));
+    const continuation = await request(app)
+      .post("/api/admin/content/refresh-batch")
+      .send({
+        provider: "does_the_dog_die",
+        limit: 1,
+        offset: firstBatch.body.nextOffset,
+        catalogFingerprint: firstBatch.body.catalogFingerprint,
+      })
+      .expect(409);
+
+    expect(continuation.body).toMatchObject({
+      code: "catalog_changed",
+      error: expect.stringContaining("Restart the safety sync from offset 0"),
+    });
+    const status = await request(app)
+      .get("/api/admin/content/refresh-batch")
+      .expect(200);
+    expect(status.body.lastCompleted.id).toBe(firstBatch.body.batchId);
+    expect(status.body.lastCompleted.results.map((result: { titleId: number }) => result.titleId))
+      .toEqual([createdIds[0]]);
   });
 
   it("returns a bounded history of completed and failed batches by completion time", async () => {

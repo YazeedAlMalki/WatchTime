@@ -1020,6 +1020,13 @@ function ContentTab({
       },
     },
   );
+  const batchResult: AdminContentRefreshBatch | null =
+    batchStatus?.lastCompleted ?? null;
+  const canResumeBatch =
+    batchResult?.status === "completed" &&
+    batchResult.processed > 0 &&
+    Boolean(batchResult.catalogFingerprint) &&
+    batchResult.provider === batchProvider;
 
   const doRefresh = (
     id: number,
@@ -1067,9 +1074,32 @@ function ContentTab({
       });
       return;
     }
+    if (
+      offset > 0 &&
+      (!canResumeBatch ||
+        batchResult?.nextOffset !== offset ||
+        !batchResult.catalogFingerprint)
+    ) {
+      toast({
+        title: "Cannot safely resume this batch",
+        description:
+          "Use the saved next offset for the same provider, or restart from offset 0. The catalog must remain unchanged between batches.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     batchRefresh.mutate(
-      { data: { provider: batchProvider, limit, offset } },
+      {
+        data: {
+          provider: batchProvider,
+          limit,
+          offset,
+          ...(offset > 0 && batchResult?.catalogFingerprint
+            ? { catalogFingerprint: batchResult.catalogFingerprint }
+            : {}),
+        },
+      },
       {
         onSuccess: (result) => {
           qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
@@ -1093,8 +1123,6 @@ function ContentTab({
     );
   };
 
-  const batchResult: AdminContentRefreshBatch | null =
-    batchStatus?.lastCompleted ?? null;
   const batchSummary = batchResult
     ? {
         mapped: batchResult.results.filter((result) => result.ok).length,
@@ -1123,9 +1151,9 @@ function ContentTab({
               Initial safety sync
             </h3>
             <p className="text-sm text-muted-foreground mt-1">
-              Refresh a bounded batch of titles from a safety provider. Requests
-              are rate-limited, so run another batch with the next offset to
-              resume without starting over.
+              Refresh a bounded batch of titles from a safety provider. Continue
+              only with the saved next offset and an unchanged catalog. If a
+              title is added or removed, restart from offset 0.
             </p>
           </div>
           <div className="flex flex-wrap items-end gap-3">
@@ -1269,10 +1297,16 @@ function ContentTab({
                   size="sm"
                   variant="outline"
                   className="rounded-xl"
+                  disabled={!canResumeBatch}
                   onClick={() => setBatchOffset(String(nextBatchOffset))}
                 >
                   Use next offset
                 </Button>
+                {!batchResult.catalogFingerprint && (
+                  <span className="text-xs text-muted-foreground">
+                    This saved batch has no catalog snapshot. Restart from offset 0.
+                  </span>
+                )}
               </div>
               <div className="space-y-1.5">
                 {batchResult.results.map((result) => {

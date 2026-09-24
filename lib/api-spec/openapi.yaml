@@ -1079,7 +1079,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, batchId, offset, limit, processed, nextOffset, results]
+                required: [ok, batchId, offset, limit, processed, nextOffset, catalogFingerprint, results]
                 properties:
                   ok: { type: boolean }
                   batchId: { type: integer }
@@ -1087,12 +1087,15 @@ paths:
                   limit: { type: integer }
                   processed: { type: integer }
                   nextOffset: { type: integer }
+                  catalogFingerprint: { type: string }
                   results:
                     type: array
                     items:
                       $ref: "#/components/schemas/AdminContentRefreshResult"
         "403":
           description: Forbidden
+        "409":
+          description: Safety batch continuation is unsafe because the catalog changed or the saved offset is invalid
         "500":
           description: Safety batch refresh failed
   /admin/content/refresh-batch/history:
@@ -1275,6 +1278,9 @@ components:
           default: does_the_dog_die
         limit: { type: integer, minimum: 1, maximum: 25, default: 10 }
         offset: { type: integer, minimum: 0, default: 0 }
+        catalogFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
     RatingRegion:
       type: string
       enum: [US, GB, DE, FR, AU, BR]
@@ -1690,7 +1696,7 @@ components:
         error: { type: string }
     AdminContentRefreshBatch:
       type: object
-      required: [id, provider, status, limit, offset, processed, mapped, missing, errors, nextOffset, results, startedAt, completedAt]
+      required: [id, provider, status, limit, offset, processed, mapped, missing, errors, nextOffset, catalogFingerprint, results, startedAt, completedAt]
       properties:
         id: { type: integer }
         provider:
@@ -1706,6 +1712,7 @@ components:
         missing: { type: integer }
         errors: { type: integer }
         nextOffset: { type: integer }
+        catalogFingerprint: { type: ["string", "null"] }
         results:
           type: array
           items:

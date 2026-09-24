@@ -189,6 +189,8 @@ export interface AdminContentRefreshBatchInput {
   limit?: number;
   /** @minimum 0 */
   offset?: number;
+  /** @pattern ^[a-f0-9]{64}$ */
+  catalogFingerprint?: string;
 }
 
 export type RatingRegion = typeof RatingRegion[keyof typeof RatingRegion];
@@ -795,6 +797,8 @@ export interface AdminContentRefreshBatch {
   missing: number;
   errors: number;
   nextOffset: number;
+  /** @nullable */
+  catalogFingerprint: string | null;
   results: AdminContentRefreshResult[];
   startedAt: string;
   /** @nullable */
@@ -1206,6 +1210,7 @@ export type RefreshAdminContentBatch200 = {
   limit: number;
   processed: number;
   nextOffset: number;
+  catalogFingerprint: string;
   results: AdminContentRefreshResult[];
 };
 
@@ -1236,4 +1241,3 @@ export const GetAdminAuditLogEntityType = {
   feedback: 'feedback',
   content: 'content',
 } as const;
-

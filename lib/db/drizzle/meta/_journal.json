@@ -8,6 +8,13 @@
       "when": 1780185600000,
       "tag": "0000_protect_title_level_safety_records",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790208000000,
+      "tag": "0001_safety_sync_catalog_fingerprint",
+      "breakpoints": true
     }
   ]
 }

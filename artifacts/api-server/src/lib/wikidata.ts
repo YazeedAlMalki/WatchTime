@@ -544,19 +544,22 @@ export async function refreshWikidataTitle(
 export async function refreshWikidataBatch(options: {
   limit: number;
   offset: number;
+  titleSelection?: { id: number; name: string }[];
   client?: ReturnType<typeof createWikidataClient>;
   delayMs?: number;
 }) {
   const limit = Math.min(Math.max(Math.trunc(options.limit), 1), MAX_BATCH_SIZE);
   const offset = Math.max(Math.trunc(options.offset), 0);
-  const titles = await db.select({
-    id: titlesTable.id,
-    name: titlesTable.name,
-  })
-    .from(titlesTable)
-    .orderBy(titlesTable.id)
-    .limit(limit)
-    .offset(offset);
+  const titles = options.titleSelection
+    ? options.titleSelection.slice(0, limit)
+    : await db.select({
+        id: titlesTable.id,
+        name: titlesTable.name,
+      })
+        .from(titlesTable)
+        .orderBy(titlesTable.id)
+        .limit(limit)
+        .offset(offset);
   const results: WikidataRefreshResult[] = [];
   for (const [index, title] of titles.entries()) {
     if (index > 0 && options.delayMs !== 0) {

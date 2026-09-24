@@ -14,5 +14,6 @@ export type RefreshAdminContentBatch200 = {
   limit: number;
   processed: number;
   nextOffset: number;
+  catalogFingerprint: string;
   results: AdminContentRefreshResult[];
 };
