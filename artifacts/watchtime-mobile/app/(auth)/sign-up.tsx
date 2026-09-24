@@ -201,17 +201,17 @@ function ClerkSignUpScreen() {
                 {busy ? 'Creating account…' : 'Sign up'}
               </Text>
             </Pressable>
-
-            <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 24 }}>
-              <Text style={{ color: c.mutedForeground, fontFamily: 'Inter_400Regular' }}>
-                Already have an account?{' '}
-              </Text>
-              <Link href={returnTo ? { pathname: '/(auth)/sign-in', params: { returnTo } } : '/(auth)/sign-in'}>
-                <Text style={{ color: c.primary, fontFamily: 'Inter_600SemiBold' }}>Sign in</Text>
-              </Link>
-            </View>
           </>
         )}
+
+        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 24 }}>
+          <Text style={{ color: c.mutedForeground, fontFamily: 'Inter_400Regular' }}>
+            Already have an account?{' '}
+          </Text>
+          <Link href={returnTo ? { pathname: '/(auth)/sign-in', params: { returnTo } } : '/(auth)/sign-in'}>
+            <Text style={{ color: c.primary, fontFamily: 'Inter_600SemiBold' }}>Sign in</Text>
+          </Link>
+        </View>
 
         <View nativeID="clerk-captcha" />
       </KeyboardAwareScrollViewCompat>
