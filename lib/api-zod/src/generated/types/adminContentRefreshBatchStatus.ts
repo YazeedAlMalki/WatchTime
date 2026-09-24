@@ -10,4 +10,5 @@ import type { AdminContentRefreshBatch } from './adminContentRefreshBatch';
 export interface AdminContentRefreshBatchStatus {
   lastCompleted: AdminContentRefreshBatch | null;
   running: AdminContentRefreshBatch | null;
+  interrupted: AdminContentRefreshBatch | null;
 }

@@ -782,6 +782,7 @@ export type AdminContentRefreshBatchStatusProperty = typeof AdminContentRefreshB
 
 export const AdminContentRefreshBatchStatusProperty = {
   running: 'running',
+  interrupted: 'interrupted',
   completed: 'completed',
   failed: 'failed',
 } as const;
@@ -843,6 +844,7 @@ export interface AdminContentRefreshBatchHistoryEntry {
 export interface AdminContentRefreshBatchStatus {
   lastCompleted: AdminContentRefreshBatch | null;
   running: AdminContentRefreshBatch | null;
+  interrupted: AdminContentRefreshBatch | null;
 }
 
 export type IntegrationHealthStatus = typeof IntegrationHealthStatus[keyof typeof IntegrationHealthStatus];
@@ -1241,3 +1243,4 @@ export const GetAdminAuditLogEntityType = {
   feedback: 'feedback',
   content: 'content',
 } as const;
+

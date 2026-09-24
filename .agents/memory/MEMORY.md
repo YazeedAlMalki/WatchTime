@@ -19,5 +19,5 @@
 - [PostgreSQL pool query instrumentation](pg-pool-query-instrumentation.md) — async-only pool.connect mocks hang callback-based pool.query; wrap query instead.
 - [Vitest browser closed dialogs](vitest-browser-closed-dialogs.md) — closed native dialogs disappear from role locators; check the DOM open property for their closed state.
 - [Admin sync status](admin-sync-status.md) — keep last completed and currently running resumable syncs separate in durable server state.
-- [Concurrent admin merges](concurrent-admin-merges.md) — parallel merges can leave route and generated contract files internally inconsistent; check the parent commit before attributing failures.
+- [Concurrent admin merges](concurrent-admin-merges.md) — compare behavior on both conflict sides; syntactically valid code can be semantically broken or omit independent features.
 - [Orval referenced query defaults](orval-referenced-query-defaults.md) — wrap a referenced query enum in allOf when it needs a local default; a direct ref drops the generated default.

@@ -3,8 +3,8 @@ name: Concurrent admin merges
 description: How to distinguish task regressions from preexisting integration damage after parallel admin feature merges.
 ---
 
-When unrelated admin changes land close together, verify the parent commit's route and generated-contract integrity before attributing a failing check to the current task. A clean task diff can sit on top of an already incomplete merged admin route or generated client.
+During conflict resolution, inspect each side's behavior, not just whether the combined file parses. A coherent version may need independent features ported from the other side, while the other side may contain semantically broken route or test code.
 
-**Why:** Parallel admin changes were merged with interleaved route bodies, a truncated test, and stale generated API output. The focused web check passed while the routine API contract check failed for unrelated baseline changes.
+**Why:** An overlapping admin merge contained route and test code with undefined values and broken control flow; choosing the coherent side alone also dropped an independent alias-correction edit.
 
-**How to apply:** Compare failing files with the task's parent commit and inspect affected route behavior, then regenerate API output from the current contract and run the relevant typecheck and route tests before declaring the integration sound.
+**How to apply:** Compare both conflict stages and their tests, retain the coherent implementation, port independent behavior from the other side, and run focused route, UI, type, and contract checks before continuing the merge.

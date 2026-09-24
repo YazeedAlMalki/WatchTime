@@ -1055,7 +1055,7 @@ paths:
       summary: Get the latest admin safety batch refresh status
       responses:
         "200":
-          description: Latest completed batch and any active batch
+          description: Latest completed batch, active batch, and most recent interrupted batch
           content:
             application/json:
               schema:
@@ -1704,7 +1704,7 @@ components:
           enum: [does_the_dog_die, wikidata]
         status:
           type: string
-          enum: [running, completed, failed]
+          enum: [running, interrupted, completed, failed]
         limit: { type: integer }
         offset: { type: integer }
         processed: { type: integer }
@@ -1742,13 +1742,17 @@ components:
         error: { type: ["string", "null"] }
     AdminContentRefreshBatchStatus:
       type: object
-      required: [lastCompleted, running]
+      required: [lastCompleted, running, interrupted]
       properties:
         lastCompleted:
           oneOf:
             - $ref: "#/components/schemas/AdminContentRefreshBatch"
             - type: "null"
         running:
+          oneOf:
+            - $ref: "#/components/schemas/AdminContentRefreshBatch"
+            - type: "null"
+        interrupted:
           oneOf:
             - $ref: "#/components/schemas/AdminContentRefreshBatch"
             - type: "null"

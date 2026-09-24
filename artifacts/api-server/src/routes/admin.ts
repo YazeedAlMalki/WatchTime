@@ -17,6 +17,7 @@ import {
   catalogSyncItemsTable,
   titleAliasesTable,
   safetySyncRunsTable,
+  type SafetySyncRunResult,
 } from "@workspace/db";
 import { and, eq, sql, desc, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
 import {
@@ -43,6 +44,7 @@ import { RATING_REGIONS_BY_CODE } from "@workspace/rating-regions";
 import { retryFailedCatalogTitles, startCatalogRefresh } from "../lib/catalog-refresh";
 
 const router: IRouter = Router();
+const activeSafetySyncRunIds = new Set<number>();
 
 router.use(requireAdmin);
 
@@ -103,94 +105,123 @@ router.get("/dashboard", async (_req, res) => {
 router.get("/contributions", async (req, res) => {
   const status = req.query.status as string | undefined;
   const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
+    .select({ c: contributionsTable, titleName: titlesTable.name })
+    .from(contributionsTable)
+    .innerJoin(titlesTable, eq(titlesTable.id, contributionsTable.titleId))
+    .where(status ? eq(contributionsTable.status, status as never) : undefined)
+    .orderBy(desc(contributionsTable.createdAt));
   return res.json(
-    rows.map(({ f, email }) => ({
-      id: f.id,
-      category: f.category,
-      message: f.message,
-      page: f.page,
-      titleId: f.titleId,
-      userEmail: email,
-      status: f.status,
-      createdAt: f.createdAt.toISOString(),
+    rows.map(({ c, titleName }) => ({
+      id: c.id,
+      titleId: c.titleId,
+      titleName,
+      category: c.category,
+      severity: c.severity,
+      seasonNumber: c.seasonNumber,
+      episodeNumber: c.episodeNumber,
+      description: c.description,
+      status: c.status,
+      createdAt: c.createdAt.toISOString(),
     })),
   );
 });
 
-router.patch("/feedback/:feedbackId", async (req, res) => {
-  const id = parseInt(String(req.params.id), 10);
-  const parsed = DeleteAdminContentAliasBody.safeParse(req.body);
+router.patch("/contributions/:contributionId", async (req, res) => {
+  const id = parseInt(String(req.params.contributionId), 10);
+  const parsed = UpdateAdminContributionBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+  // Transition-aware, transactional moderation: merging into the public
+  // community record happens only on the pending->approved transition, and
+  // revoking an approval removes exactly the items that contribution added.
   const updated = await db.transaction(async (tx) => {
-    const [current] = await tx.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.id, id)).for("update");
-    if (!current) return null;
-    if (current.updatedAt.getTime() !== expectedUpdatedAtDate.getTime()) {
-      const [title] = await tx.select({
-        name: titlesTable.name,
-        type: titlesTable.type,
-        year: titlesTable.year,
-      }).from(titlesTable).where(eq(titlesTable.id, current.titleId));
-      if (!title) throw new Error("Alias references a missing catalog title");
-      const [collision] = await tx.select({
-        titleCount: sql<number>`count(distinct ${titleAliasesTable.titleId})::int`,
-      }).from(titleAliasesTable).where(
-        eq(titleAliasesTable.normalizedAlias, current.normalizedAlias),
-      );
-      return {
-        code: "stale_alias",
-        error: "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
-        current: {
-          id: current.id,
-          titleId: current.titleId,
-          titleName: title.name,
-          titleType: title.type,
-          titleYear: title.year,
-          alias: current.alias,
-          language: current.language,
-          sourceName: current.sourceName,
-          sourceUrl: current.sourceUrl,
-          isEditorial: Boolean(current.isEditorial),
-          collision: (collision?.titleCount ?? 1) > 1,
-          collisionTitleCount: collision?.titleCount ?? 1,
-          updatedAt: current.updatedAt.toISOString(),
-        },
-      } as const;
-    }
-    const [title] = await tx.select({ name: titlesTable.name }).from(titlesTable)
-      .where(eq(titlesTable.id, current.titleId));
-    const normalizedAlias = normalizeAlias(alias);
-    if (!normalizedAlias || normalizedAlias === normalizeAlias(title.name)) {
-      return { error: "Alias must differ from the canonical title" } as const;
-    }
-    const [duplicate] = await tx.select({ id: titleAliasesTable.id }).from(titleAliasesTable).where(and(
-      eq(titleAliasesTable.titleId, current.titleId),
-      eq(titleAliasesTable.normalizedAlias, normalizedAlias),
-    )).limit(1);
-    if (duplicate && duplicate.id !== id) return { error: "This title already has that alias" } as const;
-    const [row] = await tx.update(titleAliasesTable).set({
-      alias,
-      normalizedAlias,
-      language,
-      sourceUrl,
-      isEditorial: true,
-      sourceName: "Admin editorial",
-      updatedAt: new Date(),
-    }).where(eq(titleAliasesTable.id, id)).returning();
-    await refreshTitleAliasSearchList(tx, current.titleId);
+    const [prev] = await tx
+      .select()
+      .from(contributionsTable)
+      .where(eq(contributionsTable.id, id))
+      .for("update");
+    if (!prev) return null;
+    const [row] = await tx
+      .update(contributionsTable)
+      .set({ status: parsed.data.status })
+      .where(eq(contributionsTable.id, id))
+      .returning();
+
+    // Audit every successful PATCH (including no-ops) inside the transaction
+    // so the audit entry and any safety-record changes are always atomic.
     await tx.insert(adminAuditLogTable).values({
       adminId: req.userId!,
-      action: "update_title_alias",
-      entityType: "title_alias",
-      entityId: id,
-      details: { titleId: current.titleId, previousAlias: current.alias, alias },
+      action: `${parsed.data.status}_contribution`,
+      entityType: "contribution",
+      entityId: row.id,
+      details: { titleId: row.titleId, category: row.category },
     });
-    return { row } as const;
+
+    if (prev.status === parsed.data.status) return row;
+
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:catalog-sync'))`);
+    const recordScope = and(
+      eq(safetyRecordsTable.titleId, row.titleId),
+      eq(safetyRecordsTable.sourceName, "WatchTime Community"),
+      row.seasonNumber != null
+        ? eq(safetyRecordsTable.seasonNumber, row.seasonNumber)
+        : sql`${safetyRecordsTable.seasonNumber} IS NULL`,
+      row.episodeNumber != null
+        ? eq(safetyRecordsTable.episodeNumber, row.episodeNumber)
+        : sql`${safetyRecordsTable.episodeNumber} IS NULL`,
+    );
+    const [existing] = await tx
+      .select()
+      .from(safetyRecordsTable)
+      .where(recordScope)
+      .for("update");
+
+    if (parsed.data.status === "approved") {
+      const item = {
+        category: row.category,
+        label: row.category,
+        score: null,
+        maxScore: null,
+        description: row.description,
+        severity: row.severity as "none" | "mild" | "moderate" | "severe",
+        contributionId: row.id,
+      };
+      if (existing) {
+        const withoutSelf = existing.items.filter(
+          (i) => (i as { contributionId?: number }).contributionId !== row.id,
+        );
+        await tx
+          .update(safetyRecordsTable)
+          .set({ items: [...withoutSelf, item], updatedAt: new Date() })
+          .where(eq(safetyRecordsTable.id, existing.id));
+      } else {
+        await tx.insert(safetyRecordsTable).values({
+          titleId: row.titleId,
+          seasonNumber: row.seasonNumber,
+          episodeNumber: row.episodeNumber,
+          sourceName: "WatchTime Community",
+          tier: 3,
+          isCommunity: true,
+          status: "available",
+          items: [item],
+        });
+      }
+    } else if (prev.status === "approved" && existing) {
+      // Approval revoked: strip this contribution's items from the record.
+      const remaining = existing.items.filter(
+        (i) => (i as { contributionId?: number }).contributionId !== row.id,
+      );
+      if (remaining.length === 0) {
+        await tx
+          .delete(safetyRecordsTable)
+          .where(eq(safetyRecordsTable.id, existing.id));
+      } else {
+        await tx
+          .update(safetyRecordsTable)
+          .set({ items: remaining, updatedAt: new Date() })
+          .where(eq(safetyRecordsTable.id, existing.id));
+      }
+    }
+    return row;
   });
   if (!updated) return res.status(404).json({ error: "Not found" });
 
@@ -215,94 +246,46 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
 router.get("/reports", async (req, res) => {
   const status = req.query.status as string | undefined;
   const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
+    .select({ r: reportsTable, titleName: titlesTable.name })
+    .from(reportsTable)
+    .innerJoin(titlesTable, eq(titlesTable.id, reportsTable.titleId))
+    .where(status ? eq(reportsTable.status, status) : undefined)
+    .orderBy(desc(reportsTable.createdAt));
   return res.json(
-    rows.map(({ f, email }) => ({
-      id: f.id,
-      category: f.category,
-      message: f.message,
-      page: f.page,
-      titleId: f.titleId,
-      userEmail: email,
-      status: f.status,
-      createdAt: f.createdAt.toISOString(),
+    rows.map(({ r, titleName }) => ({
+      id: r.id,
+      titleId: r.titleId,
+      titleName,
+      reason: r.reason,
+      sourceName: r.sourceName,
+      details: r.details,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
     })),
   );
 });
 
-router.patch("/feedback/:feedbackId", async (req, res) => {
-  const id = parseInt(String(req.params.id), 10);
-  const parsed = DeleteAdminContentAliasBody.safeParse(req.body);
+router.patch("/reports/:reportId", async (req, res) => {
+  const id = parseInt(String(req.params.reportId), 10);
+  const parsed = UpdateAdminReportBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
   const updated = await db.transaction(async (tx) => {
-    const [current] = await tx.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.id, id)).for("update");
-    if (!current) return null;
-    if (current.updatedAt.getTime() !== expectedUpdatedAtDate.getTime()) {
-      const [title] = await tx.select({
-        name: titlesTable.name,
-        type: titlesTable.type,
-        year: titlesTable.year,
-      }).from(titlesTable).where(eq(titlesTable.id, current.titleId));
-      if (!title) throw new Error("Alias references a missing catalog title");
-      const [collision] = await tx.select({
-        titleCount: sql<number>`count(distinct ${titleAliasesTable.titleId})::int`,
-      }).from(titleAliasesTable).where(
-        eq(titleAliasesTable.normalizedAlias, current.normalizedAlias),
-      );
-      return {
-        code: "stale_alias",
-        error: "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
-        current: {
-          id: current.id,
-          titleId: current.titleId,
-          titleName: title.name,
-          titleType: title.type,
-          titleYear: title.year,
-          alias: current.alias,
-          language: current.language,
-          sourceName: current.sourceName,
-          sourceUrl: current.sourceUrl,
-          isEditorial: Boolean(current.isEditorial),
-          collision: (collision?.titleCount ?? 1) > 1,
-          collisionTitleCount: collision?.titleCount ?? 1,
-          updatedAt: current.updatedAt.toISOString(),
-        },
-      } as const;
-    }
-    const [title] = await tx.select({ name: titlesTable.name }).from(titlesTable)
-      .where(eq(titlesTable.id, current.titleId));
-    const normalizedAlias = normalizeAlias(alias);
-    if (!normalizedAlias || normalizedAlias === normalizeAlias(title.name)) {
-      return { error: "Alias must differ from the canonical title" } as const;
-    }
-    const [duplicate] = await tx.select({ id: titleAliasesTable.id }).from(titleAliasesTable).where(and(
-      eq(titleAliasesTable.titleId, current.titleId),
-      eq(titleAliasesTable.normalizedAlias, normalizedAlias),
-    )).limit(1);
-    if (duplicate && duplicate.id !== id) return { error: "This title already has that alias" } as const;
-    const [row] = await tx.update(titleAliasesTable).set({
-      alias,
-      normalizedAlias,
-      language,
-      sourceUrl,
-      isEditorial: true,
-      sourceName: "Admin editorial",
-      updatedAt: new Date(),
-    }).where(eq(titleAliasesTable.id, id)).returning();
-    await refreshTitleAliasSearchList(tx, current.titleId);
+    const [row] = await tx
+      .update(reportsTable)
+      .set({ status: parsed.data.status })
+      .where(eq(reportsTable.id, id))
+      .returning();
+    if (!row) return null;
+    // Audit log is inside the transaction — the status change and its audit
+    // entry are written atomically; a failure rolls back both.
     await tx.insert(adminAuditLogTable).values({
       adminId: req.userId!,
-      action: "update_title_alias",
-      entityType: "title_alias",
-      entityId: id,
-      details: { titleId: current.titleId, previousAlias: current.alias, alias },
+      action: `${parsed.data.status}_report`,
+      entityType: "report",
+      entityId: row.id,
+      details: { titleId: row.titleId, reason: row.reason },
     });
-    return { row } as const;
+    return row;
   });
   if (!updated) return res.status(404).json({ error: "Not found" });
 
@@ -328,11 +311,11 @@ router.get("/feedback", async (req, res) => {
   if (status) conds.push(eq(feedbackTable.status, status));
   if (category) conds.push(eq(feedbackTable.category, category));
   const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
+    .select({ f: feedbackTable, email: usersTable.email })
+    .from(feedbackTable)
+    .leftJoin(usersTable, eq(usersTable.id, feedbackTable.userId))
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(feedbackTable.createdAt));
   return res.json(
     rows.map(({ f, email }) => ({
       id: f.id,
@@ -348,74 +331,26 @@ router.get("/feedback", async (req, res) => {
 });
 
 router.patch("/feedback/:feedbackId", async (req, res) => {
-  const id = parseInt(String(req.params.id), 10);
-  const parsed = DeleteAdminContentAliasBody.safeParse(req.body);
+  const id = parseInt(String(req.params.feedbackId), 10);
+  const parsed = UpdateAdminFeedbackBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
   const updated = await db.transaction(async (tx) => {
-    const [current] = await tx.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.id, id)).for("update");
-    if (!current) return null;
-    if (current.updatedAt.getTime() !== expectedUpdatedAtDate.getTime()) {
-      const [title] = await tx.select({
-        name: titlesTable.name,
-        type: titlesTable.type,
-        year: titlesTable.year,
-      }).from(titlesTable).where(eq(titlesTable.id, current.titleId));
-      if (!title) throw new Error("Alias references a missing catalog title");
-      const [collision] = await tx.select({
-        titleCount: sql<number>`count(distinct ${titleAliasesTable.titleId})::int`,
-      }).from(titleAliasesTable).where(
-        eq(titleAliasesTable.normalizedAlias, current.normalizedAlias),
-      );
-      return {
-        code: "stale_alias",
-        error: "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
-        current: {
-          id: current.id,
-          titleId: current.titleId,
-          titleName: title.name,
-          titleType: title.type,
-          titleYear: title.year,
-          alias: current.alias,
-          language: current.language,
-          sourceName: current.sourceName,
-          sourceUrl: current.sourceUrl,
-          isEditorial: Boolean(current.isEditorial),
-          collision: (collision?.titleCount ?? 1) > 1,
-          collisionTitleCount: collision?.titleCount ?? 1,
-          updatedAt: current.updatedAt.toISOString(),
-        },
-      } as const;
-    }
-    const [title] = await tx.select({ name: titlesTable.name }).from(titlesTable)
-      .where(eq(titlesTable.id, current.titleId));
-    const normalizedAlias = normalizeAlias(alias);
-    if (!normalizedAlias || normalizedAlias === normalizeAlias(title.name)) {
-      return { error: "Alias must differ from the canonical title" } as const;
-    }
-    const [duplicate] = await tx.select({ id: titleAliasesTable.id }).from(titleAliasesTable).where(and(
-      eq(titleAliasesTable.titleId, current.titleId),
-      eq(titleAliasesTable.normalizedAlias, normalizedAlias),
-    )).limit(1);
-    if (duplicate && duplicate.id !== id) return { error: "This title already has that alias" } as const;
-    const [row] = await tx.update(titleAliasesTable).set({
-      alias,
-      normalizedAlias,
-      language,
-      sourceUrl,
-      isEditorial: true,
-      sourceName: "Admin editorial",
-      updatedAt: new Date(),
-    }).where(eq(titleAliasesTable.id, id)).returning();
-    await refreshTitleAliasSearchList(tx, current.titleId);
+    const [row] = await tx
+      .update(feedbackTable)
+      .set({ status: parsed.data.status })
+      .where(eq(feedbackTable.id, id))
+      .returning();
+    if (!row) return null;
+    // Audit log is inside the transaction — the status change and its audit
+    // entry are written atomically; a failure rolls back both.
     await tx.insert(adminAuditLogTable).values({
       adminId: req.userId!,
-      action: "update_title_alias",
-      entityType: "title_alias",
-      entityId: id,
-      details: { titleId: current.titleId, previousAlias: current.alias, alias },
+      action: `feedback_${parsed.data.status}`,
+      entityType: "feedback",
+      entityId: row.id,
+      details: { category: row.category },
     });
-    return { row } as const;
+    return row;
   });
   if (!updated) return res.status(404).json({ error: "Not found" });
 
@@ -432,12 +367,7 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
 });
 
 router.get("/integrations", async (_req, res) => {
-  const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
+  const rows = await db.select().from(integrationHealthTable);
   const sustainedFailureThreshold = Date.now() - 3 * 24 * 60 * 60 * 1000;
   return res.json(
     rows.map((r) => ({
@@ -458,27 +388,8 @@ router.get("/integrations", async (_req, res) => {
 });
 
 router.get("/catalog-refreshes", async (_req, res) => {
-  const runs = await db
-    .select({
-      id: safetySyncRunsTable.id,
-      provider: safetySyncRunsTable.provider,
-      status: safetySyncRunsTable.status,
-      limit: safetySyncRunsTable.limit,
-      offset: safetySyncRunsTable.offset,
-      processed: safetySyncRunsTable.processed,
-      mapped: safetySyncRunsTable.mapped,
-      missing: safetySyncRunsTable.missing,
-      errors: safetySyncRunsTable.errors,
-      completedAt: safetySyncRunsTable.completedAt,
-      error: safetySyncRunsTable.error,
-    })
-    .from(safetySyncRunsTable)
-    .where(inArray(safetySyncRunsTable.status, ["completed", "failed"]))
-    .orderBy(
-      desc(sql`coalesce(${safetySyncRunsTable.completedAt}, ${safetySyncRunsTable.createdAt})`),
-      desc(safetySyncRunsTable.id),
-    )
-    .limit(rawLimit);
+  const runs = await db.select().from(catalogSyncRunsTable)
+    .orderBy(desc(catalogSyncRunsTable.createdAt)).limit(20);
   const runIds = runs.map((run) => run.id);
   const items = runIds.length
     ? await db.select().from(catalogSyncItemsTable)
@@ -498,7 +409,7 @@ router.get("/catalog-refreshes", async (_req, res) => {
 });
 
 router.post("/catalog-refreshes", async (req, res) => {
-  const runId = await retryFailedCatalogTitles(id);
+  const runId = await startCatalogRefresh("manual");
   await db.insert(adminAuditLogTable).values({
     adminId: req.userId!,
     action: "start_catalog_refresh",
@@ -509,7 +420,7 @@ router.post("/catalog-refreshes", async (req, res) => {
 });
 
 router.post("/catalog-refreshes/:id/retry", async (req, res) => {
-  const id = parseInt(String(req.params.id), 10);
+  const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid run id" });
   const runId = await retryFailedCatalogTitles(id);
   if (!runId) return res.status(409).json({ error: "This run has no failed titles to retry" });
@@ -524,7 +435,7 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
 });
 
 router.get("/content", async (req, res) => {
-  const q = String(req.query.q ?? "").trim();
+  const q = req.query.q as string | undefined;
   const regionParam = req.query.region;
   if (
     regionParam !== undefined &&
@@ -603,12 +514,19 @@ router.get("/content-aliases", async (req, res) => {
       : ownership === "editorial"
         ? eq(titleAliasesTable.isEditorial, true)
         : undefined;
-  const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
+  const rows = await db.select({
+    alias: titleAliasesTable,
+    titleName: titlesTable.name,
+    titleType: titlesTable.type,
+    titleYear: titlesTable.year,
+  }).from(titleAliasesTable)
+    .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+    .where(and(
+      q ? ilike(titleAliasesTable.alias, `%${q}%`) : undefined,
+      ownershipFilter,
+    ))
+    .orderBy(titleAliasesTable.normalizedAlias, titlesTable.name)
+    .limit(200);
   const normalized = [...new Set(rows.map((row) => row.alias.normalizedAlias))];
   const collisions = normalized.length
     ? await db.select({
@@ -637,7 +555,7 @@ router.get("/content-aliases", async (req, res) => {
 });
 
 router.patch("/content-aliases/:id", async (req, res) => {
-  const id = parseInt(String(req.params.id), 10);
+  const id = Number(req.params.id);
   const alias = typeof req.body?.alias === "string" ? req.body.alias.trim() : "";
   const language = typeof req.body?.language === "string" ? req.body.language.trim() || null : null;
   const sourceUrl = typeof req.body?.sourceUrl === "string" ? req.body.sourceUrl.trim() || null : null;
@@ -768,20 +686,15 @@ router.post("/content/:id/refresh", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id)) return res.status(400).json({ ok: false, error: "Invalid title id" });
   const provider = String(req.body?.provider ?? req.query.provider ?? "does_the_dog_die");
-
-  const suppliedFingerprint =
-    typeof req.body?.catalogFingerprint === "string"
-      ? req.body.catalogFingerprint
-      : null;
   if (provider !== "does_the_dog_die" && provider !== "wikidata") {
     return res.status(400).json({
       ok: false,
       error: "provider must be does_the_dog_die or wikidata",
     });
   }
-    const result = provider === "wikidata"
-      ? await refreshWikidataBatch({ limit, offset, titleSelection })
-      : await refreshDoesTheDogDieBatch({ limit, offset, titleSelection });
+  const result = provider === "wikidata"
+    ? await refreshWikidataTitle(id)
+    : await refreshDoesTheDogDieTitle(id);
   return res.json(result);
 });
 
@@ -806,7 +719,36 @@ function serializeSafetySyncRun(run: typeof safetySyncRunsTable.$inferSelect) {
 }
 
 router.get("/content/refresh-batch", async (_req, res) => {
-  const [lastCompleted, running] = await Promise.all([
+  const persistedRunning = await db
+    .select()
+    .from(safetySyncRunsTable)
+    .where(eq(safetySyncRunsTable.status, "running"))
+    .orderBy(desc(safetySyncRunsTable.createdAt));
+  const abandonedRuns = persistedRunning.filter(
+    (run) => !activeSafetySyncRunIds.has(run.id),
+  );
+
+  if (abandonedRuns.length > 0) {
+    await Promise.all(
+      abandonedRuns.map((run) =>
+        db
+          .update(safetySyncRunsTable)
+          .set({
+            status: "interrupted",
+            completedAt: null,
+            error: "Run interrupted before the batch finished.",
+          })
+          .where(
+            and(
+              eq(safetySyncRunsTable.id, run.id),
+              eq(safetySyncRunsTable.status, "running"),
+            ),
+          ),
+      ),
+    );
+  }
+
+  const [lastCompleted, running, interrupted] = await Promise.all([
     db
       .select()
       .from(safetySyncRunsTable)
@@ -818,30 +760,65 @@ router.get("/content/refresh-batch", async (_req, res) => {
       .from(safetySyncRunsTable)
       .where(eq(safetySyncRunsTable.status, "running"))
       .orderBy(desc(safetySyncRunsTable.createdAt))
+      .then((runs) => runs.find((run) => activeSafetySyncRunIds.has(run.id))),
+    db
+      .select()
+      .from(safetySyncRunsTable)
+      .where(eq(safetySyncRunsTable.status, "interrupted"))
+      .orderBy(desc(safetySyncRunsTable.createdAt))
       .limit(1),
   ]);
 
   return res.json({
     lastCompleted: lastCompleted[0] ? serializeSafetySyncRun(lastCompleted[0]) : null,
-    running: running[0] ? serializeSafetySyncRun(running[0]) : null,
+    running: running ? serializeSafetySyncRun(running) : null,
+    interrupted: interrupted[0] ? serializeSafetySyncRun(interrupted[0]) : null,
   });
 });
 
 router.post("/content/refresh-batch", async (req, res) => {
-  const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
-  const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
+  const limit = Number.isFinite(Number(req.body?.limit)) ? Number(req.body.limit) : 10;
+  const offset = Number.isFinite(Number(req.body?.offset)) ? Number(req.body.offset) : 0;
   const provider = String(req.body?.provider ?? req.query.provider ?? "does_the_dog_die");
-
   const suppliedFingerprint =
     typeof req.body?.catalogFingerprint === "string"
       ? req.body.catalogFingerprint
       : null;
+  if (provider !== "does_the_dog_die" && provider !== "wikidata") {
+    return res.status(400).json({
+      ok: false,
+      error: "provider must be does_the_dog_die or wikidata",
+    });
+  }
+  if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
+    return res.status(400).json({ ok: false, error: "limit must be an integer from 1 to 25" });
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    return res.status(400).json({ ok: false, error: "offset must be a non-negative integer" });
+  }
+
+  const catalog = await db
+    .select({ id: titlesTable.id, name: titlesTable.name })
+    .from(titlesTable)
+    .orderBy(titlesTable.id);
+  const catalogFingerprint = createHash("sha256")
+    .update(JSON.stringify(catalog.map(({ id }) => id)))
+    .digest("hex");
+  if (offset > 0 && suppliedFingerprint !== catalogFingerprint) {
+    return res.status(409).json({
+      code: "catalog_changed",
+      error: "The catalog changed since this safety sync started. Restart the safety sync from offset 0.",
+    });
+  }
+  const titleSelection = catalog.slice(offset, offset + limit);
+
   const [run] = await db
     .insert(safetySyncRunsTable)
     .values({ provider, limit, offset, catalogFingerprint })
     .returning();
+  activeSafetySyncRunIds.add(run.id);
 
-  const titleSelection = catalog.slice(offset, offset + limit);
+  try {
     const result = provider === "wikidata"
       ? await refreshWikidataBatch({ limit, offset, titleSelection })
       : await refreshDoesTheDogDieBatch({ limit, offset, titleSelection });
@@ -850,8 +827,7 @@ router.post("/content/refresh-batch", async (req, res) => {
       (item) => !item.ok && item.status === "missing",
     ).length;
     const errors = result.results.length - mapped - missing;
-
-    const [completed] = await db
+    await db
       .update(safetySyncRunsTable)
       .set({
         status: "completed",
@@ -859,22 +835,19 @@ router.post("/content/refresh-batch", async (req, res) => {
         mapped,
         missing,
         errors,
-        results: result.results,
+        results: result.results as SafetySyncRunResult[],
         completedAt: new Date(),
       })
-      .where(eq(safetySyncRunsTable.id, run.id))
-      .returning();
+      .where(eq(safetySyncRunsTable.id, run.id));
+    return res.json({
+      ok: true,
+      batchId: run.id,
+      ...result,
+      nextOffset: result.offset + result.processed,
+      catalogFingerprint,
+    });
+  } catch (caught) {
     const error = caught instanceof Error ? caught.message : "Safety batch refresh failed";
-
-    const [failed] = await db
-      .update(safetySyncRunsTable)
-      .set({
-        status: "failed",
-        error,
-        completedAt: new Date(),
-      })
-      .where(eq(safetySyncRunsTable.id, run.id))
-      .returning();
     await db
       .update(safetySyncRunsTable)
       .set({
@@ -884,6 +857,8 @@ router.post("/content/refresh-batch", async (req, res) => {
       })
       .where(eq(safetySyncRunsTable.id, run.id));
     return res.status(500).json({ ok: false, error });
+  } finally {
+    activeSafetySyncRunIds.delete(run.id);
   }
 });
 
@@ -1055,12 +1030,11 @@ router.get("/audit-log", async (req, res) => {
     .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
     .where(where);
 
-  const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
+  const rows = await baseJoin()
     .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
+    .orderBy(desc(adminAuditLogTable.createdAt))
+    .limit(limit)
+    .offset(offset);
 
   return res.json({
     total,
@@ -1116,22 +1090,3 @@ router.get("/audit-log/export", async (req, res) => {
 });
 
 export default router;
-
-  const catalogFingerprint = createHash("sha256")
-    .update(JSON.stringify(catalog.map(({ id }) => id)))
-    .digest("hex");
-
-  const catalog = await db
-    .select({ id: titlesTable.id, name: titlesTable.name })
-    .from(titlesTable)
-    .orderBy(titlesTable.id);
-
-    const [previous] = await db
-      .select()
-      .from(safetySyncRunsTable)
-      .where(and(
-        eq(safetySyncRunsTable.provider, provider),
-        inArray(safetySyncRunsTable.status, ["completed", "failed"]),
-      ))
-      .orderBy(desc(safetySyncRunsTable.createdAt))
-      .limit(1);

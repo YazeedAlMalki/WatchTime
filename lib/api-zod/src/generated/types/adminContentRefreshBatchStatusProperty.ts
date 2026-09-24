@@ -11,6 +11,7 @@ export type AdminContentRefreshBatchStatusProperty = typeof AdminContentRefreshB
 
 export const AdminContentRefreshBatchStatusProperty = {
   running: 'running',
+  interrupted: 'interrupted',
   completed: 'completed',
   failed: 'failed',
 } as const;

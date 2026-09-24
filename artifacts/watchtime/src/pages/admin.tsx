@@ -1055,9 +1055,15 @@ function ContentTab({
       },
     );
 
-  const runBatchRefresh = () => {
-    const limit = Number(batchLimit);
-    const offset = Number(batchOffset);
+  const runBatchRefresh = (resumeRun?: AdminContentRefreshBatch) => {
+    const provider = resumeRun?.provider ?? batchProvider;
+    const limit = resumeRun?.limit ?? Number(batchLimit);
+    const offset = resumeRun?.nextOffset ?? Number(batchOffset);
+    const catalogFingerprint = resumeRun
+      ? resumeRun.catalogFingerprint
+      : offset > 0 && canResumeBatch
+        ? batchResult?.catalogFingerprint
+        : null;
     if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
       toast({
         title: "Invalid batch size",
@@ -1076,9 +1082,12 @@ function ContentTab({
     }
     if (
       offset > 0 &&
-      (!canResumeBatch ||
-        batchResult?.nextOffset !== offset ||
-        !batchResult.catalogFingerprint)
+      (resumeRun
+        ? !catalogFingerprint
+        : !canResumeBatch ||
+          batchResult?.nextOffset !== offset ||
+          batchResult?.provider !== provider ||
+          !catalogFingerprint)
     ) {
       toast({
         title: "Cannot safely resume this batch",
@@ -1092,12 +1101,10 @@ function ContentTab({
     batchRefresh.mutate(
       {
         data: {
-          provider: batchProvider,
+          provider,
           limit,
           offset,
-          ...(offset > 0 && batchResult?.catalogFingerprint
-            ? { catalogFingerprint: batchResult.catalogFingerprint }
-            : {}),
+          ...(offset > 0 && catalogFingerprint ? { catalogFingerprint } : {}),
         },
       },
       {
@@ -1112,12 +1119,17 @@ function ContentTab({
             description: `Processed ${result.processed} title${result.processed === 1 ? "" : "s"} starting at offset ${result.offset}.`,
           });
         },
-        onError: () => {
+        onError: (error) => {
           qc.invalidateQueries({ queryKey: getGetAdminContentRefreshBatchQueryKey() });
           qc.invalidateQueries({
             queryKey: getListAdminContentRefreshBatchHistoryQueryKey({ limit: 20 }),
           });
-          toast({ title: "Batch refresh failed", variant: "destructive" });
+          const responseError = (error as any)?.response?.data?.error;
+          toast({
+            title: "Batch refresh failed",
+            ...(typeof responseError === "string" ? { description: responseError } : {}),
+            variant: "destructive",
+          });
         },
       },
     );
@@ -1136,6 +1148,25 @@ function ContentTab({
     : null;
   const nextBatchOffset = batchResult?.nextOffset ?? null;
   const activeBatch = batchStatus?.running;
+  const interruptedBatch = batchStatus?.interrupted;
+  const latestKnownBatch = [batchResult, activeBatch]
+    .filter((run): run is AdminContentRefreshBatch => Boolean(run))
+    .sort(
+      (a, b) =>
+        new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
+    )[0];
+  const visibleInterruptedBatch =
+    interruptedBatch &&
+    latestKnownBatch &&
+    new Date(latestKnownBatch.startedAt).getTime() >
+      new Date(interruptedBatch.startedAt).getTime()
+      ? null
+      : interruptedBatch;
+  const canRetryInterruptedBatch = Boolean(
+    visibleInterruptedBatch &&
+      (visibleInterruptedBatch.nextOffset === 0 ||
+        visibleInterruptedBatch.catalogFingerprint),
+  );
   const isBatchRunning = batchRefresh.isPending || Boolean(activeBatch);
   const isRefreshing = refresh.isPending || isBatchRunning;
 
@@ -1151,9 +1182,9 @@ function ContentTab({
               Initial safety sync
             </h3>
             <p className="text-sm text-muted-foreground mt-1">
-              Refresh a bounded batch of titles from a safety provider. Continue
-              only with the saved next offset and an unchanged catalog. If a
-              title is added or removed, restart from offset 0.
+              Refresh a bounded batch of titles from a safety provider. Requests
+              are rate-limited, so run another batch with the next offset to
+              resume without starting over.
             </p>
           </div>
           <div className="flex flex-wrap items-end gap-3">
@@ -1218,7 +1249,7 @@ function ContentTab({
             </div>
             <Button
               className="rounded-xl gap-1.5"
-              onClick={runBatchRefresh}
+              onClick={() => runBatchRefresh()}
               disabled={isRefreshing}
             >
               <RefreshCw
@@ -1241,6 +1272,50 @@ function ContentTab({
                   : `Refreshing up to ${activeBatch?.limit ?? batchLimit} title${(activeBatch?.limit ?? Number(batchLimit)) === 1 ? "" : "s"} from offset ${activeBatch?.offset ?? batchOffset}.`}
                 {" "}Each title is spaced to respect provider rate limits.
               </p>
+            </div>
+          )}
+          {visibleInterruptedBatch && (
+            <div
+              className="space-y-2 border-t border-orange-500/20 pt-3"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">
+                    Batch interrupted
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {visibleInterruptedBatch.provider === "wikidata"
+                      ? "Wikidata"
+                      : "Does the Dog Die"}{" "}
+                    · stopped before completion
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl"
+                  disabled={isRefreshing || !canRetryInterruptedBatch}
+                  onClick={() => {
+                    setBatchProvider(visibleInterruptedBatch.provider);
+                    setBatchLimit(String(visibleInterruptedBatch.limit));
+                    setBatchOffset(String(visibleInterruptedBatch.nextOffset));
+                    runBatchRefresh(visibleInterruptedBatch);
+                  }}
+                >
+                  Retry interrupted batch
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Retrying will use the saved batch size of {visibleInterruptedBatch.limit}{" "}
+                from offset {visibleInterruptedBatch.nextOffset}.
+              </p>
+              {!canRetryInterruptedBatch && (
+                <p className="text-xs text-muted-foreground">
+                  This interrupted run has no saved catalog snapshot. Restart from offset 0.
+                </p>
+              )}
             </div>
           )}
           {batchResult && batchSummary && (
@@ -1297,16 +1372,10 @@ function ContentTab({
                   size="sm"
                   variant="outline"
                   className="rounded-xl"
-                  disabled={!canResumeBatch}
                   onClick={() => setBatchOffset(String(nextBatchOffset))}
                 >
                   Use next offset
                 </Button>
-                {!batchResult.catalogFingerprint && (
-                  <span className="text-xs text-muted-foreground">
-                    This saved batch has no catalog snapshot. Restart from offset 0.
-                  </span>
-                )}
               </div>
               <div className="space-y-1.5">
                 {batchResult.results.map((result) => {
@@ -1734,7 +1803,6 @@ export function AliasReview({
       {
         onSuccess: async () => {
           setEditingId(null);
-          setConflictAlias(null);
           const refreshed = await refreshAliasViews();
           toast(
             refreshed

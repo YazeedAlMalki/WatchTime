@@ -183,7 +183,7 @@ export const catalogSyncItemsTable = pgTable("catalog_sync_items", {
 export const safetySyncRunsTable = pgTable("safety_sync_runs", {
   id: serial("id").primaryKey(),
   provider: text("provider").notNull(),
-  status: text("status").notNull().default("running"), // running | completed | failed
+  status: text("status").notNull().default("running"), // running | interrupted | completed | failed
   limit: integer("limit").notNull(),
   offset: integer("offset").notNull(),
   catalogFingerprint: text("catalog_fingerprint"),
