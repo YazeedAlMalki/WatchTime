@@ -260,6 +260,124 @@ describe("admin title aliases", () => {
     });
   });
 
+  it("preserves a newer correction when a catalog refresh runs before stale removal", async () => {
+    const [row] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
+    const correction = await request(app)
+      .patch(`/api/admin/content-aliases/${row.id}`)
+      .send({
+        alias: "Newer Admin Correction",
+        language: "fr",
+        sourceUrl: "https://example.test/newer-correction",
+        expectedUpdatedAt: row.updatedAt.toISOString(),
+      });
+    expect(correction.status).toBe(200);
+
+    const sourceItem: SourceItem = {
+      key: "movie:stale-removal-refresh-test",
+      source: "wikipedia",
+      type: "movie",
+      name: "Alias Test One",
+      imdbId: "tt-alias-test-1",
+      aliases: [{
+        alias: "Shared Local Title",
+        language: "en",
+        sourceName: "Provider catalog",
+        sourceUrl: "https://example.test/provider",
+      }],
+      popularity: 0,
+      wikiPage: "Alias Test One",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      extract: "Provider summary",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+
+    let staleRemovalResponse: { status: number; body: unknown } = { status: 0, body: null };
+    await runCatalogSync(
+      { dryRun: false, allowPartial: false },
+      [sourceItem],
+      async (progress) => {
+        // A succeeded callback runs after the catalog transaction commits, so
+        // this confirms the old review is stale against the refreshed catalog.
+        if (progress.status === "succeeded") {
+          staleRemovalResponse = await request(app)
+            .delete(`/api/admin/content-aliases/${row.id}`)
+            .send({ expectedUpdatedAt: row.updatedAt.toISOString() });
+        }
+      },
+    );
+
+    expect(staleRemovalResponse.status).toBe(409);
+    expect(staleRemovalResponse.body).toEqual({
+      error:
+        "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
+    });
+
+    const aliases = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]))
+      .orderBy(titleAliasesTable.id);
+    expect(aliases).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: row.id,
+        alias: "Newer Admin Correction",
+        sourceName: "Admin editorial",
+        sourceUrl: "https://example.test/newer-correction",
+        isEditorial: true,
+      }),
+      expect.objectContaining({
+        alias: "Shared Local Title",
+        sourceName: "Provider catalog",
+        sourceUrl: "https://example.test/provider",
+        isEditorial: false,
+      }),
+    ]));
+    expect(aliases.find((alias) => alias.id === row.id)?.updatedAt.toISOString())
+      .toBe(correction.body.updatedAt);
+
+    const [title] = await db.select().from(titlesTable)
+      .where(eq(titlesTable.id, createdTitleIds[0]));
+    expect(title.imdbId).toBe("tt-alias-test-1");
+    expect(title.altTitles).toEqual(aliases.map((alias) => alias.alias));
+
+    const correctionReport = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Newer Admin Correction" });
+    expect(correctionReport.status).toBe(200);
+    expect(correctionReport.body).toEqual([
+      expect.objectContaining({
+        id: row.id,
+        titleId: createdTitleIds[0],
+        alias: "Newer Admin Correction",
+        isEditorial: true,
+        collision: false,
+        collisionTitleCount: 1,
+      }),
+    ]);
+
+    const collisionReport = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Shared Local Title" });
+    expect(collisionReport.status).toBe(200);
+    expect(collisionReport.body).toHaveLength(2);
+    expect(collisionReport.body).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        titleId: createdTitleIds[0],
+        isEditorial: false,
+        collision: true,
+        collisionTitleCount: 2,
+      }),
+      expect.objectContaining({
+        titleId: createdTitleIds[1],
+        isEditorial: true,
+        collision: true,
+        collisionTitleCount: 2,
+      }),
+    ]));
+  });
+
   it("removes withdrawn provider aliases without removing an editorial correction", async () => {
     const sourceItem: SourceItem = {
       key: "movie:legacy-alias-refresh-test",
