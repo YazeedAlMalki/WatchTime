@@ -578,8 +578,35 @@ router.patch("/content-aliases/:id", async (req, res) => {
       .where(eq(titleAliasesTable.id, id)).for("update");
     if (!current) return null;
     if (current.updatedAt.getTime() !== expectedUpdatedAtDate.getTime()) {
+      const [title] = await tx.select({
+        name: titlesTable.name,
+        type: titlesTable.type,
+        year: titlesTable.year,
+      }).from(titlesTable).where(eq(titlesTable.id, current.titleId));
+      if (!title) throw new Error("Alias references a missing catalog title");
+      const [collision] = await tx.select({
+        titleCount: sql<number>`count(distinct ${titleAliasesTable.titleId})::int`,
+      }).from(titleAliasesTable).where(
+        eq(titleAliasesTable.normalizedAlias, current.normalizedAlias),
+      );
       return {
+        code: "stale_alias",
         error: "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+        current: {
+          id: current.id,
+          titleId: current.titleId,
+          titleName: title.name,
+          titleType: title.type,
+          titleYear: title.year,
+          alias: current.alias,
+          language: current.language,
+          sourceName: current.sourceName,
+          sourceUrl: current.sourceUrl,
+          isEditorial: Boolean(current.isEditorial),
+          collision: (collision?.titleCount ?? 1) > 1,
+          collisionTitleCount: collision?.titleCount ?? 1,
+          updatedAt: current.updatedAt.toISOString(),
+        },
       } as const;
     }
     const [title] = await tx.select({ name: titlesTable.name }).from(titlesTable)

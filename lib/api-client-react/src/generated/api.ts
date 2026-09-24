@@ -72,6 +72,7 @@ import type {
   Title,
   TitleDetail,
   TrackedShow,
+  UpdateAdminContentAlias409,
   UserPreferences,
   UserPreferencesUpdate,
   UserProfile
@@ -3422,7 +3423,7 @@ export const updateAdminContentAlias = async (id: number,
 
 
 
-export const getUpdateAdminContentAliasMutationOptions = <TError = ErrorType<void>,
+export const getUpdateAdminContentAliasMutationOptions = <TError = ErrorType<void | UpdateAdminContentAlias409>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminContentAlias>>, TError,{id: number;data: BodyType<AdminContentAliasUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateAdminContentAlias>>, TError,{id: number;data: BodyType<AdminContentAliasUpdate>}, TContext> => {
 
@@ -3451,12 +3452,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type UpdateAdminContentAliasMutationResult = NonNullable<Awaited<ReturnType<typeof updateAdminContentAlias>>>
     export type UpdateAdminContentAliasMutationBody = BodyType<AdminContentAliasUpdate>
-    export type UpdateAdminContentAliasMutationError = ErrorType<void>
+    export type UpdateAdminContentAliasMutationError = ErrorType<void | UpdateAdminContentAlias409>
 
     /**
  * @summary Correct an alternate title without changing catalog identity
  */
-export const useUpdateAdminContentAlias = <TError = ErrorType<void>,
+export const useUpdateAdminContentAlias = <TError = ErrorType<void | UpdateAdminContentAlias409>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAdminContentAlias>>, TError,{id: number;data: BodyType<AdminContentAliasUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof updateAdminContentAlias>>,

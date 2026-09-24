@@ -315,9 +315,23 @@ describe("admin title aliases", () => {
       });
     expect(staleEdit.status).toBe(409);
     expect(staleEdit.body).toEqual({
+      code: "stale_alias",
       error:
         "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+      current: expect.objectContaining({
+        id: row.id,
+        titleId: createdTitleIds[0],
+        alias: "First Admin Correction",
+        language: "en",
+        sourceName: "Admin editorial",
+        sourceUrl: "https://example.test/first-correction",
+        isEditorial: true,
+        collision: false,
+        collisionTitleCount: 1,
+        updatedAt: expect.any(String),
+      }),
     });
+    expect(staleEdit.body.current.updatedAt).not.toBe(expectedUpdatedAt);
 
     const [unchanged] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.id, row.id));

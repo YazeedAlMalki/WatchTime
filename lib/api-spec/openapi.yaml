@@ -935,7 +935,16 @@ paths:
         "404":
           description: Alias not found
         "409":
-          description: Duplicate or canonical title conflict
+          description: Duplicate, canonical-title, or stale-version conflict
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AdminContentAliasConflict"
+                  - type: object
+                    required: [error]
+                    properties:
+                      error: { type: string }
         "403":
           description: Forbidden
     delete:
@@ -1555,6 +1564,14 @@ components:
         isEditorial: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    AdminContentAliasConflict:
+      type: object
+      required: [code, error, current]
+      properties:
+        code: { type: string, enum: [stale_alias] }
+        error: { type: string }
+        current:
+          $ref: "#/components/schemas/AdminContentAlias"
     AdminContentRefreshResult:
       type: object
       required: [ok, titleId, titleName]

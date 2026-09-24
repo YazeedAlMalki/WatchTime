@@ -778,6 +778,19 @@ export interface AdminContentAliasRecord {
   updatedAt: string;
 }
 
+export type AdminContentAliasConflictCode = typeof AdminContentAliasConflictCode[keyof typeof AdminContentAliasConflictCode];
+
+
+export const AdminContentAliasConflictCode = {
+  stale_alias: 'stale_alias',
+} as const;
+
+export interface AdminContentAliasConflict {
+  code: AdminContentAliasConflictCode;
+  error: string;
+  current: AdminContentAlias;
+}
+
 export type AdminContentRefreshResultStatus = typeof AdminContentRefreshResultStatus[keyof typeof AdminContentRefreshResultStatus];
 
 
@@ -1138,6 +1151,10 @@ export const ListAdminContentAliasesOwnership = {
   provider: 'provider',
   editorial: 'editorial',
 } as const;
+
+export type UpdateAdminContentAlias409 = AdminContentAliasConflict | {
+  error: string;
+};
 
 export type RefreshAdminContentBatch200 = {
   ok: boolean;

@@ -223,8 +223,19 @@ describe("admin alternate-title review", () => {
       (_variables: unknown, options?: { onError?: (error: unknown) => Promise<void> }) => {
         void options?.onError?.({
           data: {
+            code: "stale_alias",
             error:
               "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+            current: {
+              ...initialAlias,
+              alias: "Newer Admin Correction",
+              language: "de",
+              sourceName: "Admin editorial",
+              sourceUrl: "https://example.test/newer-correction",
+              collision: false,
+              collisionTitleCount: 1,
+              updatedAt: "2026-09-17T00:00:00.000Z",
+            },
           },
         });
       },
@@ -247,10 +258,15 @@ describe("admin alternate-title review", () => {
     expect(mocks.toast).toHaveBeenCalledWith({
       title: "Could not update alternate title",
       description:
-        "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+        "Your draft was not saved. Review the newer correction below before trying again.",
       variant: "destructive",
     });
-    expect(container.textContent).toContain("2 titles");
+    expect(container.textContent).toContain("A newer correction is already saved");
+    expect(container.textContent).toContain("Newer Admin Correction");
+    expect(container.textContent).toContain("de");
+    expect(container.textContent).toContain("Admin editorial");
+    expect(container.textContent).toContain("Unique");
+    expect(container.textContent).toContain("Current version");
     expect(container.textContent).not.toContain("Save");
   });
 

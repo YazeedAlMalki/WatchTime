@@ -7,6 +7,8 @@
  */
 
 export * from './adminContentAlias';
+export * from './adminContentAliasConflict';
+export * from './adminContentAliasConflictCode';
 export * from './adminContentAliasRecord';
 export * from './adminContentAliasTitleType';
 export * from './adminContentAliasUpdate';
@@ -118,6 +120,7 @@ export * from './title';
 export * from './titleDetail';
 export * from './titleType';
 export * from './trackedShow';
+export * from './updateAdminContentAlias409';
 export * from './userPreferences';
 export * from './userPreferencesPreferredRatingRegion';
 export * from './userPreferencesUpdate';

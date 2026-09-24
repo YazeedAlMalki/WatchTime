@@ -1470,6 +1470,9 @@ export function AliasReview({
     sourceUrl: "",
     expectedUpdatedAt: "",
   });
+  const [conflictAlias, setConflictAlias] = useState<AdminContentAlias | null>(
+    null,
+  );
   const [refreshError, setRefreshError] = useState(false);
   const [isRefreshingAliasViews, setIsRefreshingAliasViews] = useState(false);
 
@@ -1508,6 +1511,7 @@ export function AliasReview({
   };
 
   const startEditing = (alias: AdminContentAlias) => {
+    setConflictAlias(null);
     setEditingId(alias.id);
     setDraft({
       alias: alias.alias,
@@ -1555,16 +1559,30 @@ export function AliasReview({
         },
         onError: async (error) => {
           const description = errorDescription(error);
-          const isStaleDraft = description.includes(
-            "changed while you were editing",
-          );
-          if (isStaleDraft) {
+          const data =
+            error && typeof error === "object" && "data" in error
+              ? (error as { data?: unknown }).data
+              : null;
+          const staleConflict =
+            data &&
+            typeof data === "object" &&
+            "code" in data &&
+            data.code === "stale_alias" &&
+            "current" in data &&
+            data.current &&
+            typeof data.current === "object"
+              ? (data.current as AdminContentAlias)
+              : null;
+          if (staleConflict) {
+            setConflictAlias(staleConflict);
             setEditingId(null);
             await refreshAliasViews();
           }
           toast({
             title: "Could not update alternate title",
-            description,
+            description: staleConflict
+              ? "Your draft was not saved. Review the newer correction below before trying again."
+              : description,
             variant: "destructive",
           });
         },
@@ -1661,6 +1679,78 @@ export function AliasReview({
             />
             {isRefreshingAliasViews ? "Retrying…" : "Retry refresh"}
           </Button>
+        </div>
+      )}
+      {conflictAlias && (
+        <div
+          role="alert"
+          className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-4 text-sm text-orange-900 dark:border-orange-900/50 dark:bg-orange-950/20 dark:text-orange-200"
+        >
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">A newer correction is already saved</p>
+              <p className="mt-1">
+                Your draft was not saved. Compare the current values below before
+                trying again.
+              </p>
+              <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-orange-700/80 dark:text-orange-300/80">
+                    Alternate title
+                  </dt>
+                  <dd className="font-medium">{conflictAlias.alias}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-orange-700/80 dark:text-orange-300/80">
+                    Catalog title
+                  </dt>
+                  <dd className="font-medium">{conflictAlias.titleName}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-orange-700/80 dark:text-orange-300/80">
+                    Language
+                  </dt>
+                  <dd>{conflictAlias.language ?? "Unknown"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-orange-700/80 dark:text-orange-300/80">
+                    Source
+                  </dt>
+                  <dd>
+                    {conflictAlias.sourceUrl ? (
+                      <a
+                        href={conflictAlias.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-orange-800 underline dark:text-orange-200"
+                      >
+                        {conflictAlias.sourceName}
+                      </a>
+                    ) : (
+                      conflictAlias.sourceName
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-orange-700/80 dark:text-orange-300/80">
+                    Collision status
+                  </dt>
+                  <dd>
+                    {conflictAlias.collision
+                      ? `${conflictAlias.collisionTitleCount} titles share this alias`
+                      : "Unique"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-orange-700/80 dark:text-orange-300/80">
+                    Current version
+                  </dt>
+                  <dd>{new Date(conflictAlias.updatedAt).toLocaleString()}</dd>
+                </div>
+              </dl>
+            </div>
+          </div>
         </div>
       )}
       {isLoading ? (
