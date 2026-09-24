@@ -53,6 +53,7 @@ export * from './feedbackModeration';
 export * from './feedbackModerationStatus';
 export * from './getAdminAuditLogEntityType';
 export * from './getAdminAuditLogParams';
+export * from './getMyInProgressShowsParams';
 export * from './getMyMoviesParams';
 export * from './getMyShowsParams';
 export * from './getMyWatchlistParams';

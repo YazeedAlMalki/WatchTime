@@ -20,11 +20,13 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   getMyShows,
-  orderTrackedShows,
+  getMyInProgressShows,
+  mergeTrackedShows,
   getMyMovies,
   useGetMyRecentActivity,
   useMarkEpisodeWatched,
   getGetMyShowsQueryKey,
+  getGetMyInProgressShowsQueryKey,
   getGetMyMoviesQueryKey,
   getGetMyRecentActivityQueryKey,
   getGetMyRecommendationsQueryKey,
@@ -110,6 +112,7 @@ function ShowRow({ show }: { show: TrackedShow }) {
     mutation: {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetMyInProgressShowsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
       },
@@ -307,6 +310,15 @@ export default function MyShowsScreen() {
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.title.id : undefined,
   });
+  const inProgress = useInfiniteQuery({
+    queryKey: [...getGetMyInProgressShowsQueryKey(), 'infinite'],
+    initialPageParam: undefined as number | undefined,
+    enabled: !!isSignedIn,
+    queryFn: ({ pageParam, signal }) =>
+      getMyInProgressShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
+    getNextPageParam: (lastPage) =>
+      lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.title.id : undefined,
+  });
   const movies = useInfiniteQuery({
     queryKey: [...getGetMyMoviesQueryKey(), 'infinite'],
     initialPageParam: undefined as string | undefined,
@@ -319,7 +331,7 @@ export default function MyShowsScreen() {
   const history = useGetMyRecentActivity({ query: { enabled: !!isSignedIn } as any });
 
   // Client-side filter for the TV Shows tab
-  const allShows = orderTrackedShows(shows.data?.pages.flat() ?? []);
+  const allShows = mergeTrackedShows(shows.data?.pages.flat() ?? [], inProgress.data?.pages.flat() ?? []);
   const allMovies = movies.data?.pages.flat() ?? [];
   const filteredShows = allShows.filter(show => {
     const matchesSearch = !showSearch.trim() ||
@@ -346,12 +358,13 @@ export default function MyShowsScreen() {
     : () => history.refetch();
 
   const refreshing =
-    (activeTab === 'shows' && shows.isRefetching) ||
+    (activeTab === 'shows' && (shows.isRefetching || inProgress.isRefetching)) ||
     (activeTab === 'movies' && movies.isRefetching) ||
     (activeTab === 'history' && history.isRefetching);
 
   const onRefresh = () => {
     shows.refetch();
+    inProgress.refetch();
     movies.refetch();
     history.refetch();
   };
@@ -451,15 +464,23 @@ export default function MyShowsScreen() {
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: bottomPad, gap: 12 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
           onEndReached={() => {
-            if (shows.hasNextPage && !shows.isFetchingNextPage) shows.fetchNextPage();
+             if (shows.hasNextPage && !shows.isFetchingNextPage) shows.fetchNextPage();
+             if (inProgress.hasNextPage && !inProgress.isFetchingNextPage) inProgress.fetchNextPage();
           }}
           onEndReachedThreshold={0.4}
-          ListHeaderComponent={filteredShows.length ? (
+           ListHeaderComponent={filteredShows.length || inProgress.isError ? (
+             <View>
             <Text style={{ color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular', marginBottom: 4 }}>
-              In-progress shows first among loaded shows
+               In-progress shows first, even beyond loaded pages
             </Text>
+             {inProgress.isError && (
+               <Pressable testID="retry-in-progress" onPress={() => inProgress.refetch()}>
+                 <Text style={{ color: c.destructive, fontSize: 12 }}>Could not load all in-progress shows. Tap to retry.</Text>
+               </Pressable>
+             )}
+             </View>
           ) : null}
-          ListFooterComponent={shows.isFetchingNextPage ? <ActivityIndicator color={c.primary} /> : null}
+           ListFooterComponent={shows.isFetchingNextPage || inProgress.isFetchingNextPage ? <ActivityIndicator color={c.primary} /> : null}
           ListEmptyComponent={
             <EmptyState
               icon="tv"

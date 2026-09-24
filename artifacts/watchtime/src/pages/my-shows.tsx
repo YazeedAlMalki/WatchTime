@@ -2,10 +2,12 @@ import React from "react";
 import {
   getMyMovies,
   getMyShows,
-  orderTrackedShows,
+  getMyInProgressShows,
+  mergeTrackedShows,
   getGetMyRecentActivityQueryKey,
   getGetMyRecommendationsQueryKey,
   getGetMyShowsQueryKey,
+  getGetMyInProgressShowsQueryKey,
   getGetMyMoviesQueryKey,
   useGetMyRecentActivity,
   useMarkEpisodeWatched,
@@ -18,15 +20,26 @@ import { Link } from "wouter";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OptimizedImage } from "@/components/ui/optimized-image";
+import { useUser } from "@clerk/react";
 
 const PAGE_SIZE = 24;
 
 export default function MyShowsPage() {
+  const { isSignedIn } = useUser();
   const showsQuery = useInfiniteQuery({
     queryKey: [...getGetMyShowsQueryKey(), "infinite"],
     initialPageParam: undefined as number | undefined,
     queryFn: ({ pageParam, signal }) =>
       getMyShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
+    getNextPageParam: (lastPage) =>
+      lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.title.id : undefined,
+  });
+  const inProgressQuery = useInfiniteQuery({
+    queryKey: [...getGetMyInProgressShowsQueryKey(), "infinite"],
+    enabled: !!isSignedIn,
+    initialPageParam: undefined as number | undefined,
+    queryFn: ({ pageParam, signal }) =>
+      getMyInProgressShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.title.id : undefined,
   });
@@ -38,7 +51,7 @@ export default function MyShowsPage() {
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.collectionCursor : undefined,
   });
-  const shows = orderTrackedShows(showsQuery.data?.pages.flat() ?? []);
+  const shows = mergeTrackedShows(showsQuery.data?.pages.flat() ?? [], inProgressQuery.data?.pages.flat() ?? []);
   const movies = moviesQuery.data?.pages.flat() ?? [];
   const showsLoading = showsQuery.isLoading;
   const moviesLoading = moviesQuery.isLoading;
@@ -52,6 +65,7 @@ export default function MyShowsPage() {
       {
         onSuccess: () => Promise.all([
           queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() }),
+          queryClient.invalidateQueries({ queryKey: getGetMyInProgressShowsQueryKey() }),
           queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() }),
           queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() }),
         ]),
@@ -84,11 +98,13 @@ export default function MyShowsPage() {
           ) : shows.length === 0 ? (
             <div className="text-center py-20 text-muted-foreground border-2 border-dashed border-border rounded-3xl">
               <p>You aren't tracking any shows yet.</p>
+              {inProgressQuery.isError && <p role="alert">Could not load in-progress shows. <Button variant="link" onClick={() => inProgressQuery.refetch()}>Retry</Button></p>}
               <Link href="/browse"><Button variant="outline" className="mt-4 rounded-full">Find Shows</Button></Link>
             </div>
           ) : (
             <div className="flex flex-col gap-6">
-              <p className="text-sm text-muted-foreground">In-progress shows appear first among the shows loaded so far.</p>
+               <p className="text-sm text-muted-foreground">In-progress shows appear first, including titles beyond your loaded pages.</p>
+               {inProgressQuery.isError && <p role="alert" className="text-sm text-destructive">Could not load all in-progress shows. <Button variant="link" onClick={() => inProgressQuery.refetch()}>Retry</Button></p>}
               {shows.map(show => {
                 const progress = Math.round((show.watchedEpisodes / show.totalEpisodes) * 100) || 0;
                 return (
@@ -129,6 +145,16 @@ export default function MyShowsPage() {
                   </div>
                 );
               })}
+               {inProgressQuery.hasNextPage && (
+                 <Button
+                   variant="outline"
+                   className="self-center rounded-full px-8"
+                   disabled={inProgressQuery.isFetchingNextPage}
+                   onClick={() => inProgressQuery.fetchNextPage()}
+                 >
+                   {inProgressQuery.isFetchingNextPage ? "Loading more…" : "Load more in-progress shows"}
+                 </Button>
+               )}
               {showsQuery.hasNextPage && (
                 <Button
                   variant="outline"

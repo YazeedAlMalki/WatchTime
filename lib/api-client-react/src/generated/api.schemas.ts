@@ -766,6 +766,7 @@ export interface AdminContentAliasUpdate {
 export interface AdminContentAliasDelete {
   expectedUpdatedAt: string;
 }
+
 export interface AdminContentAliasRecord {
   id: number;
   titleId: number;
@@ -815,6 +816,46 @@ export interface AdminContentRefreshResult {
 }
 
 export type AdminContentRefreshBatchProvider = typeof AdminContentRefreshBatchProvider[keyof typeof AdminContentRefreshBatchProvider];
+
+
+export const AdminContentRefreshBatchProvider = {
+  does_the_dog_die: 'does_the_dog_die',
+  wikidata: 'wikidata',
+} as const;
+
+export type AdminContentRefreshBatchStatusProperty = typeof AdminContentRefreshBatchStatusProperty[keyof typeof AdminContentRefreshBatchStatusProperty];
+
+
+export const AdminContentRefreshBatchStatusProperty = {
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export interface AdminContentRefreshBatch {
+  id: number;
+  provider: AdminContentRefreshBatchProvider;
+  status: AdminContentRefreshBatchStatusProperty;
+  limit: number;
+  offset: number;
+  processed: number;
+  mapped: number;
+  missing: number;
+  errors: number;
+  nextOffset: number;
+  results: AdminContentRefreshResult[];
+  startedAt: string;
+  /** @nullable */
+  completedAt: string | null;
+  /** @nullable */
+  error?: string | null;
+}
+
+export interface AdminContentRefreshBatchStatus {
+  lastCompleted: AdminContentRefreshBatch | null;
+  running: AdminContentRefreshBatch | null;
+}
+
 export type IntegrationHealthStatus = typeof IntegrationHealthStatus[keyof typeof IntegrationHealthStatus];
 
 
@@ -1051,6 +1092,18 @@ limit?: number;
 beforeId?: number;
 };
 
+export type GetMyInProgressShowsParams = {
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
+/**
+ * @minimum 1
+ */
+beforeId?: number;
+};
+
 export type GetMyMoviesParams = {
 /**
  * @minimum 1
@@ -1190,40 +1243,3 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
-
-export type AdminContentRefreshBatchStatusProperty = typeof AdminContentRefreshBatchStatusProperty[keyof typeof AdminContentRefreshBatchStatusProperty];
-
-export const AdminContentRefreshBatchStatusProperty = {
-  running: 'running',
-  completed: 'completed',
-  failed: 'failed',
-} as const;
-
-export interface AdminContentRefreshBatch {
-  id: number;
-  provider: AdminContentRefreshBatchProvider;
-  status: AdminContentRefreshBatchStatusProperty;
-  limit: number;
-  offset: number;
-  processed: number;
-  mapped: number;
-  missing: number;
-  errors: number;
-  nextOffset: number;
-  results: AdminContentRefreshResult[];
-  startedAt: string;
-  /** @nullable */
-  completedAt: string | null;
-  /** @nullable */
-  error?: string | null;
-}
-
-export interface AdminContentRefreshBatchStatus {
-  lastCompleted: AdminContentRefreshBatch | null;
-  running: AdminContentRefreshBatch | null;
-}
-
-export const AdminContentRefreshBatchProvider = {
-  does_the_dog_die: 'does_the_dog_die',
-  wikidata: 'wikidata',
-} as const;

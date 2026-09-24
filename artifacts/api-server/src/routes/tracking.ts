@@ -13,6 +13,7 @@ import {
   eq,
   desc,
   lt,
+  gt,
   sql,
   inArray,
   ne,
@@ -211,7 +212,10 @@ router.delete("/episodes/:episodeId/watched", requireAuth, async (req, res) => {
   return res.json({ ok: true });
 });
 
-router.get("/me/shows", requireAuth, async (req, res) => {
+for (const [path, inProgressOnly] of [
+  ["/me/shows", false],
+  ["/me/shows/in-progress", true],
+] as const) router.get(path, requireAuth, async (req, res) => {
   const userId = req.userId!;
   const page = getCollectionPage(req.query);
   if (!page || req.query.before !== undefined) return res.status(400).json({ error: "Invalid pagination" });
@@ -257,6 +261,17 @@ router.get("/me/shows", requireAuth, async (req, res) => {
     .where(and(
       ne(titlesTable.type, "movie"),
       or(isNotNull(watchedCounts.titleId), isNotNull(followed.titleId)),
+      inProgressOnly ? and(
+        gt(watchedCounts.watchedEpisodes, 0),
+        sql`exists (
+          select 1 from ${episodesTable} remaining
+          where remaining.title_id = ${titlesTable.id}
+            and not exists (
+              select 1 from ${watchedEpisodesTable} watched
+              where watched.user_id = ${userId} and watched.episode_id = remaining.id
+            )
+        )`,
+      ) : undefined,
       page.beforeId === undefined ? undefined : lt(titlesTable.id, page.beforeId),
     ))
     // A progress-based order moves rows across the boundary when an episode is marked.
