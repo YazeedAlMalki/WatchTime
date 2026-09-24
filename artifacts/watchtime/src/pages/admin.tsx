@@ -41,6 +41,7 @@ import {
   adminContentUrl,
   readAdminContentUrl,
   type AdminTab,
+  type AliasOwnershipFilter,
 } from "./admin-content-url";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -85,7 +86,7 @@ import { useToast } from "@/hooks/use-toast";
 export default function AdminPage() {
   const [, setLocation] = useLocation();
   const search = useSearch();
-  const { tab, region, q } = readAdminContentUrl(search);
+  const { tab, region, q, ownership } = readAdminContentUrl(search);
   const selectTab = (nextTab: string) => {
     setLocation(adminContentUrl(search, nextTab as AdminTab, region));
   };
@@ -94,6 +95,9 @@ export default function AdminPage() {
   };
   const selectContentSearch = (term: string) => {
     setLocation(adminContentUrl(search, "content", region, term), { replace: true });
+  };
+  const selectAliasOwnership = (nextOwnership: AliasOwnershipFilter) => {
+    setLocation(adminContentUrl(search, "content", region, undefined, nextOwnership));
   };
   const { data: me, isLoading: meLoading } = useGetMe();
   const { data: dashboard } = useGetAdminDashboard({
@@ -255,6 +259,8 @@ export default function AdminPage() {
             onRatingRegionChange={selectRegion}
             q={q}
             onSearchChange={selectContentSearch}
+            aliasOwnership={ownership}
+            onAliasOwnershipChange={selectAliasOwnership}
           />
         </TabsContent>
 
@@ -952,18 +958,19 @@ function ContentTab({
   onRatingRegionChange,
   q,
   onSearchChange,
+  aliasOwnership,
+  onAliasOwnershipChange,
 }: {
   ratingRegion: RatingRegion;
   onRatingRegionChange: (region: RatingRegion) => void;
   q: string;
   onSearchChange: (term: string) => void;
+  aliasOwnership: AliasOwnershipFilter;
+  onAliasOwnershipChange: (ownership: AliasOwnershipFilter) => void;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [debouncedQ, setDebouncedQ] = useState(q);
-  const [aliasOwnership, setAliasOwnership] = useState<
-    ListAdminContentAliasesOwnership | "all"
-  >("all");
   const [batchProvider, setBatchProvider] = useState<
     "does_the_dog_die" | "wikidata"
   >("does_the_dog_die");
@@ -1461,7 +1468,7 @@ function ContentTab({
         isFetching={aliasesFetching}
         onRetry={() => void retryAliases()}
         ownership={aliasOwnership}
-        onOwnershipChange={setAliasOwnership}
+        onOwnershipChange={onAliasOwnershipChange}
       />
     </div>
   );

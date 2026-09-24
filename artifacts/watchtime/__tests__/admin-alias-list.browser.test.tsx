@@ -58,6 +58,9 @@ it("distinguishes an alias-list failure from an empty result and retries the cur
     await expect.element(page.getByText("No alternate titles found")).not.toBeInTheDocument();
     await expect.element(ownership).toHaveTextContent("Provider-owned");
     await expect.element(page.getByPlaceholder("Search titles…")).toHaveValue("Lighthouse");
+    expect(new URLSearchParams(location.search).get("ownership")).toBe("provider");
+    expect(new URLSearchParams(location.search).get("region")).toBe("US");
+    expect(new URLSearchParams(location.search).get("q")).toBe("Lighthouse");
 
     await userEvent.click(page.getByRole("button", { name: "Retry alternate titles" }));
     await expect.element(page.getByText("No alternate titles found")).toBeVisible();
@@ -68,6 +71,43 @@ it("distinguishes an alias-list failure from an empty result and retries the cur
     )).toHaveLength(2);
     await expect.element(ownership).toHaveTextContent("Provider-owned");
     await expect.element(page.getByPlaceholder("Search titles…")).toHaveValue("Lighthouse");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("restores a shared alias ownership filter and clears it without losing search or region", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=FR&q=Lighthouse&ownership=editorial");
+  const originalFetch = window.fetch;
+  const requests: URL[] = [];
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") throw new Error(`Unexpected request: ${url}`);
+    requests.push(url);
+    return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    const ownership = page.getByRole("combobox", { name: "Alias ownership" });
+    await expect.element(ownership).toHaveTextContent("Editorial");
+    await expect.element(page.getByText("No alternate titles found")).toBeVisible();
+    expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
+    await userEvent.click(ownership);
+    await userEvent.click(page.getByRole("option", { name: "All ownership" }));
+    await expect.element(ownership).toHaveTextContent("All ownership");
+    expect(new URLSearchParams(location.search).get("ownership")).toBeNull();
+    expect(new URLSearchParams(location.search).get("region")).toBe("FR");
+    expect(new URLSearchParams(location.search).get("q")).toBe("Lighthouse");
   } finally {
     root.unmount();
     container.remove();
