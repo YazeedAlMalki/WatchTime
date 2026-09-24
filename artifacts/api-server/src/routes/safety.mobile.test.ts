@@ -745,6 +745,10 @@ describe("PATCH /api/admin/contributions/:id — approved/rejected items drop ou
   const watchedTitleRowIds: number[] = [];
 
   afterEach(async () => {
+    await db.delete(safetyRecordsTable).where(and(
+      eq(safetyRecordsTable.titleId, titleId),
+      eq(safetyRecordsTable.sourceName, "WatchTime Community"),
+    ));
     for (const id of createdContributionIds) {
       await db.delete(contributionsTable).where(eq(contributionsTable.id, id));
     }
@@ -846,6 +850,89 @@ describe("PATCH /api/admin/contributions/:id — approved/rejected items drop ou
     const approvedRes = await supertest(app).get("/api/admin/contributions?status=approved");
     expect(approvedRes.status).toBe(200);
     expect(approvedRes.body.find((c: any) => c.id === contributionId)).toBeDefined();
+  });
+
+  it("deletes the safety record when its only approved contribution is rejected", async () => {
+    await grantEligibility();
+    const submitted = await supertest(app)
+      .post(`/api/titles/${titleId}/safety/contributions`)
+      .send({ category: "Violence", severity: "moderate", description: "Action scene." });
+    expect(submitted.status).toBe(201);
+    const contributionId: number = submitted.body.id;
+    createdContributionIds.push(contributionId);
+
+    const approved = await supertest(app)
+      .patch(`/api/admin/contributions/${contributionId}`)
+      .send({ status: "approved" });
+    expect(approved.status).toBe(200);
+    expect(approved.body.status).toBe("approved");
+
+    const recordsAfterApproval = await db.select().from(safetyRecordsTable).where(and(
+      eq(safetyRecordsTable.titleId, titleId),
+      eq(safetyRecordsTable.sourceName, "WatchTime Community"),
+    ));
+    expect(recordsAfterApproval).toHaveLength(1);
+    expect(recordsAfterApproval[0].items).toEqual([
+      expect.objectContaining({ contributionId, category: "Violence" }),
+    ]);
+
+    const rejected = await supertest(app)
+      .patch(`/api/admin/contributions/${contributionId}`)
+      .send({ status: "rejected" });
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.status).toBe("rejected");
+
+    const recordsAfterRejection = await db.select().from(safetyRecordsTable).where(and(
+      eq(safetyRecordsTable.titleId, titleId),
+      eq(safetyRecordsTable.sourceName, "WatchTime Community"),
+    ));
+    expect(recordsAfterRejection).toEqual([]);
+  });
+
+  it("strips only the rejected contribution when other approved items remain", async () => {
+    await grantEligibility();
+    const first = await supertest(app)
+      .post(`/api/titles/${titleId}/safety/contributions`)
+      .send({ category: "Violence", severity: "moderate", description: "Action scene." });
+    expect(first.status).toBe(201);
+    createdContributionIds.push(first.body.id);
+    const second = await supertest(app)
+      .post(`/api/titles/${titleId}/safety/contributions`)
+      .send({ category: "Language", severity: "mild", description: "Strong words." });
+    expect(second.status).toBe(201);
+    createdContributionIds.push(second.body.id);
+
+    for (const id of [first.body.id, second.body.id]) {
+      const approved = await supertest(app)
+        .patch(`/api/admin/contributions/${id}`)
+        .send({ status: "approved" });
+      expect(approved.status).toBe(200);
+      expect(approved.body.status).toBe("approved");
+    }
+
+    const scope = and(
+      eq(safetyRecordsTable.titleId, titleId),
+      eq(safetyRecordsTable.sourceName, "WatchTime Community"),
+    );
+    const recordsAfterApproval = await db.select().from(safetyRecordsTable).where(scope);
+    expect(recordsAfterApproval).toHaveLength(1);
+    expect(recordsAfterApproval[0].items).toEqual([
+      expect.objectContaining({ contributionId: first.body.id, category: "Violence" }),
+      expect.objectContaining({ contributionId: second.body.id, category: "Language" }),
+    ]);
+
+    const rejected = await supertest(app)
+      .patch(`/api/admin/contributions/${first.body.id}`)
+      .send({ status: "rejected" });
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.status).toBe("rejected");
+
+    const recordsAfterRejection = await db.select().from(safetyRecordsTable).where(scope);
+    expect(recordsAfterRejection).toHaveLength(1);
+    expect(recordsAfterRejection[0].id).toBe(recordsAfterApproval[0].id);
+    expect(recordsAfterRejection[0].items).toEqual([
+      expect.objectContaining({ contributionId: second.body.id, category: "Language" }),
+    ]);
   });
 });
 
