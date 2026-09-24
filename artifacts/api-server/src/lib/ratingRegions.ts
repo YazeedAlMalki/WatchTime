@@ -31,6 +31,14 @@ function compareFreshness(left: Date | string | null | undefined, right: Date | 
   return rightTimestamp - leftTimestamp;
 }
 
+function serializeTimestamp(value: Date | string | null | undefined): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.toISOString() : null;
+  }
+  return Number.isFinite(Date.parse(value)) ? value : null;
+}
+
 export function resolvePreferredRating(records: RatingRecord[], region: RatingRegion) {
   const preferredSystem = RATING_REGIONS_BY_CODE[region];
   const matches = records
@@ -69,9 +77,7 @@ export function resolvePreferredRating(records: RatingRecord[], region: RatingRe
     label: match.item.label,
     sourceName: match.record.sourceName,
     recordId: match.record.id ?? null,
-    lastRefreshedAt: match.record.updatedAt instanceof Date
-      ? match.record.updatedAt.toISOString()
-      : match.record.updatedAt ?? null,
+    lastRefreshedAt: serializeTimestamp(match.record.updatedAt),
     sourceUrl: match.record.url ?? null,
   } : null;
 }

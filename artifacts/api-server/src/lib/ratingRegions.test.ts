@@ -164,6 +164,32 @@ describe("resolvePreferredRating", () => {
     expect(resolvePreferredRating([...candidates].reverse(), "US")?.label).toBe("PG");
   });
 
+  it("represents malformed refresh timestamps safely in the resolved response", () => {
+    const valid = resolvePreferredRating([{
+      ...records[0],
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+    }], "US");
+    expect(valid?.lastRefreshedAt).toBe("2026-02-01T00:00:00.000Z");
+
+    const missing = resolvePreferredRating([{
+      ...records[0],
+      updatedAt: undefined,
+    }], "US");
+    expect(missing?.lastRefreshedAt).toBeNull();
+
+    const malformedDate = resolvePreferredRating([{
+      ...records[0],
+      updatedAt: new Date("not-a-date"),
+    }], "US");
+    expect(malformedDate?.lastRefreshedAt).toBeNull();
+
+    const malformedString = resolvePreferredRating([{
+      ...records[0],
+      updatedAt: "not-a-date",
+    }], "US");
+    expect(malformedString?.lastRefreshedAt).toBeNull();
+  });
+
   it("uses a stable empty value when source URLs are missing", () => {
     const timestamp = new Date("2026-02-01T00:00:00.000Z");
     const candidates = [
