@@ -3,6 +3,7 @@ import {
   WIKIDATA_PROVIDER,
   WikidataError,
   createWikidataClient,
+  refreshWikidataBatch,
   refreshWikidataTitle,
   type WikidataItem,
 } from "./wikidata";
@@ -13,7 +14,7 @@ import {
   safetyRecordsTable,
   titlesTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -360,5 +361,86 @@ describe("Wikidata refresh persistence", () => {
     ));
     expect(afterMapping).toMatchObject({ externalId: "Q42", status: "mapped" });
     expect(after).toEqual(before);
+  });
+});
+
+describe("Wikidata batch refresh pagination", () => {
+  let createdTitleIds: number[] = [];
+  let healthBefore: typeof integrationHealthTable.$inferSelect | undefined;
+
+  beforeAll(async () => {
+    [healthBefore] = await db.select()
+      .from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    const titles = await db.insert(titlesTable).values(
+      [1, 2, 3, 4].map((index) => ({
+        type: "movie" as const,
+        name: `__wikidata_batch_resume_test_${index}__`,
+        year: null,
+        imdbId: "tt1234567",
+        popularity: 0,
+      })),
+    ).returning({ id: titlesTable.id });
+    createdTitleIds = titles.map((title) => title.id).sort((left, right) => left - right);
+  });
+
+  afterAll(async () => {
+    await db.delete(titlesTable).where(inArray(titlesTable.id, createdTitleIds));
+    await db.delete(integrationHealthTable).where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    if (healthBefore) await db.insert(integrationHealthTable).values(healthBefore);
+  });
+
+  it("resumes adjacent batches without overlapping title IDs and skips the provider at catalog end", async () => {
+    const catalog = await db.select({ id: titlesTable.id })
+      .from(titlesTable)
+      .orderBy(asc(titlesTable.id));
+    const firstOffset = catalog.findIndex((title) => title.id === createdTitleIds[0]);
+    expect(firstOffset).toBeGreaterThanOrEqual(0);
+
+    const client = { queryByImdbId: vi.fn(async () => matchedItem) };
+    const firstBatch = await refreshWikidataBatch({
+      limit: 2,
+      offset: firstOffset,
+      client,
+      delayMs: 0,
+    });
+    const secondBatch = await refreshWikidataBatch({
+      limit: 2,
+      offset: firstBatch.offset + firstBatch.processed,
+      client,
+      delayMs: 0,
+    });
+    const endOffset = catalog.length + 1_000;
+    const callsBeforeEndBatch = client.queryByImdbId.mock.calls.length;
+    const endBatch = await refreshWikidataBatch({
+      limit: 2,
+      offset: endOffset,
+      client,
+      delayMs: 0,
+    });
+
+    const firstIds = firstBatch.results.map((result) => result.titleId);
+    const secondIds = secondBatch.results.map((result) => result.titleId);
+    expect(firstBatch).toMatchObject({
+      offset: firstOffset,
+      limit: 2,
+      processed: 2,
+    });
+    expect(secondBatch).toMatchObject({
+      offset: firstBatch.offset + firstBatch.processed,
+      limit: 2,
+      processed: 2,
+    });
+    expect(firstIds).toEqual(createdTitleIds.slice(0, 2));
+    expect(secondIds).toEqual(createdTitleIds.slice(2, 4));
+    expect(new Set([...firstIds, ...secondIds]).size).toBe(4);
+    expect(client.queryByImdbId).toHaveBeenCalledTimes(4);
+    expect(endBatch).toEqual({
+      offset: endOffset,
+      limit: 2,
+      processed: 0,
+      results: [],
+    });
+    expect(client.queryByImdbId).toHaveBeenCalledTimes(callsBeforeEndBatch);
   });
 });
