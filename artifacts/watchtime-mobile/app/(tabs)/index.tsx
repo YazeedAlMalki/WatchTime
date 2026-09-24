@@ -260,6 +260,17 @@ function SignedOutHome({ startupReady }: { startupReady: boolean }) {
     }
   }, [trending.dataUpdatedAt]);
 
+  useEffect(() => {
+    if (trending.isError) {
+      markStartup('trending-error');
+    }
+  }, [trending.isError]);
+
+  const retryTrending = () => {
+    markStartup('trending-retry');
+    void trending.refetch();
+  };
+
   if (!startupReady) return <Loading />;
 
   return (
@@ -300,7 +311,10 @@ function SignedOutHome({ startupReady }: { startupReady: boolean }) {
       {trending.isLoading ? (
         <Loading />
       ) : trending.isError ? (
-        <ErrorState onRetry={() => trending.refetch()} />
+        <ErrorState
+          message="Couldn't load trending titles"
+          onRetry={retryTrending}
+        />
       ) : (
         <FlatList
           horizontal

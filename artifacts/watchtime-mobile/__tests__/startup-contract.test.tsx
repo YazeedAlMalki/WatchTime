@@ -1,6 +1,6 @@
 import React from 'react';
-import { act, cleanup, render, waitFor } from '@testing-library/react-native';
-import { InteractionManager } from 'react-native';
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { InteractionManager, Pressable, Text, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 
 const mockUseAuth = jest.fn();
@@ -16,6 +16,16 @@ const mockQueryEnabled = {
   recommendations: [] as boolean[],
   trending: [] as boolean[],
 };
+const mockTrendingQueryState: { current: Record<string, any> } = {
+  current: {
+    data: [],
+    dataUpdatedAt: 0,
+    isError: false,
+    isLoading: false,
+    isRefetching: false,
+  },
+};
+const mockTrendingRefetch = jest.fn();
 
 jest.mock('@clerk/expo', () => {
   const React = require('react');
@@ -124,12 +134,8 @@ jest.mock('@workspace/api-client-react', () => ({
   useGetTrendingTitles: (_params: any, options: any) => {
     mockQueryEnabled.trending.push(options?.query?.enabled);
     return {
-      data: [],
-      dataUpdatedAt: 0,
-      isError: false,
-      isLoading: false,
-      isRefetching: false,
-      refetch: jest.fn(),
+      ...mockTrendingQueryState.current,
+      refetch: mockTrendingRefetch,
     };
   },
   useMarkEpisodeWatched: () => ({ isPending: false, mutate: jest.fn() }),
@@ -144,13 +150,20 @@ jest.mock('@/components/ErrorBoundary', () => ({
 
 jest.mock('@/components/ui', () => {
   const React = require('react');
-  const { Text, View } = require('react-native');
+  const { Pressable, Text, View } = require('react-native');
 
   return {
     EmptyState: () => <View />,
-    ErrorState: () => <View />,
+    ErrorState: ({ message = "Couldn't load data", onRetry }: any) => (
+      <View>
+        <Text>{message}</Text>
+        <Pressable testID="retry-button" onPress={onRetry}>
+          <Text>Retry</Text>
+        </Pressable>
+      </View>
+    ),
     Loading: () => <View testID="loading" />,
-    PosterCard: () => <View />,
+    PosterCard: ({ title }: any) => <Text>{title.name}</Text>,
     SectionHeader: ({ title }: any) => <Text>{title}</Text>,
   };
 });
@@ -213,6 +226,14 @@ describe('mobile startup contracts', () => {
     mockQueryEnabled.watchlist.length = 0;
     mockQueryEnabled.recommendations.length = 0;
     mockQueryEnabled.trending.length = 0;
+    mockTrendingQueryState.current = {
+      data: [],
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockTrendingRefetch.mockReset();
     jest.clearAllMocks();
   });
 
@@ -354,6 +375,65 @@ describe('mobile startup contracts', () => {
     await waitFor(() => {
       expect(mockQueryEnabled.trending.at(-1)).toBe(true);
     });
+  });
+
+  it('keeps the signed-out home usable through a slow feed, failure, retry, and recovery', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
+    mockTrendingQueryState.current = {
+      data: undefined,
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: true,
+      isRefetching: false,
+    };
+
+    const screen = await render(<HomeScreen />);
+
+    await act(async () => {
+      pendingInteractions[0]?.();
+    });
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+
+    expect(screen.getByText('Track your shows.')).toBeTruthy();
+    expect(screen.getByText('Sign in to get started')).toBeTruthy();
+    expect(screen.getByText('Trending Now')).toBeTruthy();
+    expect(screen.getByTestId('loading')).toBeTruthy();
+
+    mockTrendingQueryState.current = {
+      data: undefined,
+      dataUpdatedAt: 0,
+      isError: true,
+      isLoading: false,
+      isRefetching: false,
+    };
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText("Couldn't load trending titles")).toBeTruthy();
+    expect(screen.getByTestId('retry-button')).toBeTruthy();
+    expect(mockMarkStartup).toHaveBeenCalledWith('trending-error');
+
+    fireEvent.press(screen.getByTestId('retry-button'));
+    expect(mockTrendingRefetch).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('trending-retry');
+
+    mockTrendingQueryState.current = {
+      data: [{ id: 1, name: 'Recovered trending title' }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText('Track your shows.')).toBeTruthy();
+    expect(screen.getByText('Recovered trending title')).toBeTruthy();
+    expect(mockMarkStartup).toHaveBeenCalledWith('trending-loaded');
   });
 
   it('does not enable remounted signed-in home queries from a stale startup frame', async () => {
