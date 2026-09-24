@@ -270,6 +270,107 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).not.toContain("Save");
   });
 
+  it("shows newer values after stale-save refresh failure", async () => {
+    const currentVersion = "2026-09-18T12:30:00.000Z";
+    const currentAlias: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newest Admin Correction",
+      language: "it",
+      sourceName: "Current editorial source",
+      sourceUrl: "https://example.test/current-correction",
+      collision: true,
+      collisionTitleCount: 3,
+      updatedAt: currentVersion,
+    };
+    mocks.queryClient.invalidateQueries.mockRejectedValueOnce(
+      new Error("Alias refresh unavailable"),
+    );
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error:
+              "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+            current: currentAlias,
+          },
+        });
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale draft correction",
+      );
+      setInput(container, "Language for Shared Local Title", "es");
+      setInput(
+        container,
+        "Source link for Shared Local Title",
+        "https://example.test/stale-draft",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(mocks.updateMutation.mutate).toHaveBeenCalledWith(
+      {
+        id: initialAlias.id,
+        data: {
+          alias: "Stale draft correction",
+          language: "es",
+          sourceUrl: "https://example.test/stale-draft",
+          expectedUpdatedAt: initialAlias.updatedAt,
+        },
+      },
+      expect.any(Object),
+    );
+    expect(container.textContent).toContain(
+      "A newer correction is already saved",
+    );
+    expect(container.textContent).toContain(currentAlias.alias);
+    expect(container.textContent).toContain(currentAlias.titleName);
+    expect(container.textContent).toContain(currentAlias.language);
+    expect(container.textContent).toContain(currentAlias.sourceName);
+    expect(container.textContent).toContain("3 titles share this alias");
+    expect(container.textContent).toContain("Current version");
+    expect(container.textContent).toContain(
+      new Date(currentVersion).toLocaleString(),
+    );
+    expect(
+      container.querySelector<HTMLAnchorElement>(
+        `a[href="${currentAlias.sourceUrl}"]`,
+      )?.textContent,
+    ).toBe(currentAlias.sourceName);
+    expect(container.textContent).not.toContain("Stale draft correction");
+    expect(container.textContent).toContain("Shared Local Title");
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain("Retry refresh");
+    expect(container.textContent).toContain("The review data may be stale.");
+    expect(container.textContent).not.toContain("Your change was saved");
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: "Could not update alternate title",
+      description:
+        "Your draft was not saved. Review the newer correction below before trying again.",
+      variant: "destructive",
+    });
+
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+    expect(container.textContent).toContain(currentAlias.alias);
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(4);
+  });
+
   it("requires removal confirmation and refreshes collision badges after removal", async () => {
     render();
     confirmSpy.mockReturnValueOnce(false);

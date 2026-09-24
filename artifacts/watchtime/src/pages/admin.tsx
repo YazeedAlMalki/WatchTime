@@ -1816,8 +1816,8 @@ export function AliasReview({
           <div>
             <p className="font-semibold">Alternate-title refresh failed</p>
             <p>
-              Your change was saved, but the review data may be stale. Retry
-              the refresh to check the latest collision information.
+              The review data may be stale. Retry the refresh to check the
+              latest correction and collision information.
             </p>
           </div>
           <Button
