@@ -7,7 +7,8 @@
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "validate:api-contract": "pnpm --filter @workspace/watchtime-mobile run typecheck:api-contract"
+    "validate:api-contract": "pnpm --filter @workspace/watchtime-mobile run typecheck:api-contract",
+    "validate:web-tests": "node scripts/validate-web-test-setup.mjs && pnpm --filter @workspace/watchtime test"
   },
   "private": true,
   "dependencies": {

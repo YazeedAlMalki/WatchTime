@@ -18,3 +18,4 @@
 - [PostgreSQL pool query instrumentation](pg-pool-query-instrumentation.md) — async-only pool.connect mocks hang callback-based pool.query; wrap query instead.
 - [Vitest browser closed dialogs](vitest-browser-closed-dialogs.md) — closed native dialogs disappear from role locators; check the DOM open property for their closed state.
 - [Admin sync status](admin-sync-status.md) — keep last completed and currently running resumable syncs separate in durable server state.
+- [Concurrent admin merges](concurrent-admin-merges.md) — parallel merges can leave route and generated contract files internally inconsistent; check the parent commit before attributing failures.
