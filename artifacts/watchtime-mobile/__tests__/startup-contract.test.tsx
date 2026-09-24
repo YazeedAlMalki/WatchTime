@@ -49,6 +49,18 @@ jest.mock('@clerk/expo', () => {
 
   const { Pressable, Text, View } = require('react-native');
 
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
   return {
     ClerkProvider: ({ children }: any) => children,
     ClerkLoaded: () => null,
@@ -91,6 +103,18 @@ jest.mock('expo-splash-screen', () => ({
 jest.mock('expo-router', () => {
   const React = require('react');
 
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
   const { View } = require('react-native');
 
   const Stack: any = ({ children }: any) => (
@@ -112,6 +136,18 @@ jest.mock('react-native-gesture-handler', () => {
   const React = require('react');
 
   const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
   return {
     GestureHandlerRootView: ({ children }: any) => children,
   };
@@ -128,6 +164,18 @@ jest.mock('react-native-safe-area-context', () => ({
 
 jest.mock('@tanstack/react-query', () => {
   const React = require('react');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
 
   const { Pressable, Text, View } = require('react-native');
 
@@ -174,6 +222,18 @@ jest.mock('@/components/ErrorBoundary', () => ({
 
 jest.mock('@/components/ui', () => {
   const React = require('react');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
+
+  const { Pressable, Text, View } = require('react-native');
 
   const { Pressable, Text, View } = require('react-native');
   return {

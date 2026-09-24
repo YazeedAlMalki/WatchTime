@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   WIKIDATA_PROVIDER,
@@ -14,7 +15,7 @@ import {
   safetyRecordsTable,
   titlesTable,
 } from "@workspace/db";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -136,6 +137,133 @@ describe("Wikidata SPARQL adapter", () => {
     }).queryByImdbId("tt1234567");
     expect(result.itemId).toBe("Q42");
     expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("title-level safety records migration", () => {
+  it("keeps the newest title record per source and leaves season and episode duplicates untouched", async () => {
+    const migration = readFileSync(
+      new URL(
+        "../../../../lib/db/drizzle/0000_protect_title_level_safety_records.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const statements = migration
+      .split("--> statement-breakpoint")
+      .map((statement) => statement.trim());
+    expect(statements).toHaveLength(2);
+
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql.raw(`
+        CREATE TEMP TABLE safety_records (
+          id integer PRIMARY KEY,
+          title_id integer NOT NULL,
+          season_number integer,
+          episode_number integer,
+          source_name text NOT NULL,
+          status text NOT NULL,
+          updated_at timestamp NOT NULL
+        ) ON COMMIT DROP
+      `),
+      );
+      await tx.execute(
+        sql.raw(`
+        INSERT INTO safety_records (id, title_id, season_number, episode_number, source_name, status, updated_at)
+        VALUES
+          (1, 42, NULL, NULL, 'Wikidata', 'available', '2024-01-01T00:00:00Z'),
+          (2, 42, NULL, NULL, 'Wikidata', 'provider_unavailable', '2025-01-01T00:00:00Z'),
+          (3, 42, NULL, NULL, 'Wikidata', 'available', '2023-01-01T00:00:00Z'),
+          (4, 42, NULL, NULL, 'Does the Dog Die?', 'available', '2024-06-01T00:00:00Z'),
+          (5, 42, NULL, NULL, 'WatchTime Community', 'available', '2024-07-01T00:00:00Z'),
+          (6, 42, 1, NULL, 'Wikidata', 'available', '2024-01-01T00:00:00Z'),
+          (7, 42, 1, NULL, 'Wikidata', 'provider_unavailable', '2025-01-01T00:00:00Z'),
+          (8, 42, 1, 1, 'Wikidata', 'available', '2024-01-01T00:00:00Z'),
+          (9, 42, 1, 1, 'Wikidata', 'provider_unavailable', '2025-01-01T00:00:00Z')
+      `),
+      );
+
+      await tx.execute(sql.raw(statements[0]));
+      await tx.execute(sql.raw(statements[1]));
+
+      const { rows } = await tx.execute(sql`
+        SELECT id, season_number, episode_number, source_name, status
+        FROM safety_records
+        ORDER BY id
+      `);
+      expect(rows).toEqual([
+        {
+          id: 2,
+          season_number: null,
+          episode_number: null,
+          source_name: "Wikidata",
+          status: "provider_unavailable",
+        },
+        {
+          id: 4,
+          season_number: null,
+          episode_number: null,
+          source_name: "Does the Dog Die?",
+          status: "available",
+        },
+        {
+          id: 5,
+          season_number: null,
+          episode_number: null,
+          source_name: "WatchTime Community",
+          status: "available",
+        },
+        {
+          id: 6,
+          season_number: 1,
+          episode_number: null,
+          source_name: "Wikidata",
+          status: "available",
+        },
+        {
+          id: 7,
+          season_number: 1,
+          episode_number: null,
+          source_name: "Wikidata",
+          status: "provider_unavailable",
+        },
+        {
+          id: 8,
+          season_number: 1,
+          episode_number: 1,
+          source_name: "Wikidata",
+          status: "available",
+        },
+        {
+          id: 9,
+          season_number: 1,
+          episode_number: 1,
+          source_name: "Wikidata",
+          status: "provider_unavailable",
+        },
+      ]);
+
+      await tx.execute(
+        sql.raw(`
+        INSERT INTO safety_records (id, title_id, season_number, episode_number, source_name, status, updated_at)
+        VALUES
+          (10, 42, 1, NULL, 'Wikidata', 'available', '2026-01-01T00:00:00Z'),
+          (11, 42, 1, 1, 'Wikidata', 'available', '2026-01-01T00:00:00Z')
+      `),
+      );
+      const scopedDuplicates = await tx.execute(sql`
+        SELECT season_number, episode_number, count(*)::int AS count
+        FROM safety_records
+        WHERE season_number = 1
+        GROUP BY season_number, episode_number
+        ORDER BY episode_number NULLS FIRST
+      `);
+      expect(scopedDuplicates.rows).toEqual([
+        { season_number: 1, episode_number: null, count: 3 },
+        { season_number: 1, episode_number: 1, count: 3 },
+      ]);
+    });
   });
 });
 
