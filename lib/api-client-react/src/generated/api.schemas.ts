@@ -192,6 +192,8 @@ export interface AdminContentRefreshBatchInput {
 }
 
 export type RatingRegion = typeof RatingRegion[keyof typeof RatingRegion];
+
+export type RatingRegion = typeof RatingRegion[keyof typeof RatingRegion];
 export const RatingRegion = {
   US: 'US',
   GB: 'GB',
@@ -966,6 +968,7 @@ export interface AuditLogPage {
   entries: AuditLogEntry[];
 }
 
+export type ReportStartupDiagnosticBodyEvent = typeof ReportStartupDiagnosticBodyEvent[keyof typeof ReportStartupDiagnosticBodyEvent];
 export type DevAuthLoginBody = {
   email: string;
   password: string;
@@ -1176,6 +1179,10 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
+export type ReportStartupDiagnosticBody = {
+  event: ReportStartupDiagnosticBodyEvent;
+};
+
 export const RatingRegion = {
   US: 'US',
   GB: 'GB',
@@ -1183,4 +1190,19 @@ export const RatingRegion = {
   FR: 'FR',
   AU: 'AU',
   BR: 'BR',
+} as const;
+
+export const RatingRegion = {
+  US: 'US',
+  GB: 'GB',
+  DE: 'DE',
+  FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
+} as const;
+
+export const ReportStartupDiagnosticBodyEvent = {
+  'font-error': 'font-error',
+  'splash-hide-error': 'splash-hide-error',
+  'splash-prevent-error': 'splash-prevent-error',
 } as const;

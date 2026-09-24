@@ -65,6 +65,7 @@ import type {
   RecommendationGroup,
   RefreshAdminContentBatch200,
   ReportModeration,
+  ReportStartupDiagnosticBody,
   SafetyContribution,
   SafetyContributionInput,
   SafetyInfo,
@@ -107,6 +108,11 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   return result;
 };
 
+export const getReportStartupDiagnosticUrl = () => {
+
+
+  return `/api/diagnostics/startup`
+}
 export const getDevAuthLoginUrl = () => {
 
 
@@ -3388,3 +3394,58 @@ export function useGetAdminAuditLog<TData = Awaited<ReturnType<typeof getAdminAu
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+
+    export type ReportStartupDiagnosticMutationResult = NonNullable<Awaited<ReturnType<typeof reportStartupDiagnostic>>>
+
+    /**
+ * @summary Record a non-sensitive mobile startup failure
+ */
+export const useReportStartupDiagnostic = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reportStartupDiagnostic>>, TError,{data: BodyType<ReportStartupDiagnosticBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reportStartupDiagnostic>>,
+        TError,
+        {data: BodyType<ReportStartupDiagnosticBody>},
+        TContext
+      > => {
+      return useMutation(getReportStartupDiagnosticMutationOptions(options));
+    }
+
+    export type ReportStartupDiagnosticMutationBody = BodyType<ReportStartupDiagnosticBody>
+
+    export type ReportStartupDiagnosticMutationError = ErrorType<void>
+
+export const getReportStartupDiagnosticMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reportStartupDiagnostic>>, TError,{data: BodyType<ReportStartupDiagnosticBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reportStartupDiagnostic>>, TError,{data: BodyType<ReportStartupDiagnosticBody>}, TContext> => {
+
+const mutationKey = ['reportStartupDiagnostic'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reportStartupDiagnostic>>, {data: BodyType<ReportStartupDiagnosticBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  reportStartupDiagnostic(data,requestOptions)
+        }
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+/**
+ * @summary Record a non-sensitive mobile startup failure
+ */
+export const reportStartupDiagnostic = async (reportStartupDiagnosticBody: ReportStartupDiagnosticBody, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getReportStartupDiagnosticUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(reportStartupDiagnosticBody)
+  }
+);}

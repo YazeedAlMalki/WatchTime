@@ -21,14 +21,21 @@ import * as SplashScreen from 'expo-splash-screen';
 import colors from '@/constants/colors';
 import { getDevDemoToken } from '@/lib/dev-demo-session';
 import { AppAuthProvider } from '@/lib/app-auth';
-import { markStartup } from '@/lib/startup-metrics';
 import { ExpoPreviewReadiness } from '@/components/ExpoPreviewReadiness';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+import { markStartup, reportStartupFailure } from '@/lib/startup-metrics';
 
 const domain = process.env.EXPO_PUBLIC_DOMAIN;
 if (domain) setBaseUrl(`https://${domain}`);
+
+// Prevent the splash screen from auto-hiding before asset loading is complete.
+try {
+  void SplashScreen.preventAutoHideAsync().catch(() => reportStartupFailure('splash-prevent-error'));
+} catch {
+  reportStartupFailure('splash-prevent-error');
+}
 
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 const proxyUrl = process.env.EXPO_PUBLIC_CLERK_PROXY_URL || undefined;
@@ -96,11 +103,20 @@ export default function RootLayout() {
   useEffect(() => {
     if (fontsLoaded || fontError) {
       markStartup(fontError ? 'font-error' : 'fonts-ready');
-      void SplashScreen.hideAsync().catch((error: unknown) => {
+      if (fontError) reportStartupFailure('font-error');
+      try {
+        void SplashScreen.hideAsync().catch((error: unknown) => {
+          markStartup('splash-recovery-error', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          reportStartupFailure('splash-hide-error');
+        });
+      } catch (error) {
         markStartup('splash-recovery-error', {
           error: error instanceof Error ? error.message : String(error),
         });
-      });
+        reportStartupFailure('splash-hide-error');
+      }
     }
   }, [fontsLoaded, fontError]);
 

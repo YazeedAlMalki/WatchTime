@@ -1417,3 +1417,12 @@ export const GetAdminAuditLogResponse = zod.object({
 }))
 })
 
+
+/**
+ * @summary Record a non-sensitive mobile startup failure
+ */
+export const ReportStartupDiagnosticBody = zod.object({
+  "event": zod.enum(['font-error', 'splash-hide-error', 'splash-prevent-error'])
+})
+
+export const ReportStartupDiagnosticResponse = zod.void()

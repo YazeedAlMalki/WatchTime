@@ -9,6 +9,7 @@ servers:
     description: Base API path
 tags:
   - name: health
+  - name: diagnostics
   - name: catalog
   - name: tracking
   - name: safety
@@ -18,6 +19,27 @@ tags:
   - name: imports
   - name: auth
 paths:
+  /diagnostics/startup:
+    post:
+      operationId: reportStartupDiagnostic
+      tags: [diagnostics]
+      summary: Record a non-sensitive mobile startup failure
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [event]
+              properties:
+                event:
+                  type: string
+                  enum: [font-error, splash-hide-error, splash-prevent-error]
+      responses:
+        "204": { description: Diagnostic recorded }
+        "400": { description: Invalid diagnostic }
+        "429": { description: Too many diagnostics }
   /dev-auth/login:
     post:
       operationId: devAuthLogin

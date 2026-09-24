@@ -1,0 +1,56 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import express from "express";
+import supertest from "supertest";
+
+vi.mock("../lib/logger", () => ({
+  logger: { warn: vi.fn() },
+}));
+
+import router from "./startup-diagnostics";
+import { logger } from "../lib/logger";
+
+const app = express();
+app.set("trust proxy", 1);
+app.use(express.json());
+app.use("/api", router);
+
+describe("startup diagnostics", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("records a safe event without auth or arbitrary error details", async () => {
+    const res = await supertest(app)
+      .post("/api/diagnostics/startup")
+      .set("X-Forwarded-For", "192.0.2.1")
+      .send({ event: "splash-hide-error" });
+    expect(res.status).toBe(204);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { event: "splash-hide-error" },
+      "mobile startup recovery failure",
+    );
+  });
+
+  it("rejects arbitrary text and extra fields without logging them", async () => {
+    for (const body of [
+      { event: "custom error: private content" },
+      { event: "font-error", error: "private content" },
+      { event: "font-error", userId: "private content" },
+    ]) {
+      const res = await supertest(app).post("/api/diagnostics/startup")
+        .set("X-Forwarded-For", "192.0.2.2").send(body);
+      expect(res.status).toBe(400);
+    }
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("bounds public log volume", async () => {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const res = await supertest(app).post("/api/diagnostics/startup")
+        .set("X-Forwarded-For", "192.0.2.3").send({ event: "font-error" });
+      expect(res.status).toBe(204);
+    }
+    const blocked = await supertest(app).post("/api/diagnostics/startup")
+      .set("X-Forwarded-For", "192.0.2.3").send({ event: "font-error" });
+    expect(blocked.status).toBe(429);
+    expect(logger.warn).toHaveBeenCalledTimes(10);
+  });
+});

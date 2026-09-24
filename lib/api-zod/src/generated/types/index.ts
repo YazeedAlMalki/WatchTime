@@ -101,6 +101,8 @@ export * from './refreshAdminContentBatch200';
 export * from './regionalRating';
 export * from './reportModeration';
 export * from './reportModerationStatus';
+export * from './reportStartupDiagnosticBody';
+export * from './reportStartupDiagnosticBodyEvent';
 export * from './safetyCategorySummary';
 export * from './safetyCategorySummarySeverity';
 export * from './safetyContribution';

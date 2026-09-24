@@ -7,10 +7,12 @@ import miscRouter from "./misc";
 import adminRouter from "./admin";
 import importsRouter from "./imports";
 import devAuthRouter from "./dev-auth";
+import startupDiagnosticsRouter from "./startup-diagnostics";
 
 const router: IRouter = Router();
 
 router.use(devAuthRouter);
+router.use(startupDiagnosticsRouter);
 router.use(healthRouter);
 router.use(catalogRouter);
 router.use(trackingRouter);

@@ -12,6 +12,7 @@ const mockCancelAnimationFrame = jest.fn();
 
 const mockCancelInteraction = jest.fn();
 const mockMarkStartup = jest.fn();
+const mockReportStartupFailure = jest.fn();
 const mockSetBaseUrl = jest.fn();
 const mockSetAuthTokenGetter = jest.fn();
 const mockQueryEnabled = {
@@ -175,7 +176,6 @@ jest.mock('@/components/ui', () => {
   const React = require('react');
 
   const { Pressable, Text, View } = require('react-native');
-
   return {
     EmptyState: () => <View />,
     ErrorState: ({ message = "Couldn't load data", onRetry }: any) => (
@@ -212,6 +212,7 @@ jest.mock('@/constants/colors', () => ({
 
 jest.mock('@/lib/startup-metrics', () => ({
   markStartup: (...args: any[]) => mockMarkStartup(...args),
+  reportStartupFailure: (...args: any[]) => mockReportStartupFailure(...args),
 }));
 
 import RootLayout from '../app/_layout';
@@ -276,6 +277,7 @@ describe('mobile startup contracts', () => {
     expect(getByTestId('root-navigation')).toBeTruthy();
     expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
     expect(mockMarkStartup).toHaveBeenCalledWith('font-error');
+    expect(mockReportStartupFailure).toHaveBeenCalledWith('font-error');
   });
 
   it('keeps root navigation mounted when splash screen cleanup fails', async () => {
@@ -293,6 +295,7 @@ describe('mobile startup contracts', () => {
     expect(mockMarkStartup).toHaveBeenCalledWith('splash-recovery-error', {
       error: 'splash cleanup failed',
     });
+    expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-error');
   });
 
   it('keeps root navigation mounted when splash setup fails', async () => {
