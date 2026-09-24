@@ -286,7 +286,10 @@ describe("admin alternate-title review", () => {
     await flushEffects();
 
     expect(mocks.deleteMutation.mutate).toHaveBeenCalledWith(
-      { id: 17 },
+      {
+        id: 17,
+        data: { expectedUpdatedAt: initialAlias.updatedAt },
+      },
       expect.any(Object),
     );
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
@@ -299,6 +302,45 @@ describe("admin alternate-title review", () => {
     render([uniqueAlias()]);
     expect(container.textContent).toContain("Unique");
     expect(container.textContent).not.toContain("2 titles");
+  });
+
+  it("refreshes collision badges and explains a stale removal conflict", async () => {
+    mocks.deleteMutation.mutate.mockImplementation(
+      (_variables: unknown, options?: { onError?: (error: unknown) => Promise<void> }) => {
+        void options?.onError?.({
+          data: {
+            error:
+              "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
+          },
+        });
+      },
+    );
+    render();
+    confirmSpy.mockReturnValue(true);
+
+    act(() => button(container, "Remove").click());
+    await flushEffects();
+
+    expect(mocks.deleteMutation.mutate).toHaveBeenCalledWith(
+      {
+        id: 17,
+        data: { expectedUpdatedAt: initialAlias.updatedAt },
+      },
+      expect.any(Object),
+    );
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["/api/admin/content-aliases"],
+    }, { throwOnError: true });
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["/api/admin/content"],
+    }, { throwOnError: true });
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: "Could not remove alternate title",
+      description:
+        "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
+      variant: "destructive",
+    });
+    expect(container.textContent).toContain("2 titles");
   });
 
   it("keeps the edited alias visible and offers a retry when refresh fails", async () => {

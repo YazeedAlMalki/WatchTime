@@ -21,6 +21,7 @@ import type {
 
 import type {
   AdminContentAlias,
+  AdminContentAliasDelete,
   AdminContentAliasRecord,
   AdminContentAliasUpdate,
   AdminContentRefreshBatchInput,
@@ -2943,21 +2944,22 @@ export const getDeleteAdminContentAliasUrl = (id: number,) => {
 /**
  * @summary Remove an alternate title without changing catalog identity
  */
-export const deleteAdminContentAlias = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+export const deleteAdminContentAlias = async (id: number,
+    adminContentAliasDelete: AdminContentAliasDelete, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
 
   return customFetch<void>(getDeleteAdminContentAliasUrl(id),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminContentAliasDelete)
   }
 );}
 
 
 export const getDeleteAdminContentAliasMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminContentAlias>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof deleteAdminContentAlias>>, TError,{id: number}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminContentAlias>>, TError,{id: number;data: BodyType<AdminContentAliasDelete>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAdminContentAlias>>, TError,{id: number;data: BodyType<AdminContentAliasDelete>}, TContext> => {
 
 const mutationKey = ['deleteAdminContentAlias'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -2967,10 +2969,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       : {mutation: { mutationKey, }, request: undefined};
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAdminContentAlias>>, {id: number}> = (props) => {
-          const {id} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAdminContentAlias>>, {id: number;data: BodyType<AdminContentAliasDelete>}> = (props) => {
+          const {id,data} = props ?? {};
 
-          return  deleteAdminContentAlias(id,requestOptions)
+          return  deleteAdminContentAlias(id,data,requestOptions)
         }
 
 
@@ -2978,17 +2980,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteAdminContentAliasMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAdminContentAlias>>>
 
+    export type DeleteAdminContentAliasMutationBody = BodyType<AdminContentAliasDelete>
     export type DeleteAdminContentAliasMutationError = ErrorType<void>
 
     /**
  * @summary Remove an alternate title without changing catalog identity
  */
 export const useDeleteAdminContentAlias = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminContentAlias>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminContentAlias>>, TError,{id: number;data: BodyType<AdminContentAliasDelete>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof deleteAdminContentAlias>>,
         TError,
-        {id: number},
+        {id: number;data: BodyType<AdminContentAliasDelete>},
         TContext
       > => {
       return useMutation(getDeleteAdminContentAliasMutationOptions(options));

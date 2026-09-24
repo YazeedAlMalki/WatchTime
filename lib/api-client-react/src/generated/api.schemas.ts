@@ -763,6 +763,9 @@ export interface AdminContentAliasUpdate {
   expectedUpdatedAt: string;
 }
 
+export interface AdminContentAliasDelete {
+  expectedUpdatedAt: string;
+}
 export interface AdminContentAliasRecord {
   id: number;
   titleId: number;

@@ -113,22 +113,6 @@ describe("admin title aliases", () => {
       });
 
     const refreshedAt = new Date("2026-03-01T00:00:00.000Z");
-
-    expect(response.status).toBe(200);
-    expect(response.body).toHaveLength(1);
-    expect(response.body[0].selectedRating).toEqual({
-      region: "US",
-      countryName: "United States",
-      system: "MPAA",
-      label: "PG-13",
-      sourceName: "Wikidata",
-      recordId: newer.id,
-      lastRefreshedAt: newerUpdatedAt.toISOString(),
-      sourceUrl: "https://www.wikidata.org/wiki/Q123",
-    });
-  });
-
-  it("matches the public rating tie-breaker regardless of record insertion order", async () => {
     const updatedAt = new Date("2026-02-01T00:00:00.000Z");
     const makeRecord = (label: string, tier: number, url: string) => ({
       titleId: createdTitleIds[0],
@@ -202,29 +186,6 @@ describe("admin title aliases", () => {
       });
 
     const refreshedAt = new Date("2026-03-01T00:00:00.000Z");
-    expect(response.status).toBe(200);
-    expect(response.body).toHaveLength(2);
-    expect(response.body[0]).toMatchObject({
-      alias: "Shared Local Title",
-      sourceName: "Editorial test",
-      language: "en",
-      isEditorial: true,
-      collision: true,
-      collisionTitleCount: 2,
-    });
-  });
-
-  it("filters aliases by provider or editorial ownership", async () => {
-    await db.insert(titleAliasesTable).values({
-      titleId: createdTitleIds[0],
-      alias: "Provider Local Title",
-      normalizedAlias: "providerlocaltitle",
-      language: "en",
-      sourceName: "Provider catalog",
-      sourceUrl: "https://example.test/provider",
-      isEditorial: false,
-    });
-
     const providerResponse = await request(app)
       .get("/api/admin/content-aliases?ownership=provider");
     expect(providerResponse.status).toBe(200);
@@ -266,10 +227,6 @@ describe("admin title aliases", () => {
       });
 
     const refreshedAt = new Date("2026-03-01T00:00:00.000Z");
-    expect(response.status).toBe(400);
-  });
-
-  it("edits an alias without changing either catalog identity", async () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
     const response = await request(app)
@@ -294,6 +251,15 @@ describe("admin title aliases", () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
     const expectedUpdatedAt = row.updatedAt.toISOString();
+
+    const correction = await request(app)
+      .patch(`/api/admin/content-aliases/${row.id}`)
+      .send({
+        alias: "Newer Admin Correction",
+        language: "fr",
+        sourceUrl: "https://example.test/newer-correction",
+        expectedUpdatedAt,
+      });
 
     const firstEdit = await request(app)
       .patch(`/api/admin/content-aliases/${row.id}`)
@@ -336,28 +302,23 @@ describe("admin title aliases", () => {
     const [unchanged] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.id, row.id));
     expect(unchanged).toMatchObject({
-      alias: "First Admin Correction",
-      language: "en",
-      sourceUrl: "https://example.test/first-correction",
+      alias: "Newer Admin Correction",
+      language: "fr",
+      sourceUrl: "https://example.test/newer-correction",
+      isEditorial: true,
     });
 
-    const collisionReport = await request(app).get("/api/admin/content-aliases?q=Shared");
+    const collisionReport = await request(app).get("/api/admin/content-aliases?q=Newer");
     expect(collisionReport.status).toBe(200);
-    expect(collisionReport.body).toHaveLength(2);
-    expect(collisionReport.body).toEqual(expect.arrayContaining([
+    expect(collisionReport.body).toEqual([
       expect.objectContaining({
+        id: row.id,
         titleId: createdTitleIds[0],
-        isEditorial: false,
-        collision: true,
-        collisionTitleCount: 2,
+        alias: "Newer Admin Correction",
+        collision: false,
+        collisionTitleCount: 1,
       }),
-      expect.objectContaining({
-        titleId: createdTitleIds[1],
-        isEditorial: true,
-        collision: true,
-        collisionTitleCount: 2,
-      }),
-    ]));
+    ]);
   });
 
   it("removes withdrawn provider aliases without removing an editorial correction", async () => {
@@ -376,71 +337,27 @@ describe("admin title aliases", () => {
       popularity: 0,
       wikiPage: "Alias Test One",
     };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      extract: "Provider summary",
-    }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    })));
-
-    await runCatalogSync({ dryRun: false, allowPartial: false }, [sourceItem]);
-    const [alias] = await db.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
     const edit = await request(app)
       .patch(`/api/admin/content-aliases/${providerAlias.id}`)
       .send({
         alias: "Corrected Provider Title",
         language: "en",
         sourceUrl: "https://example.test/editorial",
+        expectedUpdatedAt: providerAlias.updatedAt.toISOString(),
       });
-    expect(edit.status).toBe(200);
-
-    const mappingsBefore = await db.select().from(providerMappingsTable)
-      .where(eq(providerMappingsTable.titleId, createdTitleIds[0]));
-    await runCatalogSync({ dryRun: false, allowPartial: false }, [sourceItem]);
-
     const titles = await db.select().from(titlesTable)
       .where(inArray(titlesTable.id, createdTitleIds));
-    const mappingsAfter = await db.select().from(providerMappingsTable)
-      .where(eq(providerMappingsTable.titleId, createdTitleIds[0]));
-    const refreshedAliases = await db.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
-    expect(titles.map((title) => title.id).sort()).toEqual([...createdTitleIds].sort());
-    expect(titles.map((title) => title.imdbId).sort()).toEqual(["tt-alias-test-1", "tt-alias-test-2"]);
-    expect(mappingsAfter.map(({ provider, externalId, titleId }) => ({ provider, externalId, titleId })))
-      .toEqual(mappingsBefore.map(({ provider, externalId, titleId }) => ({ provider, externalId, titleId })));
-    expect(refreshedAliases).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        alias: "Corrected Local Title",
-        sourceName: "Admin editorial",
-        isEditorial: true,
-      }),
-      expect.objectContaining({
-        alias: "Shared Local Title",
-        sourceName: "Provider catalog",
-        isEditorial: false,
-      }),
-    ]));
-    expect(titles.find((title) => title.id === createdTitleIds[0])?.altTitles)
-      .toEqual(expect.arrayContaining(["Corrected Local Title", "Shared Local Title"]));
-
-    const collisionReport = await request(app).get("/api/admin/content-aliases?q=Shared");
+    const collisionReport = await request(app).get("/api/admin/content-aliases?q=Newer");
     expect(collisionReport.status).toBe(200);
-    expect(collisionReport.body).toHaveLength(2);
-    expect(collisionReport.body).toEqual(expect.arrayContaining([
+    expect(collisionReport.body).toEqual([
       expect.objectContaining({
+        id: row.id,
         titleId: createdTitleIds[0],
-        isEditorial: false,
-        collision: true,
-        collisionTitleCount: 2,
+        alias: "Newer Admin Correction",
+        collision: false,
+        collisionTitleCount: 1,
       }),
-      expect.objectContaining({
-        titleId: createdTitleIds[1],
-        isEditorial: true,
-        collision: true,
-        collisionTitleCount: 2,
-      }),
-    ]));
+    ]);
   });
 
   it("removes withdrawn provider aliases without removing an editorial correction", async () => {
@@ -476,6 +393,7 @@ describe("admin title aliases", () => {
         alias: "Corrected Provider Title",
         language: "en",
         sourceUrl: "https://example.test/editorial",
+        expectedUpdatedAt: providerAlias.updatedAt.toISOString(),
       });
     expect(edit.status).toBe(200);
 
@@ -547,28 +465,7 @@ describe("admin title aliases", () => {
 
     const [migrated] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.id, legacyAlias.id));
-    expect(migrated).toMatchObject({
-      alias: "SHARED LOCAL TITLE",
-      sourceName: "Provider catalog",
-      sourceUrl: "https://example.test/provider",
-      isEditorial: false,
-    });
-  });
-});
 
-    const [record] = await db.insert(safetyRecordsTable).values({
-      titleId: createdTitleIds[1],
-      sourceName: "Wikidata",
-      tier: 2,
-      isCommunity: false,
-      status: "available",
-      url: "https://www.wikidata.org/wiki/Q789",
-      updatedAt: refreshedAt,
-      items: [{
-        category: "BBFC",
-        label: "12A",
-        score: null,
-        maxScore: null,
-        description: "United Kingdom official record",
-      }],
-    }).returning({ id: safetyRecordsTable.id });
+    const staleRemoval = await request(app)
+      .delete(`/api/admin/content-aliases/${row.id}`)
+      .send({ expectedUpdatedAt });

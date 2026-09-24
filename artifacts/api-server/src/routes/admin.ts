@@ -23,6 +23,7 @@ import {
   UpdateAdminContributionBody,
   UpdateAdminReportBody,
   UpdateAdminFeedbackBody,
+  DeleteAdminContentAliasBody,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middlewares/auth";
 import {
@@ -122,7 +123,7 @@ router.get("/contributions", async (req, res) => {
 
 router.patch("/feedback/:feedbackId", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
-  const parsed = UpdateAdminFeedbackBody.safeParse(req.body);
+  const parsed = DeleteAdminContentAliasBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(titleAliasesTable)
@@ -234,7 +235,7 @@ router.get("/reports", async (req, res) => {
 
 router.patch("/feedback/:feedbackId", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
-  const parsed = UpdateAdminFeedbackBody.safeParse(req.body);
+  const parsed = DeleteAdminContentAliasBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(titleAliasesTable)
@@ -347,7 +348,7 @@ router.get("/feedback", async (req, res) => {
 
 router.patch("/feedback/:feedbackId", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
-  const parsed = UpdateAdminFeedbackBody.safeParse(req.body);
+  const parsed = DeleteAdminContentAliasBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(titleAliasesTable)
@@ -713,10 +714,17 @@ router.patch("/content-aliases/:id", async (req, res) => {
 
 router.delete("/content-aliases/:id", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
-  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid alias id" });
   const removed = await db.transaction(async (tx) => {
-    const [current] = await tx.delete(titleAliasesTable).where(eq(titleAliasesTable.id, id)).returning();
+    const [current] = await tx.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.id, id)).for("update");
     if (!current) return null;
+    if (current.updatedAt.getTime() !== parsed.data.expectedUpdatedAt.getTime()) {
+      return {
+        error: "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
+      } as const;
+    }
+    const [deleted] = await tx.delete(titleAliasesTable).where(eq(titleAliasesTable.id, id)).returning();
+    if (!deleted) return null;
     await refreshTitleAliasSearchList(tx, current.titleId);
     await tx.insert(adminAuditLogTable).values({
       adminId: req.userId!,
@@ -725,9 +733,10 @@ router.delete("/content-aliases/:id", async (req, res) => {
       entityId: id,
       details: { titleId: current.titleId, alias: current.alias },
     });
-    return current;
+    return deleted;
   });
   if (!removed) return res.status(404).json({ error: "Not found" });
+  if ("error" in removed) return res.status(409).json({ error: removed.error });
   return res.status(204).send();
 });
 

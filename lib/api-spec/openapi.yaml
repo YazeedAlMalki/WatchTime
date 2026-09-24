@@ -958,11 +958,21 @@ paths:
           in: path
           required: true
           schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminContentAliasDelete"
       responses:
         "204":
           description: Alternate title removed
+        "400":
+          description: Invalid or missing alias timestamp
         "404":
           description: Alias not found
+        "409":
+          description: Alias changed since the review page was opened
         "403":
           description: Forbidden
   /admin/content/{id}/refresh:
@@ -1568,6 +1578,11 @@ components:
         alias: { type: string, minLength: 1, maxLength: 300 }
         language: { type: ["string", "null"] }
         sourceUrl: { type: ["string", "null"], format: uri }
+        expectedUpdatedAt: { type: string, format: date-time }
+    AdminContentAliasDelete:
+      type: object
+      required: [expectedUpdatedAt]
+      properties:
         expectedUpdatedAt: { type: string, format: date-time }
     AdminContentAliasRecord:
       type: object

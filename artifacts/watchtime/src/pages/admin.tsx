@@ -1626,7 +1626,10 @@ export function AliasReview({
       return;
     }
     deleteAlias.mutate(
-      { id: alias.id },
+      {
+        id: alias.id,
+        data: { expectedUpdatedAt: alias.updatedAt },
+      },
       {
         onSuccess: async () => {
           if (editingId === alias.id) setEditingId(null);
@@ -1642,12 +1645,20 @@ export function AliasReview({
                 },
           );
         },
-        onError: (error) =>
+        onError: async (error) => {
+          const description = errorDescription(error);
+          const isStaleRemoval = description.includes(
+            "changed while you were reviewing it",
+          );
+          if (isStaleRemoval) {
+            await refreshAliasViews();
+          }
           toast({
             title: "Could not remove alternate title",
-            description: errorDescription(error),
+            description,
             variant: "destructive",
-          }),
+          });
+        },
       },
     );
   };
