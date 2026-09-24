@@ -5,7 +5,7 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { UserProfilePreferredRatingRegion } from './userProfilePreferredRatingRegion';
+import type { RatingRegion } from './ratingRegion';
 
 export interface UserProfile {
   id: string;
@@ -18,5 +18,5 @@ export interface UserProfile {
   episodesWatched: number;
   moviesWatched: number;
   timeWatchedMinutes?: number;
-  preferredRatingRegion: UserProfilePreferredRatingRegion;
+  preferredRatingRegion: RatingRegion;
 }

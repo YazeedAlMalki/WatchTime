@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { UpdateMeBody } from "@workspace/api-zod";
 import { RATING_REGIONS } from "@workspace/rating-regions";
 import { resolvePreferredRating } from "./ratingRegions";
 
@@ -20,13 +21,31 @@ describe("resolvePreferredRating", () => {
       new URL("../../../../lib/api-spec/openapi.yaml", import.meta.url),
     );
     const spec = readFileSync(specPath, "utf8");
-    const updateSchema = spec.match(
-      /UserPreferencesUpdate:[\s\S]*?preferredRatingRegion:\s*\n\s*type: string\s*\n\s*enum: \[([^\]]+)\]/,
+    const regionSchema = spec.match(
+      /^    RatingRegion:\s*\n      type: string\s*\n      enum: \[([^\]]+)\]/m,
     );
-
-    expect(updateSchema, "UserPreferencesUpdate rating-region enum").not.toBeNull();
-    const apiRegions = updateSchema![1].split(",").map((region) => region.trim());
+    expect(regionSchema, "shared API rating-region schema").not.toBeNull();
+    const apiRegions = regionSchema![1].split(",").map((region) => region.trim());
     expect(RATING_REGIONS.map((region) => region.code)).toEqual(apiRegions);
+    expect(spec.match(/enum: \[US, GB, DE, FR, AU, BR\]/g)).toHaveLength(1);
+
+    const componentSections = spec.split(/^    (?=[A-Za-z][A-Za-z0-9]*:)/m);
+    for (const schemaName of ["UserProfile", "UserPreferences", "UserPreferencesUpdate", "SafetyInfo", "RegionalRating"]) {
+      const section = componentSections.find((part) => part.startsWith(`${schemaName}:`));
+      expect(section, `${schemaName} exists`).toBeDefined();
+      const field = schemaName === "RegionalRating" ? "region" : "preferredRatingRegion";
+      expect(
+        section,
+        `${schemaName}.${field} references the shared rating-region schema`,
+      ).toMatch(new RegExp(`^        ${field}:\\s*\\n          \\$ref: "#/components/schemas/RatingRegion"`, "m"));
+    }
+    expect(spec).toMatch(
+      /- name: region\s*\n\s*in: query\s*\n\s*description: Rating region used to select the official Wikidata record\s*\n\s*schema:\s*\n\s*allOf:\s*\n\s*- \$ref: "#\/components\/schemas\/RatingRegion"\s*\n\s*default: US/,
+    );
+    for (const region of apiRegions) {
+      expect(UpdateMeBody.safeParse({ preferredRatingRegion: region }).success).toBe(true);
+    }
+    expect(UpdateMeBody.safeParse({ preferredRatingRegion: "ZZ" }).success).toBe(false);
   });
 
   it("returns only the selected country's sourced classification", () => {

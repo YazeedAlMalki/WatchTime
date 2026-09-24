@@ -5,12 +5,12 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { SearchAdminContentRegion } from './searchAdminContentRegion';
+import type { RatingRegion } from './ratingRegion';
 
 export type SearchAdminContentParams = {
 q?: string;
 /**
  * Rating region used to select the official Wikidata record
  */
-region?: SearchAdminContentRegion;
+region?: RatingRegion;
 };

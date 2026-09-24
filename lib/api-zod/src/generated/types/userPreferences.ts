@@ -5,8 +5,8 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { UserPreferencesPreferredRatingRegion } from './userPreferencesPreferredRatingRegion';
+import type { RatingRegion } from './ratingRegion';
 
 export interface UserPreferences {
-  preferredRatingRegion: UserPreferencesPreferredRatingRegion;
+  preferredRatingRegion: RatingRegion;
 }

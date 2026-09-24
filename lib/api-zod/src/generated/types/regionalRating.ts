@@ -5,10 +5,10 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { RegionalRatingRegion } from './regionalRatingRegion';
+import type { RatingRegion } from './ratingRegion';
 
 export interface RegionalRating {
-  region: RegionalRatingRegion;
+  region: RatingRegion;
   countryName: string;
   system: string;
   label: string;

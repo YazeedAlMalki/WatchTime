@@ -897,8 +897,8 @@ paths:
           in: query
           description: Rating region used to select the official Wikidata record
           schema:
-            type: string
-            enum: [US, GB, DE, FR, AU, BR]
+            allOf:
+              - $ref: "#/components/schemas/RatingRegion"
             default: US
       responses:
         "200":
@@ -1230,6 +1230,9 @@ components:
           default: does_the_dog_die
         limit: { type: integer, minimum: 1, maximum: 25, default: 10 }
         offset: { type: integer, minimum: 0, default: 0 }
+    RatingRegion:
+      type: string
+      enum: [US, GB, DE, FR, AU, BR]
     UserProfile:
       type: object
       required: [id, email, isAdmin, canContribute, showsTracked, episodesWatched, moviesWatched, preferredRatingRegion]
@@ -1244,23 +1247,20 @@ components:
         moviesWatched: { type: integer }
         timeWatchedMinutes: { type: integer }
         preferredRatingRegion:
-          type: string
-          enum: [US, GB, DE, FR, AU, BR]
+          $ref: "#/components/schemas/RatingRegion"
     UserPreferences:
       type: object
       required: [preferredRatingRegion]
       properties:
         preferredRatingRegion:
-          type: string
-          enum: [US, GB, DE, FR, AU, BR]
+          $ref: "#/components/schemas/RatingRegion"
     UserPreferencesUpdate:
       type: object
       required: [preferredRatingRegion]
       additionalProperties: false
       properties:
         preferredRatingRegion:
-          type: string
-          enum: [US, GB, DE, FR, AU, BR]
+          $ref: "#/components/schemas/RatingRegion"
     Title:
       type: object
       required: [id, type, name, posterUrl, year, genres]
@@ -1435,8 +1435,7 @@ components:
           items:
             $ref: "#/components/schemas/SafetySource"
         preferredRatingRegion:
-          type: string
-          enum: [US, GB, DE, FR, AU, BR]
+          $ref: "#/components/schemas/RatingRegion"
         preferredRating:
           oneOf:
             - $ref: "#/components/schemas/RegionalRating"
@@ -1445,7 +1444,8 @@ components:
       type: object
       required: [region, countryName, system, label, sourceName, recordId, lastRefreshedAt, sourceUrl]
       properties:
-        region: { type: string, enum: [US, GB, DE, FR, AU, BR] }
+        region:
+          $ref: "#/components/schemas/RatingRegion"
         countryName: { type: string }
         system: { type: string }
         label: { type: string }

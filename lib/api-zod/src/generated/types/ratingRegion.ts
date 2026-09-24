@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type UserProfilePreferredRatingRegion = typeof UserProfilePreferredRatingRegion[keyof typeof UserProfilePreferredRatingRegion];
+export type RatingRegion = typeof RatingRegion[keyof typeof RatingRegion];
 
 
-export const UserProfilePreferredRatingRegion = {
+export const RatingRegion = {
   US: 'US',
   GB: 'GB',
   DE: 'DE',

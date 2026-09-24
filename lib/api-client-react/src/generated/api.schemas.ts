@@ -191,10 +191,8 @@ export interface AdminContentRefreshBatchInput {
   offset?: number;
 }
 
-export type UserProfilePreferredRatingRegion = typeof UserProfilePreferredRatingRegion[keyof typeof UserProfilePreferredRatingRegion];
-
-
-export const UserProfilePreferredRatingRegion = {
+export type RatingRegion = typeof RatingRegion[keyof typeof RatingRegion];
+export const RatingRegion = {
   US: 'US',
   GB: 'GB',
   DE: 'DE',
@@ -202,7 +200,6 @@ export const UserProfilePreferredRatingRegion = {
   AU: 'AU',
   BR: 'BR',
 } as const;
-
 export interface UserProfile {
   id: string;
   email: string;
@@ -214,39 +211,13 @@ export interface UserProfile {
   episodesWatched: number;
   moviesWatched: number;
   timeWatchedMinutes?: number;
-  preferredRatingRegion: UserProfilePreferredRatingRegion;
+  preferredRatingRegion: RatingRegion;
 }
-
-export type UserPreferencesPreferredRatingRegion = typeof UserPreferencesPreferredRatingRegion[keyof typeof UserPreferencesPreferredRatingRegion];
-
-
-export const UserPreferencesPreferredRatingRegion = {
-  US: 'US',
-  GB: 'GB',
-  DE: 'DE',
-  FR: 'FR',
-  AU: 'AU',
-  BR: 'BR',
-} as const;
-
 export interface UserPreferences {
-  preferredRatingRegion: UserPreferencesPreferredRatingRegion;
+  preferredRatingRegion: RatingRegion;
 }
-
-export type UserPreferencesUpdatePreferredRatingRegion = typeof UserPreferencesUpdatePreferredRatingRegion[keyof typeof UserPreferencesUpdatePreferredRatingRegion];
-
-
-export const UserPreferencesUpdatePreferredRatingRegion = {
-  US: 'US',
-  GB: 'GB',
-  DE: 'DE',
-  FR: 'FR',
-  AU: 'AU',
-  BR: 'BR',
-} as const;
-
 export interface UserPreferencesUpdate {
-  preferredRatingRegion: UserPreferencesUpdatePreferredRatingRegion;
+  preferredRatingRegion: RatingRegion;
 }
 
 export type TitleType = typeof TitleType[keyof typeof TitleType];
@@ -446,33 +417,8 @@ export const SafetyInfoLevel = {
   series: 'series',
   movie: 'movie',
 } as const;
-
-export type SafetyInfoPreferredRatingRegion = typeof SafetyInfoPreferredRatingRegion[keyof typeof SafetyInfoPreferredRatingRegion];
-
-
-export const SafetyInfoPreferredRatingRegion = {
-  US: 'US',
-  GB: 'GB',
-  DE: 'DE',
-  FR: 'FR',
-  AU: 'AU',
-  BR: 'BR',
-} as const;
-
-export type RegionalRatingRegion = typeof RegionalRatingRegion[keyof typeof RegionalRatingRegion];
-
-
-export const RegionalRatingRegion = {
-  US: 'US',
-  GB: 'GB',
-  DE: 'DE',
-  FR: 'FR',
-  AU: 'AU',
-  BR: 'BR',
-} as const;
-
 export interface RegionalRating {
-  region: RegionalRatingRegion;
+  region: RatingRegion;
   countryName: string;
   system: string;
   label: string;
@@ -489,7 +435,7 @@ export interface SafetyInfo {
   level: SafetyInfoLevel;
   summary: SafetyCategorySummary[];
   sources: SafetySource[];
-  preferredRatingRegion: SafetyInfoPreferredRatingRegion;
+  preferredRatingRegion: RatingRegion;
   preferredRating: RegionalRating | null;
 }
 
@@ -1178,21 +1124,8 @@ q?: string;
 /**
  * Rating region used to select the official Wikidata record
  */
-region?: SearchAdminContentRegion;
+region?: RatingRegion;
 };
-
-export type SearchAdminContentRegion = typeof SearchAdminContentRegion[keyof typeof SearchAdminContentRegion];
-
-
-export const SearchAdminContentRegion = {
-  US: 'US',
-  GB: 'GB',
-  DE: 'DE',
-  FR: 'FR',
-  AU: 'AU',
-  BR: 'BR',
-} as const;
-
 export type ListAdminContentAliasesParams = {
 q?: string;
 /**
@@ -1241,4 +1174,13 @@ export const GetAdminAuditLogEntityType = {
   report: 'report',
   feedback: 'feedback',
   content: 'content',
+} as const;
+
+export const RatingRegion = {
+  US: 'US',
+  GB: 'GB',
+  DE: 'DE',
+  FR: 'FR',
+  AU: 'AU',
+  BR: 'BR',
 } as const;
