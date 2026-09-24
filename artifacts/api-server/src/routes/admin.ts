@@ -24,6 +24,7 @@ import {
   UpdateAdminReportBody,
   UpdateAdminFeedbackBody,
   DeleteAdminContentAliasBody,
+  ListAdminContentRefreshBatchHistoryResponse,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middlewares/auth";
 import {
@@ -796,6 +797,50 @@ router.post("/content/refresh-batch", async (req, res) => {
       .where(eq(safetySyncRunsTable.id, run.id));
     return res.status(500).json({ ok: false, error });
   }
+});
+
+router.get("/content/refresh-batch/history", async (req, res) => {
+  const rawLimit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+  if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 50) {
+    return res.status(400).json({ error: "limit must be an integer from 1 to 50" });
+  }
+
+  const runs = await db
+    .select({
+      id: safetySyncRunsTable.id,
+      provider: safetySyncRunsTable.provider,
+      status: safetySyncRunsTable.status,
+      limit: safetySyncRunsTable.limit,
+      offset: safetySyncRunsTable.offset,
+      processed: safetySyncRunsTable.processed,
+      mapped: safetySyncRunsTable.mapped,
+      missing: safetySyncRunsTable.missing,
+      errors: safetySyncRunsTable.errors,
+      completedAt: safetySyncRunsTable.completedAt,
+      error: safetySyncRunsTable.error,
+    })
+    .from(safetySyncRunsTable)
+    .where(inArray(safetySyncRunsTable.status, ["completed", "failed"]))
+    .orderBy(
+      desc(sql`coalesce(${safetySyncRunsTable.completedAt}, ${safetySyncRunsTable.createdAt})`),
+      desc(safetySyncRunsTable.id),
+    )
+    .limit(rawLimit);
+
+  return res.json(ListAdminContentRefreshBatchHistoryResponse.parse(runs.map((run) => ({
+    id: run.id,
+    provider: run.provider,
+    status: run.status,
+    limit: run.limit,
+    offset: run.offset,
+    processed: run.processed,
+    mapped: run.mapped,
+    missing: run.missing,
+    errors: run.errors,
+    nextOffset: run.offset + run.processed,
+    completedAt: run.completedAt?.toISOString() ?? null,
+    error: run.error,
+  }))));
 });
 
 router.get("/analytics", async (_req, res) => {

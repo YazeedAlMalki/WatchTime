@@ -77,4 +77,91 @@ describe("admin safety sync status", () => {
       completedAt: null,
     });
   });
+
+  it("returns a bounded history of completed and failed batches by completion time", async () => {
+    const [olderCompletion] = await db.insert(safetySyncRunsTable).values({
+      provider: "does_the_dog_die",
+      status: "completed",
+      limit: 5,
+      offset: 10,
+      processed: 4,
+      mapped: 2,
+      missing: 1,
+      errors: 1,
+      startedAt: new Date("2026-09-23T09:55:00.000Z"),
+      completedAt: new Date("2026-09-23T10:01:00.000Z"),
+      createdAt: new Date("2026-09-23T10:05:00.000Z"),
+    }).returning();
+    const [newerCompletion] = await db.insert(safetySyncRunsTable).values({
+      provider: "wikidata",
+      status: "failed",
+      limit: 3,
+      offset: 14,
+      processed: 2,
+      mapped: 1,
+      missing: 0,
+      errors: 1,
+      error: "Provider request failed",
+      startedAt: new Date("2026-09-23T09:59:00.000Z"),
+      completedAt: new Date("2026-09-23T10:02:00.000Z"),
+      createdAt: new Date("2026-09-23T10:00:00.000Z"),
+    }).returning();
+    const [oldestCompletion] = await db.insert(safetySyncRunsTable).values({
+      provider: "wikidata",
+      status: "completed",
+      limit: 1,
+      offset: 16,
+      processed: 1,
+      mapped: 1,
+      missing: 0,
+      errors: 0,
+      startedAt: new Date("2026-09-23T09:50:00.000Z"),
+      completedAt: new Date("2026-09-23T10:00:00.000Z"),
+      createdAt: new Date("2026-09-23T10:06:00.000Z"),
+    }).returning();
+    const [running] = await db.insert(safetySyncRunsTable).values({
+      provider: "does_the_dog_die",
+      status: "running",
+      limit: 2,
+      offset: 17,
+      startedAt: new Date("2026-09-23T10:07:00.000Z"),
+    }).returning();
+    runIds.push(olderCompletion.id, newerCompletion.id, oldestCompletion.id, running.id);
+
+    const response = await request(app)
+      .get("/api/admin/content/refresh-batch/history?limit=2")
+      .expect(200);
+
+    expect(response.body).toHaveLength(2);
+    expect(response.body).toEqual([
+      expect.objectContaining({
+        id: newerCompletion.id,
+        provider: "wikidata",
+        status: "failed",
+        completedAt: "2026-09-23T10:02:00.000Z",
+        mapped: 1,
+        missing: 0,
+        errors: 1,
+        nextOffset: 16,
+        error: "Provider request failed",
+      }),
+      expect.objectContaining({
+        id: olderCompletion.id,
+        provider: "does_the_dog_die",
+        status: "completed",
+        completedAt: "2026-09-23T10:01:00.000Z",
+        mapped: 2,
+        missing: 1,
+        errors: 1,
+        nextOffset: 14,
+      }),
+    ]);
+    expect(response.body[0]).not.toHaveProperty("results");
+  });
+
+  it("rejects history limits outside the supported range", async () => {
+    await request(app)
+      .get("/api/admin/content/refresh-batch/history?limit=51")
+      .expect(400);
+  });
 });

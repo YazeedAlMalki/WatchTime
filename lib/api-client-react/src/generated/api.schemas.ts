@@ -193,7 +193,7 @@ export interface AdminContentRefreshBatchInput {
 
 export type RatingRegion = typeof RatingRegion[keyof typeof RatingRegion];
 
-export type RatingRegion = typeof RatingRegion[keyof typeof RatingRegion];
+
 export const RatingRegion = {
   US: 'US',
   GB: 'GB',
@@ -202,6 +202,7 @@ export const RatingRegion = {
   AU: 'AU',
   BR: 'BR',
 } as const;
+
 export interface UserProfile {
   id: string;
   email: string;
@@ -215,9 +216,11 @@ export interface UserProfile {
   timeWatchedMinutes?: number;
   preferredRatingRegion: RatingRegion;
 }
+
 export interface UserPreferences {
   preferredRatingRegion: RatingRegion;
 }
+
 export interface UserPreferencesUpdate {
   preferredRatingRegion: RatingRegion;
 }
@@ -419,6 +422,7 @@ export const SafetyInfoLevel = {
   series: 'series',
   movie: 'movie',
 } as const;
+
 export interface RegionalRating {
   region: RatingRegion;
   countryName: string;
@@ -799,6 +803,39 @@ export interface AdminContentRefreshBatch {
   error?: string | null;
 }
 
+export type AdminContentRefreshBatchHistoryEntryProvider = typeof AdminContentRefreshBatchHistoryEntryProvider[keyof typeof AdminContentRefreshBatchHistoryEntryProvider];
+
+
+export const AdminContentRefreshBatchHistoryEntryProvider = {
+  does_the_dog_die: 'does_the_dog_die',
+  wikidata: 'wikidata',
+} as const;
+
+export type AdminContentRefreshBatchHistoryEntryStatus = typeof AdminContentRefreshBatchHistoryEntryStatus[keyof typeof AdminContentRefreshBatchHistoryEntryStatus];
+
+
+export const AdminContentRefreshBatchHistoryEntryStatus = {
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export interface AdminContentRefreshBatchHistoryEntry {
+  id: number;
+  provider: AdminContentRefreshBatchHistoryEntryProvider;
+  status: AdminContentRefreshBatchHistoryEntryStatus;
+  limit: number;
+  offset: number;
+  processed: number;
+  mapped: number;
+  missing: number;
+  errors: number;
+  nextOffset: number;
+  /** @nullable */
+  completedAt: string | null;
+  /** @nullable */
+  error?: string | null;
+}
+
 export interface AdminContentRefreshBatchStatus {
   lastCompleted: AdminContentRefreshBatch | null;
   running: AdminContentRefreshBatch | null;
@@ -969,6 +1006,18 @@ export interface AuditLogPage {
 }
 
 export type ReportStartupDiagnosticBodyEvent = typeof ReportStartupDiagnosticBodyEvent[keyof typeof ReportStartupDiagnosticBodyEvent];
+
+
+export const ReportStartupDiagnosticBodyEvent = {
+  'font-error': 'font-error',
+  'splash-hide-error': 'splash-hide-error',
+  'splash-prevent-error': 'splash-prevent-error',
+} as const;
+
+export type ReportStartupDiagnosticBody = {
+  event: ReportStartupDiagnosticBodyEvent;
+};
+
 export type DevAuthLoginBody = {
   email: string;
   password: string;
@@ -1129,6 +1178,7 @@ q?: string;
  */
 region?: RatingRegion;
 };
+
 export type ListAdminContentAliasesParams = {
 q?: string;
 /**
@@ -1159,6 +1209,14 @@ export type RefreshAdminContentBatch200 = {
   results: AdminContentRefreshResult[];
 };
 
+export type ListAdminContentRefreshBatchHistoryParams = {
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
+};
+
 export type GetAdminAuditLogParams = {
 action?: string;
 entityType?: GetAdminAuditLogEntityType;
@@ -1179,30 +1237,3 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
-export type ReportStartupDiagnosticBody = {
-  event: ReportStartupDiagnosticBodyEvent;
-};
-
-export const RatingRegion = {
-  US: 'US',
-  GB: 'GB',
-  DE: 'DE',
-  FR: 'FR',
-  AU: 'AU',
-  BR: 'BR',
-} as const;
-
-export const RatingRegion = {
-  US: 'US',
-  GB: 'GB',
-  DE: 'DE',
-  FR: 'FR',
-  AU: 'AU',
-  BR: 'BR',
-} as const;
-
-export const ReportStartupDiagnosticBodyEvent = {
-  'font-error': 'font-error',
-  'splash-hide-error': 'splash-hide-error',
-  'splash-prevent-error': 'splash-prevent-error',
-} as const;

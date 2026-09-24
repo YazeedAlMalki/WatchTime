@@ -9,6 +9,16 @@ import * as zod from 'zod/v4';
 
 
 /**
+ * @summary Record a non-sensitive mobile startup failure
+ */
+export const ReportStartupDiagnosticBody = zod.object({
+  "event": zod.enum(['font-error', 'splash-hide-error', 'splash-prevent-error'])
+})
+
+export const ReportStartupDiagnosticResponse = zod.void()
+
+
+/**
  * @summary Development-only demo login
  */
 export const DevAuthLoginBody = zod.object({
@@ -412,6 +422,8 @@ export const getMyShowsQueryLimitDefault = 24;
 export const getMyShowsQueryLimitMax = 50;
 
 
+
+
 export const GetMyShowsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyShowsQueryLimitMax).default(getMyShowsQueryLimitDefault),
   "beforeId": zod.coerce.number().int().min(1).optional()
@@ -458,6 +470,8 @@ export const GetMyShowsResponse = zod.array(GetMyShowsResponseItem)
  */
 export const getMyInProgressShowsQueryLimitDefault = 24;
 export const getMyInProgressShowsQueryLimitMax = 50;
+
+
 
 
 export const GetMyInProgressShowsQueryParams = zod.object({
@@ -508,6 +522,7 @@ export const getMyMoviesQueryLimitDefault = 24;
 export const getMyMoviesQueryLimitMax = 50;
 
 
+
 export const GetMyMoviesQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyMoviesQueryLimitMax).default(getMyMoviesQueryLimitDefault),
   "before": zod.coerce.string().optional()
@@ -539,6 +554,7 @@ export const GetMyMoviesResponse = zod.array(GetMyMoviesResponseItem)
  */
 export const getMyWatchlistQueryLimitDefault = 24;
 export const getMyWatchlistQueryLimitMax = 50;
+
 
 
 export const GetMyWatchlistQueryParams = zod.object({
@@ -612,6 +628,7 @@ export const GetMyRecommendationsResponse = zod.array(GetMyRecommendationsRespon
 export const createImportBodyFileNameMax = 255;
 
 export const createImportBodyContentMax = 2097152;
+
 
 
 export const CreateImportBody = zod.object({
@@ -903,6 +920,7 @@ export const GetPublicStatsResponse = zod.object({
 /**
  * @summary Submit bug report, feature suggestion, or general feedback
  */
+
 
 
 export const CreateFeedbackBody = zod.object({
@@ -1201,6 +1219,7 @@ export const UpdateAdminContentAliasParams = zod.object({
 export const updateAdminContentAliasBodyAliasMax = 300;
 
 
+
 export const UpdateAdminContentAliasBody = zod.object({
   "alias": zod.string().min(1).max(updateAdminContentAliasBodyAliasMax),
   "language": zod.string().nullish(),
@@ -1326,6 +1345,7 @@ export const refreshAdminContentBatchBodyOffsetDefault = 0;
 export const refreshAdminContentBatchBodyOffsetMin = 0;
 
 
+
 export const RefreshAdminContentBatchBody = zod.object({
   "provider": zod.enum(['does_the_dog_die', 'wikidata']).default(refreshAdminContentBatchBodyProviderDefault),
   "limit": zod.int().min(1).max(refreshAdminContentBatchBodyLimitMax).default(refreshAdminContentBatchBodyLimitDefault),
@@ -1349,6 +1369,35 @@ export const RefreshAdminContentBatchResponse = zod.object({
   "error": zod.string().optional()
 }))
 })
+
+
+/**
+ * @summary List recent completed and failed safety-sync batches
+ */
+export const listAdminContentRefreshBatchHistoryQueryLimitDefault = 20;
+export const listAdminContentRefreshBatchHistoryQueryLimitMax = 50;
+
+
+
+export const ListAdminContentRefreshBatchHistoryQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(listAdminContentRefreshBatchHistoryQueryLimitMax).default(listAdminContentRefreshBatchHistoryQueryLimitDefault)
+})
+
+export const ListAdminContentRefreshBatchHistoryResponseItem = zod.object({
+  "id": zod.int(),
+  "provider": zod.enum(['does_the_dog_die', 'wikidata']),
+  "status": zod.enum(['completed', 'failed']),
+  "limit": zod.int(),
+  "offset": zod.int(),
+  "processed": zod.int(),
+  "mapped": zod.int(),
+  "missing": zod.int(),
+  "errors": zod.int(),
+  "nextOffset": zod.int(),
+  "completedAt": zod.coerce.date().nullable(),
+  "error": zod.string().nullish()
+})
+export const ListAdminContentRefreshBatchHistoryResponse = zod.array(ListAdminContentRefreshBatchHistoryResponseItem)
 
 
 /**
@@ -1418,11 +1467,3 @@ export const GetAdminAuditLogResponse = zod.object({
 })
 
 
-/**
- * @summary Record a non-sensitive mobile startup failure
- */
-export const ReportStartupDiagnosticBody = zod.object({
-  "event": zod.enum(['font-error', 'splash-hide-error', 'splash-prevent-error'])
-})
-
-export const ReportStartupDiagnosticResponse = zod.void()

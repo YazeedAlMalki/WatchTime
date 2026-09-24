@@ -21,6 +21,7 @@ import {
   useRefreshAdminContent,
   useRefreshAdminContentBatch,
   useGetAdminContentRefreshBatch,
+  useListAdminContentRefreshBatchHistory,
   useGetAdminAuditLog,
   getGetAdminDashboardQueryKey,
   getListAdminContributionsQueryKey,
@@ -30,7 +31,9 @@ import {
   getListAdminContentAliasesQueryKey,
   getListCatalogRefreshesQueryKey,
   getGetAdminContentRefreshBatchQueryKey,
+  getListAdminContentRefreshBatchHistoryQueryKey,
   type AdminContentRefreshBatch,
+  type AdminContentRefreshBatchHistoryEntry,
   type AdminContentAlias,
   type ListAdminContentAliasesOwnership,
 } from "@workspace/api-client-react";
@@ -976,6 +979,7 @@ function ContentTab({
   >("does_the_dog_die");
   const [batchLimit, setBatchLimit] = useState("10");
   const [batchOffset, setBatchOffset] = useState("0");
+  const [showBatchHistory, setShowBatchHistory] = useState(false);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 400);
@@ -1007,6 +1011,15 @@ function ContentTab({
   const refresh = useRefreshAdminContent();
   const batchRefresh = useRefreshAdminContentBatch();
   const { data: batchStatus } = useGetAdminContentRefreshBatch();
+  const batchHistoryQuery = useListAdminContentRefreshBatchHistory(
+    { limit: 20 },
+    {
+      query: {
+        enabled: showBatchHistory,
+        queryKey: getListAdminContentRefreshBatchHistoryQueryKey({ limit: 20 }),
+      },
+    },
+  );
 
   const doRefresh = (
     id: number,
@@ -1061,6 +1074,9 @@ function ContentTab({
         onSuccess: (result) => {
           qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
           qc.invalidateQueries({ queryKey: getGetAdminContentRefreshBatchQueryKey() });
+          qc.invalidateQueries({
+            queryKey: getListAdminContentRefreshBatchHistoryQueryKey({ limit: 20 }),
+          });
           toast({
             title: "Batch refresh complete",
             description: `Processed ${result.processed} title${result.processed === 1 ? "" : "s"} starting at offset ${result.offset}.`,
@@ -1068,6 +1084,9 @@ function ContentTab({
         },
         onError: () => {
           qc.invalidateQueries({ queryKey: getGetAdminContentRefreshBatchQueryKey() });
+          qc.invalidateQueries({
+            queryKey: getListAdminContentRefreshBatchHistoryQueryKey({ limit: 20 }),
+          });
           toast({ title: "Batch refresh failed", variant: "destructive" });
         },
       },
@@ -1299,6 +1318,97 @@ function ContentTab({
               </div>
             </div>
           )}
+          <div className="border-t border-border/60 pt-3 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h4 className="text-sm font-semibold text-foreground">
+                  Earlier safety-sync batches
+                </h4>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Review the 20 most recent completed or failed batches.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="rounded-xl"
+                aria-expanded={showBatchHistory}
+                onClick={() => setShowBatchHistory((visible) => !visible)}
+              >
+                {showBatchHistory ? "Hide history" : "Show history"}
+              </Button>
+            </div>
+            {showBatchHistory && (
+              batchHistoryQuery.isLoading ? (
+                <p className="text-sm text-muted-foreground" role="status">
+                  Loading batch history…
+                </p>
+              ) : batchHistoryQuery.isError ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+                    Batch history could not be loaded.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="rounded-xl"
+                    onClick={() => void batchHistoryQuery.refetch()}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : batchHistoryQuery.data?.length ? (
+                <div className="space-y-2">
+                  {batchHistoryQuery.data.map((run: AdminContentRefreshBatchHistoryEntry) => (
+                    <div
+                      key={run.id}
+                      className="rounded-xl border border-border/60 bg-secondary/20 p-3 space-y-2"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-sm font-semibold text-foreground">
+                          {run.provider === "wikidata" ? "Wikidata" : "Does the Dog Die"}
+                          <span className="font-normal text-muted-foreground">
+                            {" "}·{" "}
+                            {run.completedAt
+                              ? new Date(run.completedAt).toLocaleString()
+                              : "Completion time unavailable"}
+                          </span>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                            run.status === "failed"
+                              ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                              : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                          }`}
+                        >
+                          {run.status === "failed" ? "Failed" : "Completed"}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        <span>Processed {run.processed} of up to {run.limit}</span>
+                        <span>{run.mapped} mapped</span>
+                        <span>{run.missing} missing</span>
+                        <span>{run.errors} errors</span>
+                        <span>
+                          Next resume offset:{" "}
+                          <strong className="text-foreground">{run.nextOffset}</strong>
+                        </span>
+                      </div>
+                      {run.error && (
+                        <p className="text-xs text-red-600 dark:text-red-400">{run.error}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No completed or failed safety-sync batches yet.
+                </p>
+              )
+            )}
+          </div>
         </div>
       </div>
       <div className="relative">
