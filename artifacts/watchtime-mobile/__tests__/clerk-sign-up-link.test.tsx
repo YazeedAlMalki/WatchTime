@@ -1,9 +1,10 @@
 import React from 'react';
-import { cleanup, render } from '@testing-library/react-native';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 const mockUseLocalSearchParams = jest.fn();
 const mockUseSignUp = jest.fn();
 const mockLinkHref = jest.fn();
+const mockRouterReplace = jest.fn();
 
 jest.mock('@workspace/dev-auth', () => ({
   isDevelopmentAuthEnabled: () => false,
@@ -16,7 +17,7 @@ jest.mock('@clerk/expo', () => ({
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: (...args: unknown[]) => mockUseLocalSearchParams(...args),
-  useRouter: () => ({ replace: jest.fn() }),
+  useRouter: () => ({ replace: mockRouterReplace }),
   Link: ({ children, href }: { children: React.ReactNode; href: unknown }) => {
     mockLinkHref(href);
     return children;
@@ -114,5 +115,40 @@ describe('Clerk sign-up switch to sign-in', () => {
       pathname: '/(auth)/sign-in',
       params: { returnTo: '/title/456' },
     });
+  });
+
+  it.each([
+    { params: { returnTo: '/title/456' }, destination: '/title/456', decorated: '/title/456?verified=1' },
+    { params: {}, destination: '/', decorated: '/' },
+  ])('finalizes email verification and navigates to $destination', async ({ params, destination, decorated }) => {
+    mockUseLocalSearchParams.mockReturnValue(params);
+    const verifyEmailCode = jest.fn(async () => {
+      signUp.status = 'complete';
+    });
+    const decorateUrl = jest.fn((_url: string) => decorated);
+    const finalize = jest.fn(async ({ navigate }: { navigate: (args: unknown) => void }) => {
+      navigate({ session: { currentTask: null }, decorateUrl });
+    });
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: ['email_address'],
+      missingFields: [],
+      verifications: { verifyEmailCode },
+      finalize,
+    };
+    mockUseSignUp.mockReturnValue({
+      signUp,
+      errors: { fields: {} },
+      fetchStatus: 'idle',
+    });
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
+    await fireEvent.press(screen.getByTestId('verify-button'));
+
+    await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith(decorated));
+    expect(verifyEmailCode).toHaveBeenCalledWith({ code: '123456' });
+    expect(finalize).toHaveBeenCalledWith({ navigate: expect.any(Function) });
+    expect(decorateUrl).toHaveBeenCalledWith(destination);
   });
 });
