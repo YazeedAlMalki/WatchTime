@@ -141,7 +141,7 @@ describe("Wikidata SPARQL adapter", () => {
 });
 
 describe("title-level safety records migration", () => {
-  it("keeps the newest title record per source and leaves season and episode duplicates untouched", async () => {
+  it("breaks equal refresh timestamps by ID and leaves other sources and scoped records untouched", async () => {
     const migration = readFileSync(
       new URL(
         "../../../../lib/db/drizzle/0000_protect_title_level_safety_records.sql",
@@ -174,7 +174,7 @@ describe("title-level safety records migration", () => {
         VALUES
           (1, 42, NULL, NULL, 'Wikidata', 'available', '2024-01-01T00:00:00Z'),
           (2, 42, NULL, NULL, 'Wikidata', 'provider_unavailable', '2025-01-01T00:00:00Z'),
-          (3, 42, NULL, NULL, 'Wikidata', 'available', '2023-01-01T00:00:00Z'),
+          (3, 42, NULL, NULL, 'Wikidata', 'available', '2025-01-01T00:00:00Z'),
           (4, 42, NULL, NULL, 'Does the Dog Die?', 'available', '2024-06-01T00:00:00Z'),
           (5, 42, NULL, NULL, 'WatchTime Community', 'available', '2024-07-01T00:00:00Z'),
           (6, 42, 1, NULL, 'Wikidata', 'available', '2024-01-01T00:00:00Z'),
@@ -194,11 +194,11 @@ describe("title-level safety records migration", () => {
       `);
       expect(rows).toEqual([
         {
-          id: 2,
+          id: 3,
           season_number: null,
           episode_number: null,
           source_name: "Wikidata",
-          status: "provider_unavailable",
+          status: "available",
         },
         {
           id: 4,
