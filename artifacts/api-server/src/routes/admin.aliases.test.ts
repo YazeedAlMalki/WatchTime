@@ -260,6 +260,26 @@ describe("admin title aliases", () => {
     });
   });
 
+  it.each([
+    ["missing", {}],
+    ["malformed", { expectedUpdatedAt: "not-a-timestamp" }],
+  ])("rejects removal when the expected timestamp is %s", async (_timestampState, body) => {
+    const [row] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
+
+    const response = await request(app)
+      .delete(`/api/admin/content-aliases/${row.id}`)
+      .send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: "The alias timestamp is required to remove this alternate title",
+    });
+    const [unchanged] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.id, row.id));
+    expect(unchanged).toEqual(row);
+  });
+
   it("preserves a newer correction when a catalog refresh runs before stale removal", async () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
