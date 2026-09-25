@@ -120,4 +120,41 @@ describe('Google sign-in return destination', () => {
 
     expect(mockReplace).toHaveBeenCalledWith('/');
   });
+
+  it('shows an accessible error without navigating and lets the user retry Google sign-in', async () => {
+    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/123' });
+    mockStartSSOFlow.mockRejectedValueOnce(new Error('OAuth unavailable'));
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const { getByTestId, queryByTestId } = await render(<SignInScreen />);
+      const googleButton = getByTestId('google-sign-in-button');
+
+      await act(async () => {
+        fireEvent.press(googleButton);
+      });
+
+      const error = getByTestId('google-sign-in-error');
+      expect(error.props.accessibilityRole).toBe('alert');
+      expect(error.props.accessibilityLiveRegion).toBe('assertive');
+      expect(error).toHaveTextContent("Google sign-in couldn't be completed. Please try again.");
+      expect(mockSetActive).not.toHaveBeenCalled();
+      expect(mockReplace).not.toHaveBeenCalled();
+      expect(googleButton.props.accessibilityState?.disabled).not.toBe(true);
+
+      await act(async () => {
+        fireEvent.press(googleButton);
+      });
+
+      expect(mockStartSSOFlow).toHaveBeenCalledTimes(2);
+      expect(queryByTestId('google-sign-in-error')).toBeNull();
+      expect(mockSetActive).toHaveBeenCalledWith({
+        session: 'google-session',
+        navigate: expect.any(Function),
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
 });

@@ -52,6 +52,8 @@ function ClerkSignInScreen() {
   const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
   const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
+  const [googleError, setGoogleError] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
 
   const navigateAfterSignIn = useCallback(
     ({ session, decorateUrl }: any) => {
@@ -77,6 +79,9 @@ function ClerkSignInScreen() {
   };
 
   const handleGoogle = useCallback(async () => {
+    if (googleBusy) return;
+    setGoogleError(false);
+    setGoogleBusy(true);
     try {
       const { createdSessionId, setActive } = await startSSOFlow({
         strategy: 'oauth_google',
@@ -91,11 +96,16 @@ function ClerkSignInScreen() {
             router.replace(dest as Href);
           },
         });
+      } else {
+        setGoogleError(true);
       }
     } catch (err) {
       console.error(JSON.stringify(err, null, 2));
+      setGoogleError(true);
+    } finally {
+      setGoogleBusy(false);
     }
-  }, [startSSOFlow, router, returnTo]);
+  }, [startSSOFlow, router, returnTo, googleBusy]);
 
   if (isSignedIn) return <Redirect href="/" />;
 
@@ -199,6 +209,7 @@ function ClerkSignInScreen() {
         <Pressable
           testID="google-sign-in-button"
           onPress={handleGoogle}
+          disabled={googleBusy}
           style={({ pressed }) => [
             styles.button,
             {
@@ -207,15 +218,25 @@ function ClerkSignInScreen() {
               borderColor: c.border,
               flexDirection: 'row',
               gap: 10,
-              opacity: pressed ? 0.8 : 1,
+              opacity: googleBusy ? 0.5 : pressed ? 0.8 : 1,
             },
           ]}
         >
           <Feather name="globe" size={18} color={c.foreground} />
           <Text style={{ color: c.foreground, fontSize: 15, fontFamily: 'Inter_500Medium' }}>
-            Continue with Google
+            {googleBusy ? 'Connecting to Google…' : 'Continue with Google'}
           </Text>
         </Pressable>
+        {googleError ? (
+          <Text
+            testID="google-sign-in-error"
+            accessibilityRole="alert"
+            accessibilityLiveRegion="assertive"
+            style={{ color: c.destructive, fontSize: 13, marginTop: 8 }}
+          >
+            Google sign-in couldn't be completed. Please try again.
+          </Text>
+        ) : null}
 
         <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 24 }}>
           <Text style={{ color: c.mutedForeground, fontFamily: 'Inter_400Regular' }}>
