@@ -474,6 +474,157 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).toContain("Alternate-title refresh failed");
   });
 
+  it("shows and saves the newest correction after a second stale edit conflict", async () => {
+    const firstCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "First admin correction",
+      language: "de",
+      sourceName: "First editorial source",
+      sourceUrl: "https://example.test/first-correction",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    const newestCorrection: AdminContentAlias = {
+      ...firstCorrection,
+      alias: "Newest admin correction",
+      language: "it",
+      sourceName: "Newest editorial source",
+      sourceUrl: "https://example.test/newest-correction",
+      collision: true,
+      collisionTitleCount: 4,
+      updatedAt: "2026-09-18T12:30:00.000Z",
+    };
+    let mutationCount = 0;
+    mocks.updateMutation.mutate.mockImplementation(
+      async (
+        _variables: unknown,
+        options?: {
+          onSuccess?: () => Promise<void>;
+          onError?: (error: unknown) => Promise<void>;
+        },
+      ) => {
+        mutationCount += 1;
+        if (mutationCount === 1 || mutationCount === 2) {
+          const current =
+            mutationCount === 1 ? firstCorrection : newestCorrection;
+          await options?.onError?.({
+            data: {
+              code: "stale_alias",
+              error: "This alternate title changed while you were editing.",
+              current,
+            },
+          });
+        } else {
+          await options?.onSuccess?.();
+        }
+      },
+    );
+    render();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "First stale draft",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain(firstCorrection.alias);
+    expect(container.textContent).toContain(
+      new Date(firstCorrection.updatedAt).toLocaleString(),
+    );
+    act(() => button(container, "Edit current correction").click());
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for current correction"]',
+      )?.value,
+    ).toBe(firstCorrection.alias);
+
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for current correction",
+        "Second stale draft",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(mocks.updateMutation.mutate).toHaveBeenNthCalledWith(
+      2,
+      {
+        id: firstCorrection.id,
+        data: {
+          alias: "Second stale draft",
+          language: firstCorrection.language,
+          sourceUrl: firstCorrection.sourceUrl,
+          expectedUpdatedAt: firstCorrection.updatedAt,
+        },
+      },
+      expect.any(Object),
+    );
+    const conflictNotice = container.querySelector<HTMLElement>(
+      '[role="alert"]',
+    );
+    expect(conflictNotice?.textContent).toContain(newestCorrection.alias);
+    expect(conflictNotice?.textContent).toContain(newestCorrection.language);
+    expect(conflictNotice?.textContent).toContain(newestCorrection.sourceName);
+    expect(conflictNotice?.textContent).toContain("4 titles share this alias");
+    expect(conflictNotice?.textContent).toContain("Current version");
+    expect(conflictNotice?.textContent).toContain(
+      new Date(newestCorrection.updatedAt).toLocaleString(),
+    );
+    expect(conflictNotice?.textContent).not.toContain(firstCorrection.alias);
+    expect(conflictNotice?.textContent).not.toContain("Second stale draft");
+    expect(
+      container.querySelector(
+        'input[aria-label="Alternate title for current correction"]',
+      ),
+    ).toBeNull();
+
+    act(() => button(container, "Edit current correction").click());
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for current correction"]',
+      )?.value,
+    ).toBe(newestCorrection.alias);
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Language for current correction"]',
+      )?.value,
+    ).toBe(newestCorrection.language);
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Source link for current correction"]',
+      )?.value,
+    ).toBe(newestCorrection.sourceUrl);
+
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for current correction",
+        "Saved after newest conflict",
+      );
+      button(container, "Save").click();
+    });
+
+    expect(mocks.updateMutation.mutate).toHaveBeenNthCalledWith(
+      3,
+      {
+        id: newestCorrection.id,
+        data: {
+          alias: "Saved after newest conflict",
+          language: newestCorrection.language,
+          sourceUrl: newestCorrection.sourceUrl,
+          expectedUpdatedAt: newestCorrection.updatedAt,
+        },
+      },
+      expect.any(Object),
+    );
+  });
+
   it("requires removal confirmation and refreshes collision badges after removal", async () => {
     render();
     confirmSpy.mockReturnValueOnce(false);
