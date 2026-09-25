@@ -9,8 +9,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const USER_ID = "test-large-library-performance";
 const SHOW_COUNT = 400;
-const EPISODES_PER_SHOW = 80;
+const EPISODES_PER_SHOW = 200;
 const PAGE_SIZE = 20;
+const PROGRESS_LEVELS = [0, 20, 100, 180, EPISODES_PER_SHOW];
 
 vi.mock("../middlewares/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => { req.userId = USER_ID; next(); },
@@ -85,7 +86,7 @@ beforeAll(async () => {
     )).returning({ id: episodesTable.id, titleId: episodesTable.titleId });
     const watched = episodes.flatMap((episode, index) => {
       const showIndex = start + Math.floor(index / EPISODES_PER_SHOW);
-      const watchedCount = [0, 8, 40, 72, 80][showIndex % 5];
+      const watchedCount = PROGRESS_LEVELS[showIndex % 5];
       return index % EPISODES_PER_SHOW < watchedCount
         ? [{ userId: USER_ID, titleId: episode.titleId, episodeId: episode.id }]
         : [];
@@ -133,6 +134,50 @@ const measuredPage = (limit: number, offset: number) =>
     offset === 0 ? undefined : { beforeId: offset === SHOW_COUNT ? titleIds[0] : titleIds[SHOW_COUNT - offset] });
 
 describe("large personal library", () => {
+  it("keeps in-progress discovery bounded on first and later ID pages", async () => {
+    const measurements: Array<{ offset: number; milliseconds: number; bytes: number }> = [];
+    const expected = titleIds.flatMap((id, index) =>
+      [1, 2, 3].includes(index % 5) ? [id] : []).reverse();
+    let laterQuery: QuerySample | undefined;
+
+    for (const offset of [0, 160, 320]) {
+      const boundary = offset === 0 ? undefined : { beforeId: titleIds[SHOW_COUNT - offset] };
+      const { response, samples, milliseconds } = await measuredPageFor(
+        "/api/me/shows/in-progress", PAGE_SIZE, boundary,
+      );
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveLength(PAGE_SIZE);
+      expect(samples.length).toBeGreaterThanOrEqual(1);
+      expect(samples.length).toBeLessThanOrEqual(2);
+      expect(samples.every((sample) => sample.rows <= PAGE_SIZE)).toBe(true);
+      const bytes = Buffer.byteLength(response.text);
+      expect(bytes).toBeLessThan(PAGE_SIZE * 1000);
+      const expectedPage = expected.filter((id) => boundary === undefined || id < boundary.beforeId).slice(0, PAGE_SIZE);
+      expect(response.body.map((show: any) => show.title.id)).toEqual(expectedPage);
+      expect(response.body.every((show: any) =>
+        PROGRESS_LEVELS.slice(1, -1).includes(show.watchedEpisodes) &&
+        show.totalEpisodes === EPISODES_PER_SHOW &&
+        show.nextEpisode !== null)).toBe(true);
+      measurements.push({ offset, milliseconds: Math.round(milliseconds), bytes });
+      if (offset === 320) laterQuery = samples[0];
+    }
+
+    expect(laterQuery).toBeDefined();
+    const explained = await pool.query(
+      `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${laterQuery!.sql}`, laterQuery!.values,
+    );
+    const plan = explained.rows[0]["QUERY PLAN"][0] as { "Execution Time": number; Plan: Record<string, unknown> };
+    const indexes: string[] = [];
+    const walk = (node: Record<string, unknown>) => {
+      if (typeof node["Index Name"] === "string") indexes.push(node["Index Name"]);
+      for (const child of (node.Plans ?? []) as Record<string, unknown>[]) walk(child);
+    };
+    walk(plan.Plan);
+    expect(indexes).toContain("watched_episodes_user_episode_idx");
+    expect(indexes).toContain("episodes_title_order_idx");
+    process.stdout.write(`In-progress benchmark (${SHOW_COUNT} shows, ${SHOW_COUNT * EPISODES_PER_SHOW} episodes, ${SHOW_COUNT / 5 * PROGRESS_LEVELS.reduce((sum, count) => sum + count, 0)} watched): ${JSON.stringify({ measurements, laterPlanMs: plan["Execution Time"], indexes: [...new Set(indexes)] })}\n`);
+  }, 120_000);
+
   it("keeps My Shows queries and payloads bounded while reporting mixed-progress latency", async () => {
     const measurements: Array<{ offset: number; milliseconds: number; bytes: number }> = [];
     let mainQuery: QuerySample | undefined;
@@ -149,7 +194,7 @@ describe("large personal library", () => {
       measurements.push({ offset, milliseconds: Math.round(milliseconds), bytes: Buffer.byteLength(response.text) });
       expect(response.body.map((show: any) => show.title.id))
         .toEqual(titleIds.slice(SHOW_COUNT - offset - PAGE_SIZE, SHOW_COUNT - offset).reverse());
-      for (const count of [0, 8, 40, 72, 80]) {
+      for (const count of PROGRESS_LEVELS) {
         expect(response.body.filter((show: any) => show.watchedEpisodes === count)).toHaveLength(4);
       }
       expect(response.body.every((show: any) =>
@@ -189,7 +234,7 @@ describe("large personal library", () => {
     // when this one fixture owns most rows in the development database.
     expect(indexes).toContain("episodes_title_order_idx");
     expect(indexes).toContain("watched_episodes_user_episode_idx");
-    process.stdout.write(`My Shows benchmark (400 shows, 200 movies, 32,000 episodes, 16,000 watched): ${JSON.stringify({ measurements, planMs: plan["Execution Time"], indexes: [...new Set(indexes)] })}\n`);
+    process.stdout.write(`My Shows benchmark (${SHOW_COUNT} shows, 200 movies, ${SHOW_COUNT * EPISODES_PER_SHOW} episodes, ${SHOW_COUNT / 5 * PROGRESS_LEVELS.reduce((sum, count) => sum + count, 0)} watched): ${JSON.stringify({ measurements, planMs: plan["Execution Time"], indexes: [...new Set(indexes)] })}\n`);
   }, 120_000);
 
   it("bounds movie and watchlist reads independently of collection size", async () => {
