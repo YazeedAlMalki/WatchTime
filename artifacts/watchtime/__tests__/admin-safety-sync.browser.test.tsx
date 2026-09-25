@@ -29,6 +29,8 @@ const batchResponse = {
 
 const mocks = vi.hoisted(() => ({
   batchMutate: vi.fn(),
+  batchStatus: undefined as unknown,
+  batchStatusListeners: new Set<() => void>(),
 }));
 
 vi.mock("@workspace/api-client-react", async (importOriginal) => {
@@ -37,6 +39,15 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     ...api,
     useGetMe: () => ({ data: { isAdmin: true }, isLoading: false }),
     useGetAdminDashboard: () => ({ data: undefined }),
+    useGetAdminContentRefreshBatch: () => ({
+      data: React.useSyncExternalStore(
+        (listener) => {
+          mocks.batchStatusListeners.add(listener);
+          return () => mocks.batchStatusListeners.delete(listener);
+        },
+        () => mocks.batchStatus,
+      ),
+    }),
     useSearchAdminContent: () => ({
       data: [],
       isLoading: false,
@@ -63,10 +74,53 @@ import AdminPage from "@/pages/admin";
 it("uses the returned batch offset and processed count for the next resume offset", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  mocks.batchStatus = {
+    lastCompleted: {
+      id: 90,
+      provider: "does_the_dog_die",
+      status: "completed",
+      limit: 2,
+      offset: 1,
+      processed: 2,
+      nextOffset: 3,
+      catalogFingerprint: "saved-catalog",
+      results: [],
+      startedAt: "2026-09-24T09:00:00.000Z",
+      completedAt: "2026-09-24T09:01:00.000Z",
+      mapped: 0,
+      missing: 0,
+      errors: 0,
+      error: null,
+    },
+    running: null,
+    interrupted: null,
+  };
   mocks.batchMutate.mockImplementation((_variables: unknown, options?: {
     onSuccess?: (result: typeof batchResponse) => void;
   }) => {
     options?.onSuccess?.(batchResponse);
+    mocks.batchStatus = {
+      lastCompleted: {
+        id: 92,
+        provider: "does_the_dog_die",
+        status: "completed",
+        limit: batchResponse.limit,
+        offset: batchResponse.offset,
+        processed: batchResponse.processed,
+        nextOffset: batchResponse.offset + batchResponse.processed,
+        catalogFingerprint: "saved-catalog",
+        results: batchResponse.results,
+        startedAt: "2026-09-24T09:02:00.000Z",
+        completedAt: "2026-09-24T09:03:00.000Z",
+        mapped: 0,
+        missing: 2,
+        errors: 0,
+        error: null,
+      },
+      running: null,
+      interrupted: null,
+    };
+    for (const listener of mocks.batchStatusListeners) listener();
   });
 
   const container = document.createElement("div");
@@ -82,7 +136,14 @@ it("uses the returned batch offset and processed count for the next resume offse
     await userEvent.click(page.getByRole("button", { name: "Run batch refresh" }));
 
     expect(mocks.batchMutate).toHaveBeenCalledWith(
-      { data: { provider: "does_the_dog_die", limit: 2, offset: 3 } },
+      {
+        data: {
+          provider: "does_the_dog_die",
+          limit: 2,
+          offset: 3,
+          catalogFingerprint: "saved-catalog",
+        },
+      },
       expect.any(Object),
     );
     await expect.element(page.getByText("Next resume offset:")).toHaveTextContent("9");
@@ -93,6 +154,60 @@ it("uses the returned batch offset and processed count for the next resume offse
     container.remove();
     client.clear();
     mocks.batchMutate.mockReset();
+    mocks.batchStatus = undefined;
+    mocks.batchStatusListeners.clear();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("shows the active provider and offset and prevents starting another batch", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  mocks.batchStatus = {
+    running: {
+      id: 91,
+      provider: "wikidata",
+      status: "running",
+      limit: 3,
+      offset: 5,
+      processed: 0,
+      mapped: 0,
+      missing: 0,
+      errors: 0,
+      nextOffset: 5,
+      catalogFingerprint: null,
+      results: [],
+      startedAt: "2026-09-24T10:00:00.000Z",
+      completedAt: null,
+      error: null,
+    },
+    lastCompleted: null,
+    interrupted: null,
+  };
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Batch request in progress")).toBeVisible();
+    const activeStatus = page
+      .getByRole("status")
+      .filter({ hasText: "Batch request in progress" });
+    await expect.element(activeStatus.getByText(/Wikidata/)).toBeVisible();
+    await expect.element(page.getByText(/from offset 5/)).toBeVisible();
+    await expect.element(
+      page.getByRole("button", { name: "Batch refresh running…" }),
+    ).toBeDisabled();
+    expect(mocks.batchMutate).not.toHaveBeenCalled();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.batchMutate.mockReset();
+    mocks.batchStatus = undefined;
+    mocks.batchStatusListeners.clear();
     window.history.replaceState({}, "", previousUrl);
   }
 });

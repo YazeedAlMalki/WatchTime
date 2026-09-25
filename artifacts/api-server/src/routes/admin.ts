@@ -45,6 +45,24 @@ import { retryFailedCatalogTitles, startCatalogRefresh } from "../lib/catalog-re
 
 const router: IRouter = Router();
 const activeSafetySyncRunIds = new Set<number>();
+const activeSafetySyncUniqueIndex =
+  "safety_sync_runs_active_provider_offset_unique_idx";
+
+function isActiveSafetySyncUniqueViolation(caught: unknown): boolean {
+  if (!caught || typeof caught !== "object") return false;
+  const error = caught as {
+    code?: unknown;
+    constraint?: unknown;
+    cause?: unknown;
+  };
+  if (
+    error.code === "23505" &&
+    error.constraint === activeSafetySyncUniqueIndex
+  ) {
+    return true;
+  }
+  return isActiveSafetySyncUniqueViolation(error.cause);
+}
 
 router.use(requireAdmin);
 
@@ -812,10 +830,51 @@ router.post("/content/refresh-batch", async (req, res) => {
   }
   const titleSelection = catalog.slice(offset, offset + limit);
 
-  const [run] = await db
-    .insert(safetySyncRunsTable)
-    .values({ provider, limit, offset, catalogFingerprint })
-    .returning();
+  const [existingRun] = await db
+    .select()
+    .from(safetySyncRunsTable)
+    .where(
+      and(
+        eq(safetySyncRunsTable.provider, provider),
+        eq(safetySyncRunsTable.offset, offset),
+        eq(safetySyncRunsTable.status, "running"),
+      ),
+    )
+    .limit(1);
+  if (existingRun) {
+    return res.status(409).json({
+      code: "active_batch",
+      error: `A ${provider} safety batch is already running from offset ${offset}. Wait for it to finish before starting another batch at this position.`,
+      activeBatch: serializeSafetySyncRun(existingRun),
+    });
+  }
+
+  let run: typeof safetySyncRunsTable.$inferSelect;
+  try {
+    [run] = await db
+      .insert(safetySyncRunsTable)
+      .values({ provider, limit, offset, catalogFingerprint })
+      .returning();
+  } catch (caught) {
+    if (!isActiveSafetySyncUniqueViolation(caught)) throw caught;
+    const [activeRun] = await db
+      .select()
+      .from(safetySyncRunsTable)
+      .where(
+        and(
+          eq(safetySyncRunsTable.provider, provider),
+          eq(safetySyncRunsTable.offset, offset),
+          eq(safetySyncRunsTable.status, "running"),
+        ),
+      )
+      .limit(1);
+    if (!activeRun) throw caught;
+    return res.status(409).json({
+      code: "active_batch",
+      error: `A ${provider} safety batch is already running from offset ${offset}. Wait for it to finish before starting another batch at this position.`,
+      activeBatch: serializeSafetySyncRun(activeRun),
+    });
+  }
   activeSafetySyncRunIds.add(run.id);
 
   try {

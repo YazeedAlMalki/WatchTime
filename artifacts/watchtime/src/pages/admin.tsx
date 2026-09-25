@@ -1125,8 +1125,12 @@ function ContentTab({
             queryKey: getListAdminContentRefreshBatchHistoryQueryKey({ limit: 20 }),
           });
           const responseError = (error as any)?.response?.data?.error;
+          const activeBatchConflict =
+            (error as any)?.response?.data?.code === "active_batch";
           toast({
-            title: "Batch refresh failed",
+            title: activeBatchConflict
+              ? "Batch already running"
+              : "Batch refresh failed",
             ...(typeof responseError === "string" ? { description: responseError } : {}),
             variant: "destructive",
           });
@@ -1270,6 +1274,15 @@ function ContentTab({
                 {batchRefresh.isPending
                   ? `Refreshing up to ${batchLimit} title${batchLimit === "1" ? "" : "s"} from offset ${batchOffset}.`
                   : `Refreshing up to ${activeBatch?.limit ?? batchLimit} title${(activeBatch?.limit ?? Number(batchLimit)) === 1 ? "" : "s"} from offset ${activeBatch?.offset ?? batchOffset}.`}
+                {activeBatch && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    {activeBatch.provider === "wikidata"
+                      ? "Wikidata"
+                      : "Does the Dog Die"}
+                  </>
+                )}
                 {" "}Each title is spaced to respect provider rate limits.
               </p>
             </div>

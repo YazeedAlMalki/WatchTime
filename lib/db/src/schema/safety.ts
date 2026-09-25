@@ -198,4 +198,7 @@ export const safetySyncRunsTable = pgTable("safety_sync_runs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index("safety_sync_runs_status_created_idx").on(table.status, table.createdAt),
+  uniqueIndex("safety_sync_runs_active_provider_offset_unique_idx")
+    .on(table.provider, table.offset)
+    .where(sql`${table.status} = 'running'`),
 ]);

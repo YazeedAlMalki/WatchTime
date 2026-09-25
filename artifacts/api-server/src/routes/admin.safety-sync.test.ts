@@ -365,4 +365,82 @@ describe("admin safety sync status", () => {
     expect(completedResponse.status).toBe(200);
     runIds.push(completedResponse.body.batchId);
   });
+
+  it("rejects duplicate active provider offsets without blocking the next offset", async () => {
+    let releaseBatch!: () => void;
+    let markBatchStarted!: () => void;
+    let providerCalls = 0;
+    const batchStarted = new Promise<void>((resolve) => {
+      markBatchStarted = resolve;
+    });
+    const batchGate = new Promise<void>((resolve) => {
+      releaseBatch = resolve;
+    });
+    safetyBatchRefreshMock
+      .mockImplementationOnce(async ({
+        limit,
+        offset,
+      }: { limit: number; offset: number }) => {
+        providerCalls += 1;
+        markBatchStarted();
+        await batchGate;
+        return { offset, limit, processed: 1, results: [] };
+      })
+      .mockImplementationOnce(async ({
+        limit,
+        offset,
+      }: { limit: number; offset: number }) => {
+        providerCalls += 1;
+        return { offset, limit, processed: 0, results: [] };
+      });
+
+    const firstRequest = request(app)
+      .post("/api/admin/content/refresh-batch")
+      .send({ provider: "does_the_dog_die", limit: 2, offset: 0 })
+      .then((response) => response);
+
+    let firstResponse: Awaited<typeof firstRequest>;
+    try {
+      await batchStarted;
+      const duplicate = await request(app)
+        .post("/api/admin/content/refresh-batch")
+        .send({ provider: "does_the_dog_die", limit: 1, offset: 0 })
+        .expect(409);
+
+      runIds.push(duplicate.body.activeBatch.id);
+      expect(duplicate.body).toMatchObject({
+        code: "active_batch",
+        error: expect.stringContaining("already running from offset 0"),
+        activeBatch: {
+          provider: "does_the_dog_die",
+          status: "running",
+          offset: 0,
+        },
+      });
+      expect(providerCalls).toBe(1);
+    } finally {
+      releaseBatch();
+    }
+
+    firstResponse = await firstRequest;
+    expect(firstResponse.status).toBe(200);
+    runIds.push(firstResponse.body.batchId);
+    expect(firstResponse.body.nextOffset).toBe(1);
+
+    const nextBatch = await request(app)
+      .post("/api/admin/content/refresh-batch")
+      .send({
+        provider: "does_the_dog_die",
+        limit: 2,
+        offset: firstResponse.body.nextOffset,
+        catalogFingerprint: firstResponse.body.catalogFingerprint,
+      })
+      .expect(200);
+    runIds.push(nextBatch.body.batchId);
+
+    expect(providerCalls).toBe(2);
+    expect(safetyBatchRefreshMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: 2, offset: 1 }),
+    );
+  });
 });
