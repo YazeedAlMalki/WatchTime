@@ -46,7 +46,8 @@ function ClerkSignUpScreen() {
   };
 
   const handleVerify = async () => {
-    await signUp.verifications.verifyEmailCode({ code });
+    const { error } = await signUp.verifications.verifyEmailCode({ code });
+    if (error) return;
     if (signUp.status === 'complete') {
       const dest = (returnTo as string | undefined) ?? '/';
       await signUp.finalize({

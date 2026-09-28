@@ -124,6 +124,7 @@ describe('Clerk sign-up switch to sign-in', () => {
     mockUseLocalSearchParams.mockReturnValue(params);
     const verifyEmailCode = jest.fn(async () => {
       signUp.status = 'complete';
+      return { error: null };
     });
     const decorateUrl = jest.fn((_url: string) => decorated);
     const finalize = jest.fn(async ({ navigate }: { navigate: (args: unknown) => void }) => {
@@ -150,5 +151,42 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(verifyEmailCode).toHaveBeenCalledWith({ code: '123456' });
     expect(finalize).toHaveBeenCalledWith({ navigate: expect.any(Function) });
     expect(decorateUrl).toHaveBeenCalledWith(destination);
+  });
+
+  it('keeps a rejected email code on the verification screen without finalizing', async () => {
+    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
+    const errors: { fields: { code?: { message: string } } } = { fields: {} };
+    const verifyEmailCode = jest.fn(async () => {
+      errors.fields.code = { message: 'That verification code is invalid.' };
+      return { error: errors.fields.code };
+    });
+    const finalize = jest.fn();
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: ['email_address'],
+      missingFields: [],
+      verifications: { verifyEmailCode },
+      finalize,
+    };
+    mockUseSignUp.mockImplementation(() => ({
+      signUp,
+      errors,
+      fetchStatus: 'idle',
+    }));
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('code-input'), '000000');
+    await fireEvent.press(screen.getByTestId('verify-button'));
+    await waitFor(() => {
+      expect(verifyEmailCode).toHaveBeenCalledWith({ code: '000000' });
+      expect(errors.fields.code).toEqual({ message: 'That verification code is invalid.' });
+    });
+    await screen.rerender(<SignUpScreen />);
+
+    expect(screen.getByText('Check your email')).toBeTruthy();
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+    expect(screen.getByText('That verification code is invalid.')).toBeTruthy();
+    expect(finalize).not.toHaveBeenCalled();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
   });
 });
