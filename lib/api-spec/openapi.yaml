@@ -1758,7 +1758,7 @@ components:
             - type: "null"
     IntegrationHealth:
       type: object
-      required: [provider, status, successRatePercent, mappedTitles, missingMappings, sustainedFailureAlert]
+      required: [provider, status, successRatePercent, refreshAttempts, successfulRefreshes, mappedTitles, missingMappings, sustainedFailureAlert]
       properties:
         provider: { type: string }
         status: { type: string, enum: [healthy, degraded, failing, provider_unavailable] }
@@ -1766,6 +1766,8 @@ components:
         lastSuccessAt: { type: ["string", "null"] }
         lastError: { type: ["string", "null"] }
         successRatePercent: { type: number }
+        refreshAttempts: { type: ["integer", "null"] }
+        successfulRefreshes: { type: ["integer", "null"] }
         mappedTitles: { type: integer }
         missingMappings: { type: integer }
         sustainedFailureAlert: { type: boolean }

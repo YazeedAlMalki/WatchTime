@@ -867,6 +867,10 @@ export interface IntegrationHealth {
   /** @nullable */
   lastError?: string | null;
   successRatePercent: number;
+  /** @nullable */
+  refreshAttempts: number | null;
+  /** @nullable */
+  successfulRefreshes: number | null;
   mappedTitles: number;
   missingMappings: number;
   sustainedFailureAlert: boolean;

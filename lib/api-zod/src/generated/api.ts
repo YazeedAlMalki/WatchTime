@@ -1095,6 +1095,8 @@ export const ListAdminIntegrationsResponseItem = zod.object({
   "lastSuccessAt": zod.string().nullish(),
   "lastError": zod.string().nullish(),
   "successRatePercent": zod.number(),
+  "refreshAttempts": zod.int().nullable(),
+  "successfulRefreshes": zod.int().nullable(),
   "mappedTitles": zod.int(),
   "missingMappings": zod.int(),
   "sustainedFailureAlert": zod.boolean()

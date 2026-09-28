@@ -11,6 +11,7 @@ export const DOES_THE_DOG_DIE_PROVIDER = "Does the Dog Die?";
 export const DOES_THE_DOG_DIE_SOURCE_URL = "https://www.doesthedogdie.com";
 const DEFAULT_BASE_URL = "https://www.doesthedogdie.com/api/v3";
 const REQUEST_TIMEOUT_MS = 10_000;
+const MAX_TRACKED_REFRESH_ATTEMPTS = 2_000_000_000;
 const COMMERCIAL_TIERS = new Set(["commercial", "enterprise"]);
 
 type FetchLike = typeof fetch;
@@ -350,6 +351,7 @@ async function updateIntegrationHealth(values: {
   lastSyncAt: Date;
   lastSuccessAt?: Date;
   lastError: string | null;
+  refreshSucceeded: boolean;
 }) {
   await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:catalog-sync'))`);
@@ -365,12 +367,27 @@ async function updateIntegrationHealth(values: {
       .select()
       .from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, DOES_THE_DOG_DIE_PROVIDER));
+    let refreshAttempts = Math.max(existing?.refreshAttempts ?? 0, 0);
+    let successfulRefreshes = Math.min(
+      Math.max(existing?.successfulRefreshes ?? 0, 0),
+      refreshAttempts,
+    );
+    // Keep the integer counters bounded without discarding the accumulated rate.
+    // Halving both counts preserves the long-run ratio to within rounding error.
+    if (refreshAttempts >= MAX_TRACKED_REFRESH_ATTEMPTS) {
+      refreshAttempts = Math.floor(refreshAttempts / 2);
+      successfulRefreshes = Math.floor(successfulRefreshes / 2);
+    }
+    refreshAttempts += 1;
+    if (values.refreshSucceeded) successfulRefreshes += 1;
     const healthValues = {
       status: values.status,
       lastSyncAt: values.lastSyncAt,
       ...(values.lastSuccessAt ? { lastSuccessAt: values.lastSuccessAt } : {}),
       lastError: values.lastError,
-      successRatePercent: values.status === "healthy" ? 100 : 0,
+      refreshAttempts,
+      successfulRefreshes,
+      successRatePercent: (successfulRefreshes / refreshAttempts) * 100,
       mappedTitles: counts.mapped,
       missingMappings: counts.missing,
     };
@@ -500,6 +517,7 @@ export async function refreshDoesTheDogDieTitle(
       lastSyncAt: now,
       lastSuccessAt: now,
       lastError: null,
+      refreshSucceeded: true,
     });
     return {
       ok: true,
@@ -519,6 +537,7 @@ export async function refreshDoesTheDogDieTitle(
       status: errorHealthStatus(error),
       lastSyncAt: now,
       lastError: error.message,
+      refreshSucceeded: false,
     });
     return {
       ok: false,

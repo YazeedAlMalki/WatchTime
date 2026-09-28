@@ -23,3 +23,4 @@
 - [Concurrent admin merges](concurrent-admin-merges.md) — compare behavior on both conflict sides; syntactically valid code can be semantically broken or omit independent features.
 - [Orval referenced query defaults](orval-referenced-query-defaults.md) — wrap a referenced query enum in allOf when it needs a local default; a direct ref drops the generated default.
 - [Expo auth route tests](expo-auth-route-tests.md) — prefer isolated screen contract tests over swapping rendered screens in one React Native test instance.
+- [API test database isolation](api-test-database-isolation.md) — `singleFork` alone did not stop DB-backed test files from racing on shared tables; disable file parallelism.

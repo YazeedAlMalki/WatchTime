@@ -8,8 +8,9 @@ export default defineConfig({
     hookTimeout: 30000,
     // Guard: aborts before any test runs if DATABASE_URL looks production-like.
     setupFiles: ["./src/test-setup.ts"],
-    // Run tests serially to avoid DB contention.
+    // Run test files serially to avoid shared-database contention.
     pool: "forks",
     singleFork: true,
+    fileParallelism: false,
   },
 });

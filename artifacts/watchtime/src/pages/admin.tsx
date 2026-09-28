@@ -2732,7 +2732,15 @@ function IntegrationsTab() {
               )}
               <div className="flex justify-between items-center py-2 border-b border-border/50">
                 <span className="text-muted-foreground">Success Rate</span>
-                <span className="font-medium">{int.successRatePercent}%</span>
+                <span className="font-medium">
+                  {Number.isInteger(int.successRatePercent)
+                    ? int.successRatePercent
+                    : int.successRatePercent.toFixed(1)}
+                  %
+                  {int.refreshAttempts != null &&
+                    int.successfulRefreshes != null &&
+                    ` (${int.successfulRefreshes.toLocaleString()}/${int.refreshAttempts.toLocaleString()} refreshes)`}
+                </span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-border/50">
                 <span className="text-muted-foreground">Mapped Titles</span>

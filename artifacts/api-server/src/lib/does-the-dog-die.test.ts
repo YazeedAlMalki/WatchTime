@@ -226,6 +226,15 @@ describe("Does the Dog Die refresh persistence", () => {
     };
     const result = await refreshDoesTheDogDieTitle(titleId, client);
     expect(result).toMatchObject({ ok: true, externalId: "10752", items: 1 });
+    const [health] = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, provider));
+    expect(health).toMatchObject({
+      status: "healthy",
+      lastError: null,
+      refreshAttempts: 1,
+      successfulRefreshes: 1,
+      successRatePercent: 100,
+    });
 
     const [mapping] = await db.select().from(providerMappingsTable).where(and(
       eq(providerMappingsTable.titleId, titleId),
@@ -264,6 +273,58 @@ describe("Does the Dog Die refresh persistence", () => {
     ));
     expect(mapping).toMatchObject({ externalId: "10752", status: "mapped" });
     expect(record.items[0]).toMatchObject({ label: "a dog dies", score: 57 });
+
+    const [afterFailure] = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, provider));
+    expect(afterFailure).toMatchObject({
+      status: "degraded",
+      lastError: "rate limited",
+      refreshAttempts: 2,
+      successfulRefreshes: 1,
+      successRatePercent: 50,
+    });
+
+    await refreshDoesTheDogDieTitle(titleId, {
+      searchItems: async () => [item({ id: 10752 })],
+      getItem: async () => ({
+        ...item({ id: 10752 }),
+        topicItemStats: [],
+      }),
+    });
+    const [afterRecovery] = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, provider));
+    expect(afterRecovery).toMatchObject({
+      status: "healthy",
+      lastError: null,
+      refreshAttempts: 3,
+      successfulRefreshes: 2,
+    });
+    expect(afterRecovery.successRatePercent).toBeCloseTo((2 / 3) * 100);
+  });
+
+  it("keeps attempt counters bounded while preserving their success ratio", async () => {
+    await db.update(integrationHealthTable)
+      .set({
+        refreshAttempts: 2_000_000_000,
+        successfulRefreshes: 1_000_000_000,
+      })
+      .where(eq(integrationHealthTable.provider, provider));
+
+    await refreshDoesTheDogDieTitle(titleId, {
+      searchItems: async () => {
+        throw new DoesTheDogDieError("rate limited", "rate_limited", 429);
+      },
+      getItem: async () => {
+        throw new Error("should not fetch details");
+      },
+    });
+
+    const [health] = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, provider));
+    expect(health.refreshAttempts).toBe(1_000_000_001);
+    expect(health.successfulRefreshes).toBe(500_000_000);
+    expect(health.refreshAttempts).toBeLessThanOrEqual(2_000_000_000);
+    expect(health.successRatePercent).toBeCloseTo((500_000_000 / 1_000_000_001) * 100);
   });
 });
 

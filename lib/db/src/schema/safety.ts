@@ -133,6 +133,8 @@ export const integrationHealthTable = pgTable("integration_health", {
   lastSuccessAt: timestamp("last_success_at"),
   lastError: text("last_error"),
   successRatePercent: real("success_rate_percent").notNull().default(100),
+  refreshAttempts: integer("refresh_attempts"),
+  successfulRefreshes: integer("successful_refreshes"),
   mappedTitles: integer("mapped_titles").notNull().default(0),
   missingMappings: integer("missing_mappings").notNull().default(0),
 }, (table) => [index("integration_health_provider_idx").on(table.provider)]);
