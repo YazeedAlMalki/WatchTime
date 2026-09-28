@@ -467,6 +467,56 @@ describe('mobile startup contracts', () => {
     });
   });
 
+  it('switches from signed-out trending to signed-in feeds when auth changes in place', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
+    mockTrendingQueryState.current = {
+      data: [{ id: 91, name: 'Public trending title' }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+
+    const screen = await render(<HomeScreen />);
+
+    expect(mockQueryEnabled.trending).toEqual([false]);
+    expect(mockQueryEnabled.shows).toEqual([]);
+    expect(mockQueryEnabled.watchlist).toEqual([]);
+    expect(mockQueryEnabled.recommendations).toEqual([]);
+
+    await act(async () => {
+      pendingInteractions[0]?.();
+    });
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Public trending title')).toBeTruthy();
+      expect(mockQueryEnabled.trending).toEqual([false, true]);
+    });
+    expect(screen.getByText('Trending Now')).toBeTruthy();
+
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.queryByText('Track your shows.')).toBeNull();
+    expect(screen.queryByText('Trending Now')).toBeNull();
+    expect(screen.queryByText('Public trending title')).toBeNull();
+    expect(screen.getByText('Up Next')).toBeTruthy();
+    expect(screen.getByText('Your Watchlist')).toBeTruthy();
+    expect(mockQueryEnabled.shows).toEqual([true]);
+    expect(mockQueryEnabled.watchlist).toEqual([true]);
+    expect(mockQueryEnabled.recommendations).toEqual([true]);
+    expect(mockQueryEnabled.trending).toEqual([false, true]);
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
   it('does not update startup state or enable feeds when callbacks fire after unmount', async () => {
     const home = await render(<HomeScreen />);
 
