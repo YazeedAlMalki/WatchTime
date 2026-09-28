@@ -13,4 +13,9 @@ q?: string;
  * Filter aliases by their source ownership
  */
 ownership?: ListAdminContentAliasesOwnership;
+/**
+ * Find one alias by record ID regardless of search or ownership filters
+ * @minimum 1
+ */
+id?: number;
 };

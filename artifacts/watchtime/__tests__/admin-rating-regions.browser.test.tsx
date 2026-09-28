@@ -16,7 +16,15 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     ...api,
     useGetMe: () => ({ data: { isAdmin: true }, isLoading: false }),
     useGetAdminDashboard: () => ({ data: undefined }),
-    useListAdminContentAliases: () => ({ data: [], isLoading: false }),
+    useListAdminContentAliases: (params?: { id?: number }) => ({
+      data: params?.id === 217 ? [{
+        id: 217, titleId: 101, titleName: "The Lighthouse", titleType: "movie",
+        titleYear: 2019, alias: "Le Phare", language: "fr", sourceName: "Editorial",
+        sourceUrl: null, isEditorial: true, collision: false, collisionTitleCount: 1,
+        updatedAt: "2026-09-16T00:00:00.000Z",
+      }] : [],
+      isLoading: false,
+    }),
     useRefreshAdminContent: () => ({ isPending: false, mutate: vi.fn() }),
     useRefreshAdminContentBatch: () => ({ isPending: false, mutate: vi.fn() }),
     useUpdateAdminContentAlias: () => ({ isPending: false, mutate: vi.fn() }),
@@ -62,7 +70,7 @@ it("copies a link with the current Content filters and reports clipboard failure
     expect(writeText).toHaveBeenCalledOnce();
     const copied = new URL(writeText.mock.calls[0][0]);
     expect(copied.origin).toBe(location.origin);
-    expect(readAdminContentUrl(copied.search)).toEqual({
+    expect(readAdminContentUrl(copied.search)).toMatchObject({
       tab: "content", region: "FR", q: "Star Wars & Friends", ownership: "editorial",
     });
     expect(toast).toHaveBeenCalledWith({ title: "Review link copied" });
@@ -80,6 +88,32 @@ it("copies a link with the current Content filters and reports clipboard failure
     window.history.replaceState({}, "", previousUrl);
     if (previousClipboard) Object.defineProperty(navigator, "clipboard", previousClipboard);
     else Reflect.deleteProperty(navigator, "clipboard");
+  }
+});
+
+it("opens a direct alias link with saved filters and highlights the linked row outside the results", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const originalFetch = window.fetch;
+  window.history.replaceState({}, "", "/admin?tab=content&region=FR&q=Other&ownership=provider&aliasId=217");
+  window.fetch = vi.fn(async () =>
+    new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } }));
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByPlaceholder("Search titles…")).toHaveValue("Other");
+    await expect.element(page.getByRole("combobox", { name: "Review Wikidata region" })).toHaveTextContent(/FR ·/);
+    await expect.element(page.getByRole("combobox", { name: "Alias ownership" })).toHaveTextContent("Provider");
+    await expect.element(page.getByRole("status")).toHaveTextContent("Le Phare");
+    expect(container.querySelector("tr.bg-primary\\/10")?.textContent).toContain("Le Phare");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
   }
 });
 

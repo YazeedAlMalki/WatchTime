@@ -142,6 +142,41 @@ describe("admin alternate-title review", () => {
     });
   }
 
+  it("pins and highlights a linked alias outside the current result set and copies its record link", async () => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      act(() => root.render(
+        <AliasReview
+          aliases={[]}
+          isLoading={false}
+          isError={false}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="provider"
+          onOwnershipChange={() => {}}
+          reviewUrl="/admin?tab=content&region=FR&q=Other&ownership=provider"
+          linkedAliasId={17}
+          linkedAlias={initialAlias}
+        />,
+      ));
+      expect(container.textContent).toContain("Shared Local Title");
+      expect(container.textContent).toContain("shown above the filtered results");
+      expect(container.querySelector("tr.bg-primary\\/10")?.textContent).toContain("Shared Local Title");
+      act(() => button(container, "Copy link").click());
+      await flushEffects();
+      const copied = new URL(writeText.mock.calls[0][0]);
+      expect(copied.searchParams.get("aliasId")).toBe("17");
+      expect(copied.searchParams.get("q")).toBe("Other");
+      expect(copied.searchParams.get("ownership")).toBe("provider");
+      expect(mocks.toast).toHaveBeenCalledWith({ title: "Alternate title link copied" });
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("saves alias text, language, and source link, then refreshes collision views", async () => {
     render();
 

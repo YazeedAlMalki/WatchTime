@@ -90,7 +90,7 @@ import { useToast } from "@/hooks/use-toast";
 export default function AdminPage() {
   const [, setLocation] = useLocation();
   const search = useSearch();
-  const { tab, region, q, ownership } = readAdminContentUrl(search);
+  const { tab, region, q, ownership, aliasId } = readAdminContentUrl(search);
   const selectTab = (nextTab: string) => {
     setLocation(adminContentUrl(search, nextTab as AdminTab, region));
   };
@@ -266,6 +266,7 @@ export default function AdminPage() {
             aliasOwnership={ownership}
             onAliasOwnershipChange={selectAliasOwnership}
             reviewUrl={adminContentUrl(search, "content", region, q, ownership)}
+            aliasId={aliasId}
           />
         </TabsContent>
 
@@ -966,6 +967,7 @@ function ContentTab({
   aliasOwnership,
   onAliasOwnershipChange,
   reviewUrl,
+  aliasId,
 }: {
   ratingRegion: RatingRegion;
   onRatingRegionChange: (region: RatingRegion) => void;
@@ -974,6 +976,7 @@ function ContentTab({
   aliasOwnership: AliasOwnershipFilter;
   onAliasOwnershipChange: (ownership: AliasOwnershipFilter) => void;
   reviewUrl: string;
+  aliasId: number | null;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -1025,6 +1028,16 @@ function ContentTab({
       ...(debouncedQ ? { q: debouncedQ } : {}),
       ...(aliasOwnership !== "all" ? { ownership: aliasOwnership } : {}),
     });
+  const linkedAliasQuery = useListAdminContentAliases(
+    { id: aliasId ?? undefined },
+    {
+      query: {
+        enabled: aliasId !== null,
+        queryKey: getListAdminContentAliasesQueryKey({ id: aliasId ?? undefined }),
+      },
+    },
+  );
+  const linkedAlias = aliasId === null ? undefined : linkedAliasQuery.data?.[0];
   const refresh = useRefreshAdminContent();
   const batchRefresh = useRefreshAdminContentBatch();
   const { data: batchStatus } = useGetAdminContentRefreshBatch();
@@ -1730,6 +1743,12 @@ function ContentTab({
         onRetry={() => void retryAliases()}
         ownership={aliasOwnership}
         onOwnershipChange={onAliasOwnershipChange}
+        reviewUrl={reviewUrl}
+        linkedAliasId={aliasId}
+        linkedAlias={linkedAlias}
+        linkedAliasLoading={linkedAliasQuery.isLoading}
+        linkedAliasError={linkedAliasQuery.isError}
+        onRetryLinkedAlias={() => void linkedAliasQuery.refetch()}
       />
     </div>
   );
@@ -1743,6 +1762,12 @@ export function AliasReview({
   onRetry,
   ownership,
   onOwnershipChange,
+  reviewUrl,
+  linkedAliasId = null,
+  linkedAlias,
+  linkedAliasLoading = false,
+  linkedAliasError = false,
+  onRetryLinkedAlias,
 }: {
   aliases: AdminContentAlias[] | undefined;
   isLoading: boolean;
@@ -1753,9 +1778,38 @@ export function AliasReview({
   onOwnershipChange: (
     ownership: ListAdminContentAliasesOwnership | "all",
   ) => void;
+  reviewUrl?: string;
+  linkedAliasId?: number | null;
+  linkedAlias?: AdminContentAlias;
+  linkedAliasLoading?: boolean;
+  linkedAliasError?: boolean;
+  onRetryLinkedAlias?: () => void;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const linkedRowRef = React.useRef<HTMLTableRowElement>(null);
+  React.useEffect(() => {
+    if (linkedAlias) linkedRowRef.current?.scrollIntoView?.({ block: "center" });
+  }, [linkedAlias?.id]);
+  const visibleAliases = linkedAlias && !aliases?.some((alias) => alias.id === linkedAlias.id)
+    ? [linkedAlias, ...(aliases ?? [])]
+    : aliases;
+  const copyAliasLink = async (alias: AdminContentAlias) => {
+    if (!reviewUrl) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      const url = new URL(reviewUrl, window.location.origin);
+      url.searchParams.set("aliasId", String(alias.id));
+      await navigator.clipboard.writeText(url.href);
+      toast({ title: "Alternate title link copied" });
+    } catch {
+      toast({
+        title: "Could not copy alternate title link",
+        description: "Allow clipboard access and try again.",
+        variant: "destructive",
+      });
+    }
+  };
   const updateAlias = useUpdateAdminContentAlias();
   const deleteAlias = useDeleteAdminContentAlias();
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -1971,6 +2025,23 @@ export function AliasReview({
           </span>
         </div>
       </div>
+      {linkedAliasId !== null && (
+        <div role="status" className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+          {linkedAliasLoading
+            ? "Finding linked alternate title…"
+            : linkedAliasError
+              ? <>Could not load the linked alternate title. <button type="button" className="text-primary underline" onClick={onRetryLinkedAlias}>Retry</button></>
+              : linkedAlias
+                ? <>Linked alternate title: <strong>{linkedAlias.alias}</strong>{!aliases?.some((alias) => alias.id === linkedAlias.id) ? " (shown above the filtered results)" : ""}</>
+                : "This alternate title no longer exists."}
+        </div>
+      )}
+      {isError && linkedAlias && (
+        <div role="alert" className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+          The linked title is available, but the filtered alternate titles could not load.{" "}
+          <button type="button" className="text-primary underline" onClick={onRetry}>Retry results</button>
+        </div>
+      )}
       {refreshError && (
         <div
           role="alert"
@@ -2151,7 +2222,7 @@ export function AliasReview({
       )}
       {isLoading ? (
         <div className="h-24 animate-pulse bg-secondary/30 rounded-2xl" />
-      ) : isError ? (
+      ) : isError && !linkedAlias ? (
         <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
           <p className="font-medium text-foreground">Could not load alternate titles.</p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -2168,7 +2239,7 @@ export function AliasReview({
             {isFetching ? "Retrying…" : "Retry alternate titles"}
           </Button>
         </div>
-      ) : !aliases?.length ? (
+      ) : !visibleAliases?.length ? (
         <EmptyState
           icon={BookOpen}
           title="No alternate titles found"
@@ -2188,8 +2259,12 @@ export function AliasReview({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {aliases.map((alias) => (
-                <tr key={alias.id}>
+              {visibleAliases.map((alias) => (
+                <tr
+                  key={alias.id}
+                  ref={linkedAliasId === alias.id ? linkedRowRef : undefined}
+                  className={linkedAliasId === alias.id ? "bg-primary/10 ring-2 ring-inset ring-primary/50" : undefined}
+                >
                   <td className="px-4 py-3 font-medium text-foreground min-w-52">
                     {editingId === alias.id && !conflictAlias ? (
                       <Input
@@ -2277,6 +2352,17 @@ export function AliasReview({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
+                      {reviewUrl && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5"
+                          aria-label={`Copy link to ${alias.alias} for ${alias.titleName}`}
+                          onClick={() => void copyAliasLink(alias)}
+                        >
+                          <Link2 className="w-3.5 h-3.5" /> Copy link
+                        </Button>
+                      )}
                       {editingId === alias.id && !conflictAlias ? (
                         <>
                           <Button

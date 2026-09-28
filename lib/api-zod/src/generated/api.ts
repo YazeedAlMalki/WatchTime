@@ -1190,9 +1190,13 @@ export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseIt
 /**
  * @summary Review alternate-title provenance and collisions
  */
+
+
+
 export const ListAdminContentAliasesQueryParams = zod.object({
   "q": zod.coerce.string().optional(),
-  "ownership": zod.enum(['provider', 'editorial']).optional().describe('Filter aliases by their source ownership')
+  "ownership": zod.enum(['provider', 'editorial']).optional().describe('Filter aliases by their source ownership'),
+  "id": zod.coerce.number().int().min(1).optional().describe('Find one alias by record ID regardless of search or ownership filters')
 })
 
 export const ListAdminContentAliasesResponseItem = zod.object({

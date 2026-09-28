@@ -186,6 +186,20 @@ describe("admin title aliases", () => {
     expect(response.status).toBe(400);
   });
 
+  it("locates an exact alias ID even if the shared filters do not match", async () => {
+    const [row] = await db.select({ id: titleAliasesTable.id }).from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
+    const response = await request(app).get("/api/admin/content-aliases")
+      .query({ id: row.id, q: "not this alias", ownership: "provider" });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([expect.objectContaining({
+      id: row.id, alias: "Shared Local Title", isEditorial: true,
+    })]);
+    expect((await request(app).get("/api/admin/content-aliases?id=0")).status).toBe(400);
+    expect((await request(app).get("/api/admin/content-aliases?id=1.5")).status).toBe(400);
+    expect((await request(app).get("/api/admin/content-aliases?id=999999999")).body).toEqual([]);
+  });
+
   it("edits an alias without changing either catalog identity", async () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));

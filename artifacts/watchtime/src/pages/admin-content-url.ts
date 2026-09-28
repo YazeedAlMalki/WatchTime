@@ -21,6 +21,7 @@ export function readAdminContentUrl(search: string): {
   region: RatingRegion;
   q: string;
   ownership: AliasOwnershipFilter;
+  aliasId: number | null;
 } {
   const params = new URLSearchParams(search);
   const rawRegion = params.get("region");
@@ -28,12 +29,16 @@ export function readAdminContentUrl(search: string): {
     RATING_REGIONS.find(({ code }) => code === rawRegion)?.code ?? "US";
   const rawTab = params.get("tab");
   const tab = ADMIN_TABS.find((value) => value === rawTab)
-    ?? (params.has("region") || params.has("q") || params.has("ownership") ? "content" : "dashboard");
+    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("aliasId") ? "content" : "dashboard");
   const rawOwnership = params.get("ownership");
   const ownership = tab === "content" && (rawOwnership === "provider" || rawOwnership === "editorial")
     ? rawOwnership
     : "all";
-  return { tab, region, q: tab === "content" ? (params.get("q") ?? "") : "", ownership };
+  const rawAliasId = params.get("aliasId");
+  const aliasId = rawAliasId !== null && /^[1-9]\d*$/.test(rawAliasId) && Number.isSafeInteger(Number(rawAliasId))
+    ? Number(rawAliasId)
+    : null;
+  return { tab, region, q: tab === "content" ? (params.get("q") ?? "") : "", ownership, aliasId: tab === "content" ? aliasId : null };
 }
 
 export function adminContentUrl(
@@ -42,9 +47,11 @@ export function adminContentUrl(
   region: RatingRegion,
   q?: string,
   ownership?: AliasOwnershipFilter,
+  aliasId?: number,
 ): string {
   const params = new URLSearchParams(search);
   params.set("tab", tab);
+  params.delete("aliasId");
   if (tab === "content") {
     params.set("region", region);
     const term = q ?? params.get("q") ?? "";
@@ -53,6 +60,7 @@ export function adminContentUrl(
     const selectedOwnership = ownership ?? readAdminContentUrl(search).ownership;
     if (selectedOwnership !== "all") params.set("ownership", selectedOwnership);
     else params.delete("ownership");
+    if (aliasId !== undefined) params.set("aliasId", String(aliasId));
   } else {
     params.delete("q");
     params.delete("ownership");

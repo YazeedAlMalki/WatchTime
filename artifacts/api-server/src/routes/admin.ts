@@ -592,7 +592,35 @@ router.get("/content", async (req, res) => {
         ))
     : [];
 
-      const titleSafetyRecords = safetyRecords.filter((record) => record.titleId === t.id);
+  return res.json(titles.map((t) => {
+    const titleSafetyRecords = safetyRecords.filter((record) => record.titleId === t.id);
+    const ratingRecords = titleSafetyRecords.map((record) => ({
+      ...record,
+      updatedAt: hasMalformedTimestamp(record.rawUpdatedAt)
+        ? record.rawUpdatedAt
+        : record.updatedAt,
+    }));
+    const selectedRating = resolvePreferredRating(ratingRecords, region);
+    const selectedRecord = titleSafetyRecords.find((record) => record.id === selectedRating?.recordId);
+    return {
+      id: t.id,
+      name: t.name,
+      type: t.type,
+      tmdbId: t.tmdbId,
+      imdbId: t.imdbId,
+      mappings: mappings.filter((m) => m.titleId === t.id).map((m) => ({
+        provider: m.provider,
+        externalId: m.externalId,
+        status: m.status,
+        lastRefreshedAt: m.lastRefreshedAt?.toISOString() ?? null,
+      })),
+      selectedRating: selectedRating
+        ? { ...selectedRating, refreshTimestampMalformed: hasMalformedTimestamp(selectedRecord?.rawUpdatedAt) }
+        : null,
+    };
+  }));
+});
+
 const normalizeAlias = (value: string) =>
   value.normalize("NFKD").replace(/\p{M}+/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
@@ -607,6 +635,11 @@ async function refreshTitleAliasSearchList(tx: any, titleId: number) {
 router.get("/content-aliases", async (req, res) => {
   const q = String(req.query.q ?? "").trim();
   const ownership = String(req.query.ownership ?? "").trim();
+  const rawId = req.query.id;
+  const id = rawId === undefined ? null : Number(rawId);
+  if (id !== null && (!Number.isSafeInteger(id) || id < 1)) {
+    return res.status(400).json({ error: "Invalid alias ID" });
+  }
   if (ownership && ownership !== "provider" && ownership !== "editorial") {
     return res.status(400).json({ error: "Invalid alias ownership filter" });
   }
@@ -617,11 +650,19 @@ router.get("/content-aliases", async (req, res) => {
         ? eq(titleAliasesTable.isEditorial, true)
         : undefined;
   const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
+    .select({
+      alias: titleAliasesTable,
+      titleName: titlesTable.name,
+      titleType: titlesTable.type,
+      titleYear: titlesTable.year,
+    })
+    .from(titleAliasesTable)
+    .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+    .where(id !== null
+      ? eq(titleAliasesTable.id, id)
+      : and(ownershipFilter, q ? ilike(titleAliasesTable.alias, `%${q}%`) : undefined))
+    .orderBy(titleAliasesTable.normalizedAlias, titlesTable.name)
+    .limit(id !== null ? 1 : 200);
   const normalized = [...new Set(rows.map((row) => row.alias.normalizedAlias))];
   const collisions = normalized.length
     ? await db.select({
@@ -1227,16 +1268,3 @@ router.get("/audit-log/export", async (req, res) => {
 });
 
 export default router;
-
-      const selectedRecord = titleSafetyRecords.find(
-        (record) => record.id === selectedRating?.recordId,
-      );
-
-      const ratingRecords = titleSafetyRecords.map((record) => ({
-        ...record,
-        updatedAt: hasMalformedTimestamp(record.rawUpdatedAt)
-          ? record.rawUpdatedAt
-          : record.updatedAt,
-      }));
-
-      const selectedRating = resolvePreferredRating(ratingRecords, region);

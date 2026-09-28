@@ -946,6 +946,10 @@ paths:
           in: query
           description: Filter aliases by their source ownership
           schema: { type: string, enum: [provider, editorial] }
+        - name: id
+          in: query
+          description: Find one alias by record ID regardless of search or ownership filters
+          schema: { type: integer, minimum: 1 }
       responses:
         "200":
           description: Alternate titles with provenance and collision counts
