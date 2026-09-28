@@ -422,8 +422,6 @@ export const getMyShowsQueryLimitDefault = 24;
 export const getMyShowsQueryLimitMax = 50;
 
 
-
-
 export const GetMyShowsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyShowsQueryLimitMax).default(getMyShowsQueryLimitDefault),
   "beforeId": zod.coerce.number().int().min(1).optional()
@@ -470,8 +468,6 @@ export const GetMyShowsResponse = zod.array(GetMyShowsResponseItem)
  */
 export const getMyInProgressShowsQueryLimitDefault = 24;
 export const getMyInProgressShowsQueryLimitMax = 50;
-
-
 
 
 export const GetMyInProgressShowsQueryParams = zod.object({
@@ -522,7 +518,6 @@ export const getMyMoviesQueryLimitDefault = 24;
 export const getMyMoviesQueryLimitMax = 50;
 
 
-
 export const GetMyMoviesQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyMoviesQueryLimitMax).default(getMyMoviesQueryLimitDefault),
   "before": zod.coerce.string().optional()
@@ -554,7 +549,6 @@ export const GetMyMoviesResponse = zod.array(GetMyMoviesResponseItem)
  */
 export const getMyWatchlistQueryLimitDefault = 24;
 export const getMyWatchlistQueryLimitMax = 50;
-
 
 
 export const GetMyWatchlistQueryParams = zod.object({
@@ -628,7 +622,6 @@ export const GetMyRecommendationsResponse = zod.array(GetMyRecommendationsRespon
 export const createImportBodyFileNameMax = 255;
 
 export const createImportBodyContentMax = 2097152;
-
 
 
 export const CreateImportBody = zod.object({
@@ -922,7 +915,6 @@ export const GetPublicStatsResponse = zod.object({
  */
 
 
-
 export const CreateFeedbackBody = zod.object({
   "category": zod.enum(['bug', 'feature', 'general']),
   "message": zod.string().min(1),
@@ -1180,7 +1172,9 @@ export const SearchAdminContentResponseItem = zod.object({
   "recordId": zod.int().nullable(),
   "lastRefreshedAt": zod.string().nullable(),
   "sourceUrl": zod.string().nullable()
-}),zod.null()])
+}).and(zod.object({
+  "refreshTimestampMalformed": zod.boolean()
+})),zod.null()])
 })
 export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseItem)
 
@@ -1219,7 +1213,6 @@ export const UpdateAdminContentAliasParams = zod.object({
 })
 
 export const updateAdminContentAliasBodyAliasMax = 300;
-
 
 
 export const UpdateAdminContentAliasBody = zod.object({
@@ -1410,7 +1403,6 @@ export const listAdminContentRefreshBatchHistoryQueryLimitDefault = 20;
 export const listAdminContentRefreshBatchHistoryQueryLimitMax = 50;
 
 
-
 export const ListAdminContentRefreshBatchHistoryQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(listAdminContentRefreshBatchHistoryQueryLimitMax).default(listAdminContentRefreshBatchHistoryQueryLimitDefault)
 })
@@ -1497,5 +1489,4 @@ export const GetAdminAuditLogResponse = zod.object({
   "createdAt": zod.string()
 }))
 })
-
 

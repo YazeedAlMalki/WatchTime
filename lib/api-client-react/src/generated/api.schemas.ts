@@ -963,6 +963,9 @@ export const ContentMappingType = {
   documentary: 'documentary',
 } as const;
 
+export type AdminRegionalRating = RegionalRating & {
+  refreshTimestampMalformed: boolean;
+};
 export interface ContentMapping {
   id: number;
   name: string;
@@ -972,7 +975,7 @@ export interface ContentMapping {
   /** @nullable */
   imdbId?: string | null;
   mappings: ProviderMapping[];
-  selectedRating: RegionalRating | null;
+  selectedRating: AdminRegionalRating | null;
 }
 
 export interface AnalyticsPoint {
@@ -1247,4 +1250,3 @@ export const GetAdminAuditLogEntityType = {
   feedback: 'feedback',
   content: 'content',
 } as const;
-

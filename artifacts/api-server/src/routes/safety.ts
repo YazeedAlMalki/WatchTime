@@ -19,6 +19,7 @@ import {
 import { requireAuth, optionalAuth } from "../middlewares/auth";
 import { safetyReportRateLimit, safetyContributionRateLimit } from "../middlewares/rateLimiters";
 import {
+  hasMalformedTimestamp,
   resolvePreferredRating,
   type RatingRegion,
 } from "../lib/ratingRegions";
@@ -117,7 +118,21 @@ router.get("/safety", optionalAuth, async (req, res) => {
   // National classifications describe the title as a whole. Resolve them from
   // title-level records independently of episode/season warning granularity.
   const titleLevelRecords = await db
-    .select()
+    .select({
+      id: safetyRecordsTable.id,
+      titleId: safetyRecordsTable.titleId,
+      seasonNumber: safetyRecordsTable.seasonNumber,
+      episodeNumber: safetyRecordsTable.episodeNumber,
+      sourceName: safetyRecordsTable.sourceName,
+      tier: safetyRecordsTable.tier,
+      isCommunity: safetyRecordsTable.isCommunity,
+      ageRecommendation: safetyRecordsTable.ageRecommendation,
+      url: safetyRecordsTable.url,
+      status: safetyRecordsTable.status,
+      items: safetyRecordsTable.items,
+      updatedAt: safetyRecordsTable.updatedAt,
+      rawUpdatedAt: sql<string>`${safetyRecordsTable.updatedAt}::text`,
+    })
     .from(safetyRecordsTable)
     .where(and(
       eq(safetyRecordsTable.titleId, titleId),
@@ -125,6 +140,12 @@ router.get("/safety", optionalAuth, async (req, res) => {
       isNull(safetyRecordsTable.episodeNumber),
     ))
     .orderBy(desc(safetyRecordsTable.updatedAt), asc(safetyRecordsTable.id));
+  const ratingRecords = titleLevelRecords.map((record) => ({
+    ...record,
+    updatedAt: hasMalformedTimestamp(record.rawUpdatedAt)
+      ? record.rawUpdatedAt
+      : record.updatedAt,
+  }));
   const ratingSystems = new Set<string>(RATING_REGIONS.map(({ system }) => system));
   const displayRecords = [
     ...records,
@@ -157,7 +178,7 @@ router.get("/safety", optionalAuth, async (req, res) => {
   return res.json({
     level,
     preferredRatingRegion,
-    preferredRating: resolvePreferredRating(titleLevelRecords, preferredRatingRegion),
+    preferredRating: resolvePreferredRating(ratingRecords, preferredRatingRegion),
     summary: [...summaryMap.entries()].map(([category, severity]) => ({
       category,
       severity,

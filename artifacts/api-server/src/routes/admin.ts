@@ -37,6 +37,7 @@ import {
   refreshWikidataTitle,
 } from "../lib/wikidata";
 import {
+  hasMalformedTimestamp,
   resolvePreferredRating,
   type RatingRegion,
 } from "../lib/ratingRegions";
@@ -571,7 +572,18 @@ router.get("/content", async (req, res) => {
     : [];
   const safetyRecords = ids.length
     ? await db
-        .select()
+        .select({
+          id: safetyRecordsTable.id,
+          titleId: safetyRecordsTable.titleId,
+          tier: safetyRecordsTable.tier,
+          isCommunity: safetyRecordsTable.isCommunity,
+          status: safetyRecordsTable.status,
+          items: safetyRecordsTable.items,
+          updatedAt: safetyRecordsTable.updatedAt,
+          rawUpdatedAt: sql<string>`${safetyRecordsTable.updatedAt}::text`,
+          url: safetyRecordsTable.url,
+          sourceName: safetyRecordsTable.sourceName,
+        })
         .from(safetyRecordsTable)
         .where(and(
           inArray(safetyRecordsTable.titleId, ids),
@@ -579,29 +591,8 @@ router.get("/content", async (req, res) => {
           isNull(safetyRecordsTable.episodeNumber),
         ))
     : [];
-  return res.json(
-    titles.map((t) => ({
-      id: t.id,
-      name: t.name,
-      type: t.type,
-      tmdbId: t.tmdbId,
-      imdbId: t.imdbId,
-      mappings: mappings
-        .filter((m) => m.titleId === t.id)
-        .map((m) => ({
-          provider: m.provider,
-          externalId: m.externalId,
-          status: m.status,
-          lastRefreshedAt: m.lastRefreshedAt?.toISOString() ?? null,
-        })),
-      selectedRating: resolvePreferredRating(
-        safetyRecords.filter((record) => record.titleId === t.id),
-        region,
-      ),
-    })),
-  );
-});
 
+      const titleSafetyRecords = safetyRecords.filter((record) => record.titleId === t.id);
 const normalizeAlias = (value: string) =>
   value.normalize("NFKD").replace(/\p{M}+/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
@@ -1236,3 +1227,16 @@ router.get("/audit-log/export", async (req, res) => {
 });
 
 export default router;
+
+      const selectedRecord = titleSafetyRecords.find(
+        (record) => record.id === selectedRating?.recordId,
+      );
+
+      const ratingRecords = titleSafetyRecords.map((record) => ({
+        ...record,
+        updatedAt: hasMalformedTimestamp(record.rawUpdatedAt)
+          ? record.rawUpdatedAt
+          : record.updatedAt,
+      }));
+
+      const selectedRating = resolvePreferredRating(ratingRecords, region);

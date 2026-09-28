@@ -8,7 +8,7 @@ import {
   titlesTable,
   usersTable,
 } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { runCatalogSync, type SourceItem } from "../seed-real";
 
 vi.mock("../middlewares/auth", () => ({
@@ -100,8 +100,53 @@ describe("admin title aliases", () => {
       sourceName: "Wikidata",
       recordId: newer.id,
       lastRefreshedAt: newerUpdatedAt.toISOString(),
+      refreshTimestampMalformed: false,
       sourceUrl: "https://www.wikidata.org/wiki/Q123",
     });
+  });
+
+  it("flags a malformed rating refresh timestamp for admins but keeps the public rating null", async () => {
+    const [rating] = await db.insert(safetyRecordsTable).values({
+      titleId: createdTitleIds[0],
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      items: [{
+        category: "MPAA",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "Official rating",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+
+    await db.execute(sql`
+      UPDATE safety_records
+      SET updated_at = 'infinity'
+      WHERE id = ${rating.id}
+    `);
+
+    const adminResponse = await request(app)
+      .get("/api/admin/content?q=Alias%20Test%20One")
+      .expect(200);
+    expect(adminResponse.body[0].selectedRating).toMatchObject({
+      sourceName: "Wikidata",
+      recordId: rating.id,
+      lastRefreshedAt: null,
+      refreshTimestampMalformed: true,
+    });
+
+    const publicResponse = await request(app)
+      .get(`/api/safety?titleId=${createdTitleIds[0]}`)
+      .expect(200);
+    expect(publicResponse.body.preferredRating).toMatchObject({
+      sourceName: "Wikidata",
+      recordId: rating.id,
+      lastRefreshedAt: null,
+    });
+    expect(publicResponse.body.preferredRating)
+      .not.toHaveProperty("refreshTimestampMalformed");
   });
 
   it("shows provenance and collisions", async () => {

@@ -39,6 +39,10 @@ function serializeTimestamp(value: Date | string | null | undefined): string | n
   return Number.isFinite(Date.parse(value)) ? value : null;
 }
 
+export function hasMalformedTimestamp(value: Date | string | null | undefined): boolean {
+  return value != null && timestampValue(value) === Number.NEGATIVE_INFINITY;
+}
+
 export function resolvePreferredRating(records: RatingRecord[], region: RatingRegion) {
   const preferredSystem = RATING_REGIONS_BY_CODE[region];
   const matches = records

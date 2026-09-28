@@ -59,6 +59,7 @@ it("requests and displays each review region with the selected record's provenan
         sourceName: "Wikidata",
         recordId: 123,
         lastRefreshedAt: `2026-0${regions.indexOf(region as typeof regions[number]) + 1}-01T12:00:00.000Z`,
+        refreshTimestampMalformed: region === "US",
         sourceUrl: `https://www.wikidata.org/wiki/Q${regions.indexOf(region as typeof regions[number]) + 1}`,
       },
     }]), { headers: { "Content-Type": "application/json" } });
@@ -90,6 +91,13 @@ it("requests and displays each review region with the selected record's provenan
       pending.get(region)?.();
       await expect.element(page.getByText(`Selected ${region} Wikidata rating:`)).toBeVisible();
       await expect.element(page.getByText(ratings[region].label, { exact: true })).toBeVisible();
+      const malformedTimestampWarning = page.getByTestId("status-rating-refresh-warning-101");
+      if (region === "US") {
+        await expect.element(malformedTimestampWarning)
+          .toHaveTextContent("Refresh timestamp is malformed; check this provider record.");
+      } else {
+        await expect.element(malformedTimestampWarning).not.toBeInTheDocument();
+      }
 
       if (region === "US" || region === "GB") {
         const record = page.getByText(`Selected ${region} Wikidata rating:`).locator("..");

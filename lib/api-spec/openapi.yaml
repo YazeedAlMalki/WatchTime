@@ -1826,8 +1826,15 @@ components:
             $ref: "#/components/schemas/ProviderMapping"
         selectedRating:
           oneOf:
-            - $ref: "#/components/schemas/RegionalRating"
+            - $ref: "#/components/schemas/AdminRegionalRating"
             - type: "null"
+    AdminRegionalRating:
+      allOf:
+        - $ref: "#/components/schemas/RegionalRating"
+        - type: object
+          required: [refreshTimestampMalformed]
+          properties:
+            refreshTimestampMalformed: { type: boolean }
     AnalyticsPoint:
       type: object
       required: [date, value]

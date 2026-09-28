@@ -27,6 +27,7 @@ export * from './adminContentRefreshInputProvider';
 export * from './adminContentRefreshResult';
 export * from './adminContentRefreshResultStatus';
 export * from './adminDashboard';
+export * from './adminRegionalRating';
 export * from './analyticsPoint';
 export * from './analyticsSummary';
 export * from './analyticsTopItem';

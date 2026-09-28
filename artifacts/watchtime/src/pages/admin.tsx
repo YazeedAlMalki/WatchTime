@@ -1645,6 +1645,15 @@ function ContentTab({
                           ? new Date(item.selectedRating.lastRefreshedAt).toLocaleString()
                           : "unknown"}
                       </span>
+                      {item.selectedRating.refreshTimestampMalformed ? (
+                        <span
+                          className="ml-2 font-semibold text-amber-700 dark:text-amber-300"
+                          role="status"
+                          data-testid={`status-rating-refresh-warning-${item.id}`}
+                        >
+                          Refresh timestamp is malformed; check this provider record.
+                        </span>
+                      ) : null}
                       {item.selectedRating.sourceUrl ? (
                         <a
                           className="ml-2 font-medium text-primary hover:underline"

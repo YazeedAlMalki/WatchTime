@@ -5,9 +5,9 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AdminRegionalRating } from './adminRegionalRating';
 import type { ContentMappingType } from './contentMappingType';
 import type { ProviderMapping } from './providerMapping';
-import type { RegionalRating } from './regionalRating';
 
 export interface ContentMapping {
   id: number;
@@ -18,5 +18,5 @@ export interface ContentMapping {
   /** @nullable */
   imdbId?: string | null;
   mappings: ProviderMapping[];
-  selectedRating: RegionalRating | null;
+  selectedRating: AdminRegionalRating | null;
 }
