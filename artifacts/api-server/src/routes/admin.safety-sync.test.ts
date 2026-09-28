@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import request from "supertest";
-import { db, safetySyncRunsTable, titlesTable } from "@workspace/db";
+import { db, integrationHealthTable, safetySyncRunsTable, titlesTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 
 const safetyBatchRefreshMock = vi.hoisted(() => vi.fn());
@@ -33,6 +33,7 @@ import app from "../app";
 
 const runIds: number[] = [];
 const titleIds: number[] = [];
+const healthIds: number[] = [];
 
 afterEach(async () => {
   if (runIds.length) {
@@ -41,6 +42,49 @@ afterEach(async () => {
   if (titleIds.length) {
     await db.delete(titlesTable).where(inArray(titlesTable.id, titleIds.splice(0)));
   }
+  if (healthIds.length) {
+    await db.delete(integrationHealthTable).where(inArray(integrationHealthTable.id, healthIds.splice(0)));
+  }
+});
+
+describe("admin integration health", () => {
+  it("returns persisted refresh counts, accumulated rate, and the latest error", async () => {
+    const latestError = "__wikidata_latest_health_error__";
+    const [health] = await db.insert(integrationHealthTable).values({
+      provider: "Wikidata",
+      status: "failing",
+      lastError: latestError,
+      successRatePercent: 25,
+      refreshAttempts: 4,
+      successfulRefreshes: 1,
+      mappedTitles: 12,
+      missingMappings: 3,
+    }).returning({ id: integrationHealthTable.id });
+    healthIds.push(health.id);
+    const [legacyHealth] = await db.insert(integrationHealthTable).values({
+      provider: "Legacy integration",
+      status: "healthy",
+      successRatePercent: 100,
+      refreshAttempts: null,
+      successfulRefreshes: null,
+    }).returning({ id: integrationHealthTable.id });
+    healthIds.push(legacyHealth.id);
+
+    const response = await request(app).get("/api/admin/integrations").expect(200);
+    const wikidataHealth = response.body.find((entry: any) => entry.lastError === latestError);
+    expect(wikidataHealth).toMatchObject({
+      provider: "Wikidata",
+      status: "failing",
+      lastError: latestError,
+      successRatePercent: 25,
+      refreshAttempts: 4,
+      successfulRefreshes: 1,
+    });
+    expect(response.body.find((entry: any) => entry.provider === "Legacy integration")).toMatchObject({
+      refreshAttempts: 0,
+      successfulRefreshes: 0,
+    });
+  });
 });
 
 describe("admin safety sync status", () => {

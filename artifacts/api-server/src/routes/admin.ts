@@ -19,7 +19,7 @@ import {
   safetySyncRunsTable,
   type SafetySyncRunResult,
 } from "@workspace/db";
-import { and, eq, sql, desc, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, sql, desc, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
 import {
   UpdateAdminContributionBody,
   UpdateAdminReportBody,
@@ -468,8 +468,8 @@ router.get("/integrations", async (_req, res) => {
       lastSuccessAt: r.lastSuccessAt?.toISOString() ?? null,
       lastError: r.lastError,
       successRatePercent: r.successRatePercent,
-      refreshAttempts: r.refreshAttempts,
-      successfulRefreshes: r.successfulRefreshes,
+      refreshAttempts: r.refreshAttempts ?? 0,
+      successfulRefreshes: r.successfulRefreshes ?? 0,
       mappedTitles: r.mappedTitles,
       missingMappings: r.missingMappings,
       sustainedFailureAlert:

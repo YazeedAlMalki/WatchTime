@@ -490,6 +490,109 @@ describe("Wikidata refresh persistence", () => {
     expect(afterMapping).toMatchObject({ externalId: "Q42", status: "mapped" });
     expect(after).toEqual(before);
   });
+
+  it("accumulates persisted refresh outcomes and keeps the latest error state", async () => {
+    const previousRows = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    await db.delete(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+
+    const failingClient = {
+      queryByImdbId: async () => {
+        throw new WikidataError("Wikidata endpoint unavailable", "unavailable");
+      },
+    };
+    try {
+      await refreshWikidataTitle(titleId, failingClient);
+      await refreshWikidataTitle(titleId, failingClient);
+
+      let [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(health).toMatchObject({
+        refreshAttempts: 2,
+        successfulRefreshes: 0,
+        successRatePercent: 0,
+        lastError: "Wikidata endpoint unavailable",
+      });
+
+      await refreshWikidataTitle(titleId, {
+        queryByImdbId: async () => matchedItem,
+      });
+      [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(health).toMatchObject({
+        refreshAttempts: 3,
+        successfulRefreshes: 1,
+        lastError: null,
+      });
+      expect(health.successRatePercent).toBeCloseTo((1 / 3) * 100);
+
+      await refreshWikidataTitle(titleId, {
+        queryByImdbId: async () => {
+          throw new WikidataError("Latest provider error", "unavailable");
+        },
+      });
+      [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(health).toMatchObject({
+        refreshAttempts: 4,
+        successfulRefreshes: 1,
+        lastError: "Latest provider error",
+      });
+      expect(health.successRatePercent).toBeCloseTo(25);
+
+      await db.update(integrationHealthTable)
+        .set({ refreshAttempts: 2_000_000_000, successfulRefreshes: 1_000_000_000 })
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      await refreshWikidataTitle(titleId, failingClient);
+      [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(health.refreshAttempts).toBe(1_000_000_001);
+      expect(health.successfulRefreshes).toBe(500_000_000);
+      expect(health.successRatePercent).toBeCloseTo((500_000_000 / 1_000_000_001) * 100);
+    } finally {
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousRows.length > 0) {
+        await db.insert(integrationHealthTable).values(previousRows);
+      }
+    }
+  });
+
+  it("continues counting from persisted nullable-counter health rows", async () => {
+    const previousRows = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    await db.delete(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    try {
+      await db.insert(integrationHealthTable).values({
+        provider: WIKIDATA_PROVIDER,
+        status: "failing",
+        successRatePercent: 0,
+        refreshAttempts: null,
+        successfulRefreshes: null,
+        lastError: "Previous failure",
+      });
+
+      await refreshWikidataTitle(titleId, {
+        queryByImdbId: async () => matchedItem,
+      });
+      const [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(health).toMatchObject({
+        refreshAttempts: 1,
+        successfulRefreshes: 1,
+        successRatePercent: 100,
+        lastError: null,
+      });
+    } finally {
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousRows.length > 0) {
+        await db.insert(integrationHealthTable).values(previousRows);
+      }
+    }
+  });
 });
 
 describe("Wikidata batch refresh pagination", () => {

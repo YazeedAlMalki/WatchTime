@@ -20,6 +20,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 250;
 const MAX_BATCH_SIZE = 25;
+const MAX_TRACKED_REFRESH_ATTEMPTS = 2_000_000_000;
 const IMDB_ID_PATTERN = /^tt\d{7,10}$/i;
 
 /**
@@ -342,6 +343,7 @@ async function updateIntegrationHealth(values: {
   lastSyncAt: Date;
   lastSuccessAt?: Date;
   lastError: string | null;
+  refreshSucceeded: boolean;
 }) {
   await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:wikidata-sync'))`);
@@ -356,14 +358,27 @@ async function updateIntegrationHealth(values: {
       .select()
       .from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    let refreshAttempts = Math.max(existing?.refreshAttempts ?? 0, 0);
+    let successfulRefreshes = Math.min(
+      Math.max(existing?.successfulRefreshes ?? 0, 0),
+      refreshAttempts,
+    );
+    // Keep PostgreSQL integer counters bounded while preserving the accumulated
+    // success ratio to within rounding error.
+    if (refreshAttempts >= MAX_TRACKED_REFRESH_ATTEMPTS) {
+      refreshAttempts = Math.floor(refreshAttempts / 2);
+      successfulRefreshes = Math.floor(successfulRefreshes / 2);
+    }
+    refreshAttempts += 1;
+    if (values.refreshSucceeded) successfulRefreshes += 1;
     const healthValues = {
       status: values.status,
       lastSyncAt: values.lastSyncAt,
       ...(values.lastSuccessAt ? { lastSuccessAt: values.lastSuccessAt } : {}),
       lastError: values.lastError,
-      // This is the outcome of this provider operation, not a fabricated
-      // historical average. A later batch result updates it again.
-      successRatePercent: values.status === "healthy" ? 100 : 0,
+      refreshAttempts,
+      successfulRefreshes,
+      successRatePercent: (successfulRefreshes / refreshAttempts) * 100,
       mappedTitles: counts?.mapped ?? 0,
       missingMappings: counts?.missing ?? 0,
     };
@@ -441,6 +456,7 @@ export async function refreshWikidataTitle(
       status: "degraded",
       lastSyncAt: now,
       lastError: error.message,
+      refreshSucceeded: false,
     });
     return { ok: false, titleId, titleName: title.name, status: "missing", error: error.message };
   }
@@ -511,6 +527,7 @@ export async function refreshWikidataTitle(
       lastSyncAt: now,
       lastSuccessAt: now,
       lastError: null,
+      refreshSucceeded: true,
     });
     return {
       ok: true,
@@ -530,6 +547,7 @@ export async function refreshWikidataTitle(
       status: errorHealthStatus(error),
       lastSyncAt: now,
       lastError: error.message,
+      refreshSucceeded: false,
     });
     return {
       ok: false,
