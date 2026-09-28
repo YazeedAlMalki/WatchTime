@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   batchMutate: vi.fn(),
   batchStatus: undefined as unknown,
   batchStatusListeners: new Set<() => void>(),
+  integrations: [] as unknown[],
 }));
 
 vi.mock("@workspace/api-client-react", async (importOriginal) => {
@@ -39,6 +40,13 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     ...api,
     useGetMe: () => ({ data: { isAdmin: true }, isLoading: false }),
     useGetAdminDashboard: () => ({ data: undefined }),
+    useListAdminIntegrations: () => ({
+      data: mocks.integrations,
+      isLoading: false,
+    }),
+    useListCatalogRefreshes: () => ({ data: [] }),
+    useStartCatalogRefresh: () => ({ isPending: false, mutate: vi.fn() }),
+    useRetryCatalogRefresh: () => ({ isPending: false, mutate: vi.fn() }),
     useGetAdminContentRefreshBatch: () => ({
       data: React.useSyncExternalStore(
         (listener) => {
@@ -208,6 +216,65 @@ it("shows the active provider and offset and prevents starting another batch", a
     mocks.batchMutate.mockReset();
     mocks.batchStatus = undefined;
     mocks.batchStatusListeners.clear();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("shows refresh counts when available and keeps legacy health percentage-only", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=integrations");
+  mocks.integrations = [
+    {
+      provider: "Counted provider",
+      status: "degraded",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: (3 / 7) * 100,
+      refreshAttempts: 7,
+      successfulRefreshes: 3,
+      mappedTitles: 0,
+      missingMappings: 0,
+      sustainedFailureAlert: false,
+    },
+    {
+      provider: "Legacy provider",
+      status: "healthy",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 83.3,
+      refreshAttempts: null,
+      successfulRefreshes: null,
+      mappedTitles: 0,
+      missingMappings: 0,
+      sustainedFailureAlert: false,
+    },
+  ];
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Integration Health")).toBeVisible();
+
+    const countedCard = Array.from(
+      container.querySelectorAll<HTMLElement>("h3"),
+    ).find((heading) => heading.textContent === "Counted provider")?.closest("div.bg-card");
+    const legacyCard = Array.from(
+      container.querySelectorAll<HTMLElement>("h3"),
+    ).find((heading) => heading.textContent === "Legacy provider")?.closest("div.bg-card");
+
+    expect(countedCard?.textContent).toContain("42.9% (3/7 refreshes)");
+    expect(legacyCard?.textContent).toContain("83.3%");
+    expect(legacyCard?.textContent).not.toContain("refreshes");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.integrations = [];
     window.history.replaceState({}, "", previousUrl);
   }
 });
