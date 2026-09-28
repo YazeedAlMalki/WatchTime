@@ -10,6 +10,26 @@ Use this checklist to separate Replit's managed Expo sign-in from WatchTime app 
 - When WatchTime opens in Expo Go, its development-only **Phone preview checks**
   panel should report both **Expo Go: Ready** and **Expo CLI: Ready**.
 
+## Reproduce splash failures in Expo Go
+
+The development-only **Phone preview checks** panel includes two one-shot
+failure checks. From **Preview on your phone**, open WatchTime in Expo Go and
+tap **Test setup failure** or **Test cleanup failure**. WatchTime saves that
+choice locally and restarts; no source-code edits or workflow changes are
+needed.
+
+- **Setup failure:** startup metrics report `splash-prevent-error`, then the
+  font-ready recovery path continues. The root navigation should still mount.
+- **Cleanup failure:** startup metrics report `splash-hide-error` and the
+  recovery error checkpoint. This reproduces a rejected splash hide; the
+  navigation mount is covered by the startup contract test.
+- Each choice is consumed once. Relaunch normally without selecting a test to
+  return to an unforced startup. These controls are absent from production
+  builds.
+- The cleanup test can leave the native splash visible. Close Expo Go from the
+  phone's app switcher, then reopen WatchTime from **Preview on your phone**;
+  the one-shot choice has already been consumed, so startup is unforced.
+
 ## If sign-in blocks the preview
 
 Treat an Expo Go sign-in prompt, a missing managed session, or an Expo CLI

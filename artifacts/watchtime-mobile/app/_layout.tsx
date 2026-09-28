@@ -19,22 +19,43 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import colors from '@/constants/colors';
+import {
+  consumeDevSplashFailure,
+  type DevSplashFailure,
+} from '@/lib/dev-splash-failure';
 import { getDevDemoToken } from '@/lib/dev-demo-session';
 import { AppAuthProvider } from '@/lib/app-auth';
 import { ExpoPreviewReadiness } from '@/components/ExpoPreviewReadiness';
-
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 import { markStartup, reportStartupFailure } from '@/lib/startup-metrics';
 
 const domain = process.env.EXPO_PUBLIC_DOMAIN;
 if (domain) setBaseUrl(`https://${domain}`);
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-try {
-  void SplashScreen.preventAutoHideAsync().catch(() => reportStartupFailure('splash-prevent-error'));
-} catch {
+// Defer storage access one microtask so preventAutoHideAsync starts first.
+const devSplashFailure = Promise.resolve().then(consumeDevSplashFailure);
+
+function describeError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function reportSplashSetupFailure(error: unknown) {
+  markStartup('splash-setup-error', { error: describeError(error) });
   reportStartupFailure('splash-prevent-error');
+}
+
+// Start this immediately so reading the one-shot development switch never lets
+// the native splash auto-hide before fonts are ready.
+try {
+  const preventAutoHide = SplashScreen.preventAutoHideAsync();
+  void Promise.all([preventAutoHide, devSplashFailure])
+    .then(([, failure]) => {
+      if (failure === 'setup') {
+        throw new Error('Development-only forced splash setup failure');
+      }
+    })
+    .catch(reportSplashSetupFailure);
+} catch (error) {
+  reportSplashSetupFailure(error);
 }
 
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
@@ -105,15 +126,20 @@ export default function RootLayout() {
       markStartup(fontError ? 'font-error' : 'fonts-ready');
       if (fontError) reportStartupFailure('font-error');
       try {
-        void SplashScreen.hideAsync().catch((error: unknown) => {
+        void devSplashFailure.then((failure: DevSplashFailure) => {
+          if (failure === 'cleanup') {
+            throw new Error('Development-only forced splash cleanup failure');
+          }
+          return SplashScreen.hideAsync();
+        }).catch((error: unknown) => {
           markStartup('splash-recovery-error', {
-            error: error instanceof Error ? error.message : String(error),
+            error: describeError(error),
           });
           reportStartupFailure('splash-hide-error');
         });
       } catch (error) {
         markStartup('splash-recovery-error', {
-          error: error instanceof Error ? error.message : String(error),
+          error: describeError(error),
         });
         reportStartupFailure('splash-hide-error');
       }

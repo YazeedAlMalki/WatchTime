@@ -59,6 +59,15 @@ jest.mock('@clerk/expo/token-cache', () => ({
   tokenCache: {},
 }));
 
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: {
+    getItem: jest.fn(() => Promise.resolve(null)),
+    removeItem: jest.fn(() => Promise.resolve()),
+    setItem: jest.fn(() => Promise.resolve()),
+  },
+}));
+
 jest.mock('@/lib/app-auth', () => ({
   AppAuthProvider: ({ children }: any) => children,
   useAppAuth: () => {

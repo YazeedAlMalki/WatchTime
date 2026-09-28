@@ -1,13 +1,29 @@
-import React from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { reloadAppAsync } from 'expo';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
+import { armDevSplashFailure } from '@/lib/dev-splash-failure';
 
 export function ExpoPreviewReadiness() {
   const c = useColors();
   const insets = useSafeAreaInsets();
+  const [reloadingFor, setReloadingFor] = useState<'setup' | 'cleanup' | null>(null);
+  const [failureControlError, setFailureControlError] = useState<string | null>(null);
   if (!__DEV__) return null;
+
+  const restartWithSplashFailure = async (failure: 'setup' | 'cleanup') => {
+    setFailureControlError(null);
+    setReloadingFor(failure);
+    try {
+      await armDevSplashFailure(failure);
+      await reloadAppAsync();
+    } catch {
+      setReloadingFor(null);
+      setFailureControlError('Could not restart the preview. Try again.');
+    }
+  };
 
   const cliSessionState =
     process.env.EXPO_PUBLIC_REPLIT_EXPO_CLI_SESSION_STATE;
@@ -58,6 +74,43 @@ export function ExpoPreviewReadiness() {
             Replit password in Expo Go.
           </Text>
         ) : null}
+        {Platform.OS !== 'web' ? (
+          <View style={styles.failureControls}>
+            <Text style={[styles.help, { color: c.mutedForeground }]}>
+              Reproduce a splash startup failure:
+            </Text>
+            <View style={styles.failureButtons}>
+              {(['setup', 'cleanup'] as const).map((failure) => (
+                <Pressable
+                  key={failure}
+                  accessibilityRole="button"
+                  disabled={reloadingFor !== null}
+                  onPress={() => void restartWithSplashFailure(failure)}
+                  style={[
+                    styles.failureButton,
+                    { borderColor: c.border },
+                    reloadingFor !== null ? styles.disabledButton : null,
+                  ]}
+                  testID={`splash-failure-${failure}`}
+                >
+                  <Text style={[styles.failureButtonText, { color: c.foreground }]}>
+                    {reloadingFor === failure
+                      ? 'Restarting…'
+                      : `Test ${failure} failure`}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            {failureControlError ? (
+              <Text
+                accessibilityRole="alert"
+                style={[styles.help, { color: c.foreground }]}
+              >
+                {failureControlError}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -88,5 +141,28 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     lineHeight: 17,
     marginTop: 6,
+  },
+  failureControls: {
+    marginTop: 8,
+  },
+  failureButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+  },
+  failureButton: {
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderRadius: colors.radius,
+  },
+  failureButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+  },
+  disabledButton: {
+    opacity: 0.55,
   },
 });
