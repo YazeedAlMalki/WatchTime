@@ -281,18 +281,6 @@ describe('mobile startup contracts', () => {
 
     const { getByTestId } = await render(<RootLayout />);
 
-    expect(getByTestId('root-navigation')).toBeTruthy();
-    expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
-    expect(mockMarkStartup).toHaveBeenCalledWith('font-error');
-    expect(mockReportStartupFailure).toHaveBeenCalledWith('font-error');
-  });
-
-  it('keeps root navigation mounted when splash screen cleanup fails', async () => {
-    const splashError = new Error('splash cleanup failed');
-    jest.mocked(SplashScreen.hideAsync).mockRejectedValueOnce(splashError);
-
-    const { getByTestId } = await render(<RootLayout />);
-
     await act(async () => {
       await Promise.resolve();
     });
@@ -305,21 +293,34 @@ describe('mobile startup contracts', () => {
     expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-error');
   });
 
-  it('keeps root navigation mounted when splash setup fails', async () => {
-    jest.isolateModules(() => {
-      jest.doMock('expo-splash-screen', () => ({
-        hideAsync: jest.fn(() => Promise.resolve()),
-        preventAutoHideAsync: jest.fn(() => Promise.reject(new Error('splash setup failed'))),
-      }));
-      require('../app/_layout');
-    });
-
-    await act(async () => {
-      await Promise.resolve();
+  it('reports synchronous splash cleanup throws and keeps root navigation mounted', async () => {
+    const splashError = new Error('splash cleanup threw synchronously');
+    jest.mocked(SplashScreen.hideAsync).mockImplementationOnce(() => {
+      throw splashError;
     });
 
     const { getByTestId } = await render(<RootLayout />);
 
+    expect(getByTestId('root-navigation')).toBeTruthy();
+  });
+
+  it('reports synchronous splash setup throws and keeps root navigation mounted', async () => {
+    jest.doMock('react', () => mockReact);
+    jest.doMock('expo-splash-screen', () => ({
+      hideAsync: jest.fn(() => Promise.resolve()),
+      preventAutoHideAsync: jest.fn(() => {
+        throw new Error('splash setup threw synchronously');
+      }),
+    }));
+    jest.resetModules();
+    require('../app/_layout');
+
+    expect(mockMarkStartup).toHaveBeenCalledWith('splash-setup-error', {
+      error: 'splash setup threw synchronously',
+    });
+    expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-prevent-error');
+
+    const { getByTestId } = await render(<RootLayout />);
     expect(getByTestId('root-navigation')).toBeTruthy();
   });
 
@@ -617,3 +618,5 @@ describe('mobile startup contracts', () => {
   });
 
 });
+
+const mockReact = React;

@@ -3,11 +3,11 @@ name: Expo startup contract mocks
 description: Jest-specific guidance for testing module-level Expo splash setup failures.
 ---
 
-When testing a module-level Expo splash promise rejection, import the layout in `jest.isolateModules` with a local `jest.doMock` that returns the rejected promise. Keep the normal top-level splash mock's methods explicitly promise-returning.
+To test a module-level Expo splash failure after the layout has already been imported, configure a fresh `jest.doMock` for `expo-splash-screen`, map `react` back to the test's existing React singleton, call `jest.resetModules()`, then require the layout again.
 
-**Why:** The Expo Jest preset and static imports can replace or evaluate splash mocks before a test-configured function is initialized, producing a misleading “method is not a function” failure instead of exercising the rejection path.
+**Why:** `jest.isolateModules()` did not reliably replace the already-evaluated top-level splash mock in this test suite. Resetting modules re-runs the module-level splash call; preserving the React singleton avoids a duplicate-React hook failure when the existing renderer is used.
 
-**How to apply:** Use the isolated import only for the failure contract; render the already-imported root layout separately to assert navigation remains available.
+**How to apply:** Use this reset only around module-load failure contracts. Keep the normal splash mock's methods explicitly promise-returning, and render the previously imported root layout to assert navigation remains available.
 
 Keep stateful Home feed failure/recovery scenarios in a focused test file rather than extending the shared startup-contract mock state.
 
