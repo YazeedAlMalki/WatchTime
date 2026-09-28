@@ -623,6 +623,11 @@ describe("admin alternate-title review", () => {
       },
       expect.any(Object),
     );
+    await flushEffects();
+    expect(container.textContent).not.toContain(
+      "A newer correction is already saved",
+    );
+    expect(container.textContent).not.toContain("Current version");
   });
 
   it("requires removal confirmation and refreshes collision badges after removal", async () => {

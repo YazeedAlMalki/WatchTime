@@ -1851,6 +1851,7 @@ export function AliasReview({
       {
         onSuccess: async () => {
           setEditingId(null);
+          setConflictAlias(null);
           const refreshed = await refreshAliasViews();
           toast(
             refreshed

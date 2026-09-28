@@ -966,6 +966,7 @@ export const ContentMappingType = {
 export type AdminRegionalRating = RegionalRating & {
   refreshTimestampMalformed: boolean;
 };
+
 export interface ContentMapping {
   id: number;
   name: string;
@@ -1250,3 +1251,4 @@ export const GetAdminAuditLogEntityType = {
   feedback: 'feedback',
   content: 'content',
 } as const;
+
