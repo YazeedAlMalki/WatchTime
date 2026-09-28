@@ -3,6 +3,10 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { readAdminContentUrl } from "@/pages/admin-content-url";
+
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast }) }));
 
 // Leave the generated content query and HTTP client intact: the test checks
 // that selecting a region really changes the requested URL, not just a mock hook.
@@ -33,6 +37,51 @@ const ratings = {
   AU: { label: "M", system: "ACB", countryName: "Australia" },
   BR: { label: "14", system: "ClassInd", countryName: "Brazil" },
 } as const;
+
+it("copies a link with the current Content filters and reports clipboard failures", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  const originalFetch = window.fetch;
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  window.history.replaceState({}, "", "/admin?tab=content&region=FR&q=Star+Wars+%26+Friends&ownership=editorial");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  window.fetch = vi.fn(async () =>
+    new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } }));
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  toast.mockClear();
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByPlaceholder("Search titles…")).toHaveValue("Star Wars & Friends");
+    await expect.element(page.getByRole("combobox", { name: "Review Wikidata region" })).toHaveTextContent(/FR ·/);
+    await expect.element(page.getByRole("combobox", { name: "Alias ownership" })).toHaveTextContent("Editorial");
+
+    await userEvent.click(page.getByRole("button", { name: "Copy review link" }));
+    expect(writeText).toHaveBeenCalledOnce();
+    const copied = new URL(writeText.mock.calls[0][0]);
+    expect(copied.origin).toBe(location.origin);
+    expect(readAdminContentUrl(copied.search)).toEqual({
+      tab: "content", region: "FR", q: "Star Wars & Friends", ownership: "editorial",
+    });
+    expect(toast).toHaveBeenCalledWith({ title: "Review link copied" });
+
+    writeText.mockRejectedValueOnce(new Error("Permission denied"));
+    await userEvent.click(page.getByRole("button", { name: "Copy review link" }));
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Could not copy review link", variant: "destructive",
+    })));
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+    if (previousClipboard) Object.defineProperty(navigator, "clipboard", previousClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  }
+});
 
 it("requests and displays each review region with the selected record's provenance", async () => {
   const requests: string[] = [];

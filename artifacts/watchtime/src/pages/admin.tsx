@@ -77,6 +77,7 @@ import {
   Film,
   BookOpen,
   ClipboardList,
+  Link2,
   Download,
   ChevronLeft,
   ChevronRight,
@@ -264,6 +265,7 @@ export default function AdminPage() {
             onSearchChange={selectContentSearch}
             aliasOwnership={ownership}
             onAliasOwnershipChange={selectAliasOwnership}
+            reviewUrl={adminContentUrl(search, "content", region, q, ownership)}
           />
         </TabsContent>
 
@@ -963,6 +965,7 @@ function ContentTab({
   onSearchChange,
   aliasOwnership,
   onAliasOwnershipChange,
+  reviewUrl,
 }: {
   ratingRegion: RatingRegion;
   onRatingRegionChange: (region: RatingRegion) => void;
@@ -970,9 +973,23 @@ function ContentTab({
   onSearchChange: (term: string) => void;
   aliasOwnership: AliasOwnershipFilter;
   onAliasOwnershipChange: (ownership: AliasOwnershipFilter) => void;
+  reviewUrl: string;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const copyReviewLink = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(new URL(reviewUrl, window.location.origin).href);
+      toast({ title: "Review link copied" });
+    } catch {
+      toast({
+        title: "Could not copy review link",
+        description: "Copy the link from your browser address bar instead.",
+        variant: "destructive",
+      });
+    }
+  };
   const [debouncedQ, setDebouncedQ] = useState(q);
   const [batchProvider, setBatchProvider] = useState<
     "does_the_dog_die" | "wikidata"
@@ -1565,6 +1582,15 @@ function ContentTab({
         <span className="text-xs text-muted-foreground">
           Titles below use the selected official classification.
         </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="rounded-xl gap-1.5"
+          onClick={() => void copyReviewLink()}
+        >
+          <Link2 className="w-4 h-4" /> Copy review link
+        </Button>
       </div>
       {isLoading ? (
         <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
