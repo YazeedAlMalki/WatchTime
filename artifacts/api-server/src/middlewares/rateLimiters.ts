@@ -17,7 +17,7 @@ export const feedbackRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   limit: 5,
   standardHeaders: "draft-7", // Return RateLimit-* headers
-  legacyHeaders: false,
+  legacyHeaders: true, // Also expose X-RateLimit-* for existing clients
   store: new DrizzleRateLimitStore("feedback"),
   message: { error: "Too many feedback submissions. Please wait before trying again." },
 });
@@ -43,7 +43,7 @@ export const safetyReportRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   limit: 10,
   standardHeaders: "draft-7",
-  legacyHeaders: false,
+  legacyHeaders: true,
   keyGenerator: userOrIpKey,
   store: new DrizzleRateLimitStore("safety_report"),
   message: { error: "Too many safety reports. Please wait before submitting another." },
@@ -57,7 +57,7 @@ export const safetyContributionRateLimit = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   limit: 20,
   standardHeaders: "draft-7",
-  legacyHeaders: false,
+  legacyHeaders: true,
   keyGenerator: userOrIpKey,
   store: new DrizzleRateLimitStore("safety_contribution"),
   message: { error: "Daily contribution limit reached. You can submit more contributions tomorrow." },
