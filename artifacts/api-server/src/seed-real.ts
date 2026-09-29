@@ -267,6 +267,7 @@ export const sourceItems: SourceItem[] = [
 ];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const MAX_TRACKED_REFRESH_ATTEMPTS = 2_000_000_000;
 const stripTags = (value: unknown): string | null =>
   typeof value === "string" && value.replace(/<[^>]+>/g, "").trim()
     ? value.replace(/<[^>]+>/g, "").trim()
@@ -759,8 +760,26 @@ export function parseArgs() {
 
 async function updateHealth(provider: string, attempted: number, succeeded: number, lastError: string | null) {
   const status = attempted === 0 ? "provider_unavailable" : succeeded === attempted ? "healthy" : succeeded === 0 ? "failing" : "degraded";
-  const [previous] = await db.select({ lastSuccessAt: integrationHealthTable.lastSuccessAt })
+  const [previous] = await db.select({
+    id: integrationHealthTable.id,
+    lastSuccessAt: integrationHealthTable.lastSuccessAt,
+    refreshAttempts: integrationHealthTable.refreshAttempts,
+    successfulRefreshes: integrationHealthTable.successfulRefreshes,
+  })
     .from(integrationHealthTable).where(eq(integrationHealthTable.provider, provider)).limit(1);
+  let refreshAttempts = Math.max(previous?.refreshAttempts ?? 0, 0);
+  let successfulRefreshes = Math.min(
+    Math.max(previous?.successfulRefreshes ?? 0, 0),
+    refreshAttempts,
+  );
+  // Keep PostgreSQL integer counters bounded while preserving the accumulated
+  // success ratio to within rounding error.
+  if (refreshAttempts >= MAX_TRACKED_REFRESH_ATTEMPTS) {
+    refreshAttempts = Math.floor(refreshAttempts / 2);
+    successfulRefreshes = Math.floor(successfulRefreshes / 2);
+  }
+  refreshAttempts += attempted;
+  successfulRefreshes += succeeded;
   const expectedItems = sourceItems.filter((item) => item.source === (provider === "TVMaze" ? "tvmaze" : "wikipedia"));
   const mappedTitles = provider === "TVMaze"
     ? Number((await db.select({ count: sql<number>`count(distinct ${providerMappingsTable.titleId})::int` })
@@ -770,13 +789,14 @@ async function updateHealth(provider: string, attempted: number, succeeded: numb
       .where(inArray(titlesTable.imdbId, expectedItems.map((item) => item.imdbId!).filter(Boolean))))[0]?.count ?? 0);
   const values = {
     provider, status, lastSyncAt: new Date(), lastSuccessAt: succeeded ? new Date() : null,
-    lastError, successRatePercent: attempted ? (succeeded / attempted) * 100 : 0,
+    lastError,
+    refreshAttempts,
+    successfulRefreshes,
+    successRatePercent: refreshAttempts ? (successfulRefreshes / refreshAttempts) * 100 : 0,
     mappedTitles, missingMappings: Math.max(0, expectedItems.length - mappedTitles),
   };
   if (!succeeded && previous?.lastSuccessAt) values.lastSuccessAt = previous.lastSuccessAt;
-  const [existing] = await db.select({ id: integrationHealthTable.id })
-    .from(integrationHealthTable).where(eq(integrationHealthTable.provider, provider)).limit(1);
-  if (existing) await db.update(integrationHealthTable).set(values).where(eq(integrationHealthTable.id, existing.id));
+  if (previous) await db.update(integrationHealthTable).set(values).where(eq(integrationHealthTable.id, previous.id));
   else await db.insert(integrationHealthTable).values(values);
 }
 

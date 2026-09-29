@@ -27,6 +27,8 @@ import {
 } from "./lib/catalog-refresh";
 
 const testImdb = "tt9990001";
+const wikipediaSuccessImdb = "tt9990003";
+const wikipediaFailureImdb = "tt9990004";
 const testId = 990001;
 const testItem: SourceItem = {
   key: "test:identity",
@@ -103,9 +105,11 @@ afterEach(async () => {
     await db.delete(catalogSyncRunsTable).where(inArray(catalogSyncRunsTable.id, catalogRunIds.splice(0)));
   }
   vi.unstubAllGlobals();
-  const [title] = await db.select({ id: titlesTable.id }).from(titlesTable)
-    .where(eq(titlesTable.imdbId, testImdb)).limit(1);
-  if (title) await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+  const testTitles = await db.select({ id: titlesTable.id }).from(titlesTable)
+    .where(inArray(titlesTable.imdbId, [testImdb, wikipediaSuccessImdb, wikipediaFailureImdb]));
+  if (testTitles.length) {
+    await db.delete(titlesTable).where(inArray(titlesTable.id, testTitles.map(({ id }) => id)));
+  }
   await db.delete(integrationHealthTable);
   if (healthSnapshot.length) await db.insert(integrationHealthTable).values(healthSnapshot);
 });
@@ -369,6 +373,72 @@ describe("real catalog sync", () => {
     expect(health.missingMappings).toBe(0);
     const [good] = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
     expect(good).toBeTruthy();
+  });
+
+  it("accumulates TVMaze and Wikipedia attempts and successes across mixed refreshes", async () => {
+    const failedTvItem: SourceItem = {
+      ...testItem,
+      key: "test:failed-tv",
+      name: "Failed Test Identity Series",
+      tvmazeId: testId + 1,
+      expectedTitle: "Failed Test Identity Series",
+      expectedImdbId: "tt9990002",
+    };
+    const wikipediaSuccessItem: SourceItem = {
+      key: "movie:successful-health-count-test",
+      source: "wikipedia",
+      type: "movie",
+      name: "Successful Health Count Test",
+      imdbId: wikipediaSuccessImdb,
+      wikiPage: "Successful Health Count Test",
+      popularity: 0,
+    };
+    const wikipediaFailureItem: SourceItem = {
+      ...wikipediaSuccessItem,
+      key: "movie:failed-health-count-test",
+      name: "Failed Health Count Test",
+      imdbId: wikipediaFailureImdb,
+      wikiPage: "Failed Health Count Test",
+    };
+
+    await db.delete(integrationHealthTable)
+      .where(inArray(integrationHealthTable.provider, ["TVMaze", "Wikipedia"]));
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("wikipedia.org")) {
+        return url.includes("Failed%20Health")
+          ? jsonResponse({ extract: "" })
+          : jsonResponse({ extract: "A sourced test summary." });
+      }
+      return jsonResponse(showPayload);
+    }));
+
+    const items = [testItem, failedTvItem, wikipediaSuccessItem, wikipediaFailureItem];
+    await runCatalogSync({ dryRun: false, allowPartial: true }, items);
+
+    for (const provider of ["TVMaze", "Wikipedia"]) {
+      const [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, provider));
+      expect(health).toMatchObject({
+        status: "degraded",
+        refreshAttempts: 2,
+        successfulRefreshes: 1,
+      });
+      expect(health.successRatePercent).toBeCloseTo(50);
+    }
+
+    await runCatalogSync({ dryRun: false, allowPartial: true }, items);
+
+    for (const provider of ["TVMaze", "Wikipedia"]) {
+      const [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, provider));
+      expect(health).toMatchObject({
+        status: "degraded",
+        refreshAttempts: 4,
+        successfulRefreshes: 2,
+      });
+      expect(health.successRatePercent).toBeCloseTo(50);
+    }
   });
 
   it("leaves live safety integration health unchanged", async () => {
