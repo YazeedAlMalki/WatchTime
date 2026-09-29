@@ -362,6 +362,24 @@ describe('mobile startup contracts', () => {
     });
   });
 
+  it('keeps the splash gate while fonts are loading and opens navigation when ready', async () => {
+    mockUseFonts.mockReturnValue([false, null]);
+
+    const screen = await render(<RootLayout />);
+
+    expect(screen.queryByTestId('root-navigation')).toBeNull();
+    expect(SplashScreen.hideAsync).not.toHaveBeenCalled();
+
+    mockUseFonts.mockReturnValue([true, null]);
+    await act(async () => {
+      screen.rerender(<RootLayout />);
+    });
+
+    expect(screen.getByTestId('root-navigation')).toBeTruthy();
+    expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('fonts-ready');
+  });
+
   it('hides the splash screen and renders root navigation when fonts fail to load', async () => {
     const fontError = new Error('font loading failed');
     mockUseFonts.mockReturnValue([false, fontError]);
@@ -374,7 +392,25 @@ describe('mobile startup contracts', () => {
     expect(mockReportStartupFailure).toHaveBeenCalledWith('font-error');
   });
 
-  it('keeps root navigation mounted when splash screen cleanup fails', async () => {
+  it('reports a synchronous font-loader throw and keeps root navigation available', async () => {
+    const fontError = new Error('font loader threw synchronously');
+    mockUseFonts.mockImplementation(() => {
+      throw fontError;
+    });
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { getByTestId } = await render(<RootLayout />);
+
+    expect(getByTestId('root-navigation')).toBeTruthy();
+    expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('font-error', {
+      error: 'font loader threw synchronously',
+      source: 'font-loader-throw',
+    });
+    expect(mockReportStartupFailure).toHaveBeenCalledWith('font-error');
+  });
+
+  it('keeps root navigation mounted when splash cleanup fails', async () => {
     const splashError = new Error('splash cleanup failed');
     jest.mocked(SplashScreen.hideAsync).mockRejectedValueOnce(splashError);
 
@@ -392,31 +428,36 @@ describe('mobile startup contracts', () => {
     expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-error');
   });
 
-  it('falls back to synchronous splash hiding and reports when hideAsync never settles', async () => {
+  it('falls back to synchronous splash hiding when hideAsync never settles', async () => {
     jest.useFakeTimers();
     jest.mocked(SplashScreen.hideAsync).mockImplementationOnce(
       () => new Promise<void>(() => {}),
     );
 
-    const { getByTestId } = await render(<RootLayout />);
+    try {
+      const { getByTestId } = await render(<RootLayout />);
 
-    expect(getByTestId('root-navigation')).toBeTruthy();
-    expect(SplashScreen.hide).not.toHaveBeenCalled();
+      expect(getByTestId('root-navigation')).toBeTruthy();
+      expect(SplashScreen.hide).not.toHaveBeenCalled();
 
-    await act(async () => {
-      jest.advanceTimersByTime(5_000);
-    });
+      await act(async () => {
+        jest.advanceTimersByTime(5_000);
+      });
 
-    expect(SplashScreen.hide).toHaveBeenCalledTimes(1);
-    expect(mockMarkStartup).toHaveBeenCalledWith('splash-hide-timeout', {
-      timeoutMs: 5_000,
-    });
-    expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-timeout');
+      expect(SplashScreen.hide).toHaveBeenCalledTimes(1);
+      expect(mockMarkStartup).toHaveBeenCalledWith('splash-hide-timeout', {
+        timeoutMs: 5_000,
+      });
+      expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-timeout');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('keeps root navigation mounted when splash setup fails', async () => {
     jest.isolateModules(() => {
       jest.doMock('expo-splash-screen', () => ({
+        hide: jest.fn(),
         hideAsync: jest.fn(() => Promise.resolve()),
         preventAutoHideAsync: jest.fn(() =>
           Promise.reject(new Error('splash setup failed')),
@@ -430,7 +471,6 @@ describe('mobile startup contracts', () => {
     });
 
     const { getByTestId } = await render(<RootLayout />);
-
     expect(getByTestId('root-navigation')).toBeTruthy();
   });
 
@@ -443,15 +483,20 @@ describe('mobile startup contracts', () => {
     const { getByTestId } = await render(<RootLayout />);
 
     expect(getByTestId('root-navigation')).toBeTruthy();
+    expect(mockMarkStartup).toHaveBeenCalledWith('splash-recovery-error', {
+      error: 'splash cleanup threw synchronously',
+    });
+    expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-error');
   });
 
   it('reports synchronous splash setup throws and keeps root navigation mounted', async () => {
     jest.doMock('react', () => mockReact);
     jest.doMock('expo-splash-screen', () => ({
+      hide: jest.fn(),
       hideAsync: jest.fn(() => Promise.resolve()),
-      preventAutoHideAsync: jest.fn(() => {
+      preventAutoHideAsync: () => {
         throw new Error('splash setup threw synchronously');
-      }),
+      },
     }));
     jest.resetModules();
     require('../app/_layout');
@@ -620,22 +665,25 @@ describe('mobile startup contracts', () => {
 
     const screen = await render(<HomeScreen />);
 
-    expect(mockQueryEnabled.trending).toEqual([false]);
+    expect(screen.getByTestId('loading')).toBeTruthy();
     expect(mockQueryEnabled.shows).toEqual([]);
     expect(mockQueryEnabled.watchlist).toEqual([]);
     expect(mockQueryEnabled.recommendations).toEqual([]);
+    expect(mockQueryEnabled.trending).toEqual([false]);
 
     await act(async () => {
       pendingFrames[0]?.(0);
     });
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
     await act(async () => {
       pendingFrames[1]?.(0);
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Public trending title')).toBeTruthy();
       expect(mockQueryEnabled.trending).toEqual([false, true]);
     });
+    expect(screen.getByText('Public trending title')).toBeTruthy();
     expect(screen.getByText('Trending Now')).toBeTruthy();
 
     mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
@@ -643,15 +691,13 @@ describe('mobile startup contracts', () => {
       screen.rerender(<HomeScreen />);
     });
 
-    expect(screen.queryByText('Track your shows.')).toBeNull();
-    expect(screen.queryByText('Trending Now')).toBeNull();
     expect(screen.queryByText('Public trending title')).toBeNull();
+    expect(screen.queryByText('Trending Now')).toBeNull();
     expect(screen.getByText('Up Next')).toBeTruthy();
     expect(screen.getByText('Your Watchlist')).toBeTruthy();
     expect(mockQueryEnabled.shows).toEqual([true]);
     expect(mockQueryEnabled.watchlist).toEqual([true]);
     expect(mockQueryEnabled.recommendations).toEqual([true]);
-    expect(mockQueryEnabled.trending).toEqual([false, true]);
 
     await act(async () => {
       screen.unmount();
@@ -660,6 +706,40 @@ describe('mobile startup contracts', () => {
 
   it('keeps trending behind the startup gate when Clerk signs out before Home starts', async () => {
     mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
+    mockSignedInHomeQueryState.shows.current = {
+      data: [{
+        title: { id: 901, name: 'Personal tracked show' },
+        nextEpisode: {
+          id: 9001,
+          seasonNumber: 1,
+          episodeNumber: 2,
+          name: 'Personal next episode',
+        },
+        watchedEpisodes: 1,
+        totalEpisodes: 10,
+      }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.watchlist.current = {
+      data: [{ id: 902, name: 'Personal watchlist title' }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.recommendations.current = {
+      data: [{
+        reason: 'Because you watched Personal tracked show',
+        titles: [{ id: 904, name: 'Personal recommendation' }],
+      }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
 
     const screen = await render(<HomeScreen />);
 

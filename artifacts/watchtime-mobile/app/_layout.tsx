@@ -45,6 +45,21 @@ function reportSplashSetupFailure(error: unknown) {
   reportStartupFailure('splash-prevent-error');
 }
 
+function recoverSplashScreen() {
+  try {
+    void devSplashFailure
+      .then((failure: DevSplashFailure) => {
+        if (failure === 'cleanup') {
+          throw new Error('Development-only forced splash cleanup failure');
+        }
+        hideSplashWithTimeout();
+      })
+      .catch(reportSplashHideFailure);
+  } catch (error) {
+    reportSplashHideFailure(error);
+  }
+}
+
 function reportSplashHideFailure(error: unknown) {
   markStartup('splash-recovery-error', {
     error: describeError(error),
@@ -218,35 +233,7 @@ function AuthProviderFailureFallback({
   );
 }
 
-export default function RootLayout() {
-  const [fontsLoaded, fontError] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
-  });
-
-  useEffect(() => {
-    if (fontsLoaded || fontError) {
-      markStartup(fontError ? 'font-error' : 'fonts-ready');
-      if (fontError) reportStartupFailure('font-error');
-      try {
-        void devSplashFailure.then((failure: DevSplashFailure) => {
-          if (failure === 'cleanup') {
-            throw new Error('Development-only forced splash cleanup failure');
-          }
-          hideSplashWithTimeout();
-        }).catch((error: unknown) => {
-          reportSplashHideFailure(error);
-        });
-      } catch (error) {
-        reportSplashHideFailure(error);
-      }
-    }
-  }, [fontsLoaded, fontError]);
-
-  if (!fontsLoaded && !fontError) return null;
-
+function RootApplication() {
   return (
     <ErrorBoundary
       FallbackComponent={AuthProviderFailureFallback}
@@ -279,6 +266,51 @@ export default function RootLayout() {
           </SafeAreaProvider>
         </AppAuthProvider>
       </ClerkProvider>
+    </ErrorBoundary>
+  );
+}
+function FontLoaderFailureFallback({ error }: { error: Error }) {
+  useEffect(() => {
+    recoverSplashScreen();
+  }, []);
+
+  return <RootApplication />;
+}
+
+function FontGatedRootLayout() {
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+  });
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) {
+      markStartup(fontError ? 'font-error' : 'fonts-ready');
+      if (fontError) reportStartupFailure('font-error');
+      recoverSplashScreen();
+    }
+  }, [fontsLoaded, fontError]);
+
+  if (!fontsLoaded && !fontError) return null;
+
+  return <RootApplication />;
+}
+
+export default function RootLayout() {
+  return (
+    <ErrorBoundary
+      FallbackComponent={FontLoaderFailureFallback}
+      onError={(error) => {
+        markStartup('font-error', {
+          error: describeError(error),
+          source: 'font-loader-throw',
+        });
+        reportStartupFailure('font-error');
+      }}
+    >
+      <FontGatedRootLayout />
     </ErrorBoundary>
   );
 }
