@@ -235,6 +235,7 @@ it("shows refresh counts when available and keeps legacy health percentage-only"
       successfulRefreshes: 3,
       mappedTitles: 0,
       missingMappings: 0,
+      malformedRefreshTimestampCount: 4,
       sustainedFailureAlert: false,
     },
     {
@@ -248,6 +249,7 @@ it("shows refresh counts when available and keeps legacy health percentage-only"
       successfulRefreshes: null,
       mappedTitles: 0,
       missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
       sustainedFailureAlert: false,
     },
   ];
@@ -268,8 +270,14 @@ it("shows refresh counts when available and keeps legacy health percentage-only"
     ).find((heading) => heading.textContent === "Legacy provider")?.closest("div.bg-card");
 
     expect(countedCard?.textContent).toContain("42.9% (3/7 refreshes)");
+    expect(countedCard?.textContent).toContain(
+      "Ratings with malformed refresh timestamps4",
+    );
     expect(legacyCard?.textContent).toContain("83.3%");
     expect(legacyCard?.textContent).not.toContain("refreshes");
+    expect(legacyCard?.textContent).toContain(
+      "Ratings with malformed refresh timestamps0",
+    );
   } finally {
     root.unmount();
     container.remove();

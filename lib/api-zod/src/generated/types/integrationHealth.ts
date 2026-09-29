@@ -23,5 +23,6 @@ export interface IntegrationHealth {
   successfulRefreshes: number | null;
   mappedTitles: number;
   missingMappings: number;
+  malformedRefreshTimestampCount: number;
   sustainedFailureAlert: boolean;
 }

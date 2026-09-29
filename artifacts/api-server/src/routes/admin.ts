@@ -455,12 +455,23 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
 });
 
 router.get("/integrations", async (_req, res) => {
-  const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
+  const [rows, malformedTimestampCounts] = await Promise.all([
+    db.select().from(integrationHealthTable),
+    db
+      .select({
+        provider: safetyRecordsTable.sourceName,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(safetyRecordsTable)
+      .where(sql`
+        not isfinite(${safetyRecordsTable.updatedAt})
+        or abs(extract(epoch from ${safetyRecordsTable.updatedAt})) > 8640000000000
+      `)
+      .groupBy(safetyRecordsTable.sourceName),
+  ]);
+  const malformedTimestampCountByProvider = new Map(
+    malformedTimestampCounts.map((row) => [row.provider, row.count]),
+  );
   const sustainedFailureThreshold = Date.now() - 3 * 24 * 60 * 60 * 1000;
   return res.json(
     rows.map((r) => ({
@@ -470,10 +481,12 @@ router.get("/integrations", async (_req, res) => {
       lastSuccessAt: r.lastSuccessAt?.toISOString() ?? null,
       lastError: r.lastError,
       successRatePercent: r.successRatePercent,
-      refreshAttempts: r.refreshAttempts ?? 0,
-      successfulRefreshes: r.successfulRefreshes ?? 0,
+      refreshAttempts: r.refreshAttempts,
+      successfulRefreshes: r.successfulRefreshes,
       mappedTitles: r.mappedTitles,
       missingMappings: r.missingMappings,
+      malformedRefreshTimestampCount:
+        malformedTimestampCountByProvider.get(r.provider) ?? 0,
       sustainedFailureAlert:
         (r.provider === "TVMaze" || r.provider === "Wikipedia") &&
         r.status === "failing" &&

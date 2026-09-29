@@ -2976,6 +2976,16 @@ function IntegrationsTab() {
                 </span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-border/50">
+                <span className="text-muted-foreground">
+                  Ratings with malformed refresh timestamps
+                </span>
+                <span
+                  className={`font-medium ${int.malformedRefreshTimestampCount > 0 ? "text-orange-600 dark:text-orange-400" : ""}`}
+                >
+                  {int.malformedRefreshTimestampCount.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-border/50">
                 <span className="text-muted-foreground">Last Sync</span>
                 <span className="font-medium">
                   {int.lastSyncAt

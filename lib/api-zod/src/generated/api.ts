@@ -1099,6 +1099,7 @@ export const ListAdminIntegrationsResponseItem = zod.object({
   "successfulRefreshes": zod.int().nullable(),
   "mappedTitles": zod.int(),
   "missingMappings": zod.int(),
+  "malformedRefreshTimestampCount": zod.int(),
   "sustainedFailureAlert": zod.boolean()
 })
 export const ListAdminIntegrationsResponse = zod.array(ListAdminIntegrationsResponseItem)

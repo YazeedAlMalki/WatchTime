@@ -1783,7 +1783,7 @@ components:
             - type: "null"
     IntegrationHealth:
       type: object
-      required: [provider, status, successRatePercent, refreshAttempts, successfulRefreshes, mappedTitles, missingMappings, sustainedFailureAlert]
+      required: [provider, status, successRatePercent, refreshAttempts, successfulRefreshes, mappedTitles, missingMappings, malformedRefreshTimestampCount, sustainedFailureAlert]
       properties:
         provider: { type: string }
         status: { type: string, enum: [healthy, degraded, failing, provider_unavailable] }
@@ -1795,6 +1795,7 @@ components:
         successfulRefreshes: { type: ["integer", "null"] }
         mappedTitles: { type: integer }
         missingMappings: { type: integer }
+        malformedRefreshTimestampCount: { type: integer }
         sustainedFailureAlert: { type: boolean }
     CatalogRefreshFailure:
       type: object

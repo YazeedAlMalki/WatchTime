@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-import { db, integrationHealthTable } from "@workspace/db";
-import { inArray } from "drizzle-orm";
+import {
+  db,
+  integrationHealthTable,
+  safetyRecordsTable,
+  titlesTable,
+} from "@workspace/db";
+import { inArray, sql } from "drizzle-orm";
 
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
@@ -18,12 +23,18 @@ vi.mock("../middlewares/auth", () => ({
 import app from "../app";
 
 const insertedIds: number[] = [];
+const insertedTitleIds: number[] = [];
 
 afterEach(async () => {
   if (insertedIds.length) {
     await db
       .delete(integrationHealthTable)
       .where(inArray(integrationHealthTable.id, insertedIds.splice(0)));
+  }
+  if (insertedTitleIds.length) {
+    await db
+      .delete(titlesTable)
+      .where(inArray(titlesTable.id, insertedTitleIds.splice(0)));
   }
 });
 
@@ -90,6 +101,65 @@ describe("GET /api/admin/integrations", () => {
       successRatePercent: 83.3,
       refreshAttempts: null,
       successfulRefreshes: null,
+    });
+  });
+
+  it("reports zero and non-zero malformed rating timestamp counts without changing health status", async () => {
+    const zeroCountProvider = "Timestamp health zero regression";
+    const malformedProvider = "Timestamp health malformed regression";
+    const healthRows = await db
+      .insert(integrationHealthTable)
+      .values([
+        { provider: zeroCountProvider, status: "failing" },
+        { provider: malformedProvider, status: "healthy", successRatePercent: 97 },
+      ])
+      .returning({ id: integrationHealthTable.id });
+    insertedIds.push(...healthRows.map((row) => row.id));
+
+    const [title] = await db
+      .insert(titlesTable)
+      .values({
+        type: "movie",
+        name: "Malformed timestamp count regression",
+      })
+      .returning({ id: titlesTable.id });
+    insertedTitleIds.push(title.id);
+
+    const [rating] = await db
+      .insert(safetyRecordsTable)
+      .values({
+        titleId: title.id,
+        sourceName: malformedProvider,
+        tier: 2,
+        isCommunity: false,
+        status: "available",
+        items: [],
+      })
+      .returning({ id: safetyRecordsTable.id });
+    await db.execute(sql`
+      update safety_records
+      set updated_at = 'infinity'::timestamp
+      where id = ${rating.id}
+    `);
+
+    const response = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+    const zeroCountHealth = response.body.find(
+      (row: { provider: string }) => row.provider === zeroCountProvider,
+    );
+    const malformedHealth = response.body.find(
+      (row: { provider: string }) => row.provider === malformedProvider,
+    );
+
+    expect(zeroCountHealth).toMatchObject({
+      status: "failing",
+      malformedRefreshTimestampCount: 0,
+    });
+    expect(malformedHealth).toMatchObject({
+      status: "healthy",
+      successRatePercent: 97,
+      malformedRefreshTimestampCount: 1,
     });
   });
 });
