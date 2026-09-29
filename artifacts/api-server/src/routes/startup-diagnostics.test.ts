@@ -1,6 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import supertest from "supertest";
+import { randomInt } from "node:crypto";
+import { db, rateLimitHitsTable } from "@workspace/db";
+import { inArray } from "drizzle-orm";
 
 vi.mock("../lib/logger", () => ({
   logger: { warn: vi.fn() },
@@ -13,6 +16,14 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(express.json());
 app.use("/api", router);
+const testIps = Array.from({ length: 3 }, () => `198.18.${randomInt(0, 256)}.${randomInt(1, 255)}`);
+
+afterAll(async () => {
+  await db.delete(rateLimitHitsTable).where(inArray(
+    rateLimitHitsTable.key,
+    testIps.map((ip) => `startup_diagnostics:${ip}`),
+  ));
+});
 
 describe("startup diagnostics", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -20,7 +31,7 @@ describe("startup diagnostics", () => {
   it("records a safe event without auth or arbitrary error details", async () => {
     const res = await supertest(app)
       .post("/api/diagnostics/startup")
-      .set("X-Forwarded-For", "192.0.2.1")
+      .set("X-Forwarded-For", testIps[0])
       .send({ event: "splash-hide-error" });
     expect(res.status).toBe(204);
     expect(logger.warn).toHaveBeenCalledWith(
@@ -36,7 +47,7 @@ describe("startup diagnostics", () => {
       { event: "font-error", userId: "private content" },
     ]) {
       const res = await supertest(app).post("/api/diagnostics/startup")
-        .set("X-Forwarded-For", "192.0.2.2").send(body);
+        .set("X-Forwarded-For", testIps[1]).send(body);
       expect(res.status).toBe(400);
     }
     expect(logger.warn).not.toHaveBeenCalled();
@@ -45,11 +56,11 @@ describe("startup diagnostics", () => {
   it("bounds public log volume", async () => {
     for (let attempt = 0; attempt < 10; attempt++) {
       const res = await supertest(app).post("/api/diagnostics/startup")
-        .set("X-Forwarded-For", "192.0.2.3").send({ event: "font-error" });
+        .set("X-Forwarded-For", testIps[2]).send({ event: "font-error" });
       expect(res.status).toBe(204);
     }
     const blocked = await supertest(app).post("/api/diagnostics/startup")
-      .set("X-Forwarded-For", "192.0.2.3").send({ event: "font-error" });
+      .set("X-Forwarded-For", testIps[2]).send({ event: "font-error" });
     expect(blocked.status).toBe(429);
     expect(logger.warn).toHaveBeenCalledTimes(10);
   });

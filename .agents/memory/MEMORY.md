@@ -25,3 +25,4 @@
 - [Expo auth route tests](expo-auth-route-tests.md) — prefer isolated screen contract tests over swapping rendered screens in one React Native test instance.
 - [API test database isolation](api-test-database-isolation.md) — `singleFork` alone did not stop DB-backed test files from racing on shared tables; disable file parallelism.
 - [PostgreSQL special timestamps](postgres-special-timestamps.md) — validate raw timestamp text when PostgreSQL infinity values cross Drizzle's timestamp conversion.
+- [Proxied rate-limit checks](proxied-rate-limit-checks.md) — shared preview proxy may replace a supplied forwarded IP; isolate live counter checks from normal preview traffic.

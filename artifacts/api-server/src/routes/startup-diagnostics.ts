@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import rateLimit from "express-rate-limit";
 import { logger } from "../lib/logger";
+import { DrizzleRateLimitStore } from "../middlewares/drizzleRateLimitStore";
 
 const router: IRouter = Router();
 
@@ -11,6 +12,7 @@ const limitReports = rateLimit({
   limit: 10,
   standardHeaders: "draft-7",
   legacyHeaders: false,
+  store: new DrizzleRateLimitStore("startup_diagnostics"),
 });
 
 const events = new Set(["font-error", "splash-hide-error", "splash-prevent-error"]);

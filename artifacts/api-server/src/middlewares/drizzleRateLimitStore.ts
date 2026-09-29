@@ -44,11 +44,11 @@ export class DrizzleRateLimitStore implements Store {
       )
       ON CONFLICT (key) DO UPDATE SET
         hits = CASE
-          WHEN rate_limit_hits.reset_time < NOW() THEN 1
+          WHEN rate_limit_hits.reset_time <= NOW() THEN 1
           ELSE rate_limit_hits.hits + 1
         END,
         reset_time = CASE
-          WHEN rate_limit_hits.reset_time < NOW()
+          WHEN rate_limit_hits.reset_time <= NOW()
             THEN NOW() + (${windowSecs} * INTERVAL '1 second')
           ELSE rate_limit_hits.reset_time
         END
@@ -77,8 +77,10 @@ export class DrizzleRateLimitStore implements Store {
   }
 
   async resetAll(): Promise<void> {
+    const namespace = this.prefix + ":";
     await db.execute(sql`
-      DELETE FROM rate_limit_hits WHERE key LIKE ${this.prefix + ":%"}
+      DELETE FROM rate_limit_hits
+      WHERE left(key, ${namespace.length}) = ${namespace}
     `);
   }
 }
