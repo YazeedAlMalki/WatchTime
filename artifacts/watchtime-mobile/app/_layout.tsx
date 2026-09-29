@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ClerkProvider, useAuth } from '@clerk/expo';
@@ -113,6 +113,60 @@ function RootLayoutNav() {
   );
 }
 
+function AuthProviderFailureFallback({
+  resetError,
+}: {
+  resetError: () => void;
+}) {
+  return (
+    <View
+      testID="auth-provider-failure"
+      style={[
+        styles.authProviderFailure,
+        { backgroundColor: colors.dark.background },
+      ]}
+    >
+      <Text
+        accessibilityRole="header"
+        style={[styles.authProviderFailureTitle, { color: colors.dark.foreground }]}
+      >
+        Sign-in unavailable
+      </Text>
+      <Text
+        style={[
+          styles.authProviderFailureMessage,
+          { color: colors.dark.mutedForeground },
+        ]}
+      >
+        WatchTime couldn&apos;t start its sign-in service. Check your connection
+        and try again.
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Retry sign-in setup"
+        testID="retry-auth-provider"
+        onPress={resetError}
+        style={({ pressed }) => [
+          styles.authProviderRetry,
+          {
+            backgroundColor: colors.dark.primary,
+            opacity: pressed ? 0.85 : 1,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.authProviderRetryText,
+            { color: colors.dark.primaryForeground },
+          ]}
+        >
+          Retry
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
@@ -149,30 +203,71 @@ export default function RootLayout() {
   if (!fontsLoaded && !fontError) return null;
 
   return (
-    <ClerkProvider
-      publishableKey={publishableKey}
-      tokenCache={tokenCache}
-      proxyUrl={proxyUrl}
+    <ErrorBoundary
+      FallbackComponent={AuthProviderFailureFallback}
+      onError={(error) =>
+        markStartup('auth-provider-error', { error: describeError(error) })
+      }
     >
-      <AppAuthProvider>
-        <SafeAreaProvider>
-          <ErrorBoundary>
-            <QueryClientProvider client={queryClient}>
-              <AuthTokenBridge />
-              <StartupFrameMarker />
-              <GestureHandlerRootView style={{ flex: 1 }}>
-                <KeyboardProvider>
-                  <StatusBar style="light" />
-                  <View style={{ flex: 1 }}>
-                    <ExpoPreviewReadiness />
-                    <RootLayoutNav />
-                  </View>
-                </KeyboardProvider>
-              </GestureHandlerRootView>
-            </QueryClientProvider>
-          </ErrorBoundary>
-        </SafeAreaProvider>
-      </AppAuthProvider>
-    </ClerkProvider>
+      <ClerkProvider
+        publishableKey={publishableKey}
+        tokenCache={tokenCache}
+        proxyUrl={proxyUrl}
+      >
+        <AppAuthProvider>
+          <SafeAreaProvider>
+            <ErrorBoundary>
+              <QueryClientProvider client={queryClient}>
+                <AuthTokenBridge />
+                <StartupFrameMarker />
+                <GestureHandlerRootView style={{ flex: 1 }}>
+                  <KeyboardProvider>
+                    <StatusBar style="light" />
+                    <View style={{ flex: 1 }}>
+                      <ExpoPreviewReadiness />
+                      <RootLayoutNav />
+                    </View>
+                  </KeyboardProvider>
+                </GestureHandlerRootView>
+              </QueryClientProvider>
+            </ErrorBoundary>
+          </SafeAreaProvider>
+        </AppAuthProvider>
+      </ClerkProvider>
+    </ErrorBoundary>
   );
 }
+
+const styles = StyleSheet.create({
+  authProviderFailure: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    gap: 16,
+  },
+  authProviderFailureTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  authProviderFailureMessage: {
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center',
+  },
+  authProviderRetry: {
+    minWidth: 140,
+    minHeight: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: colors.radius,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+  },
+  authProviderRetryText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});

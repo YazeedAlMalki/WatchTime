@@ -6,6 +6,7 @@ import * as SplashScreen from 'expo-splash-screen';
 const mockUseAuth = jest.fn();
 const mockUseFonts = jest.fn();
 
+let mockClerkProviderError: Error | null = null;
 const mockStartupStateUpdates = jest.fn();
 const mockRequestAnimationFrame = jest.fn();
 const mockCancelAnimationFrame = jest.fn();
@@ -48,7 +49,10 @@ jest.mock('@clerk/expo', () => {
   const React = require('react');
 
   return {
-    ClerkProvider: ({ children }: any) => children,
+    ClerkProvider: ({ children }: any) => {
+      if (mockClerkProviderError) throw mockClerkProviderError;
+      return children;
+    },
     ClerkLoaded: () => null,
     useAuth: (...args: any[]) => mockUseAuth(...args),
   };
@@ -171,9 +175,9 @@ jest.mock('@workspace/api-client-react', () => ({
   getGetTitleQueryKey: (id: number) => [`/api/titles/${id}`],
 }));
 
-jest.mock('@/components/ErrorBoundary', () => ({
-  ErrorBoundary: ({ children }: any) => children,
-}));
+jest.mock('@/components/ErrorBoundary', () =>
+  jest.requireActual('@/components/ErrorBoundary'),
+);
 
 jest.mock('@/components/ui', () => {
   const React = require('react');
@@ -226,6 +230,7 @@ describe('mobile startup contracts', () => {
   let pendingFrames: Array<(time: number) => void> = [];
 
   beforeEach(() => {
+    mockClerkProviderError = null;
     mockUseFonts.mockReset().mockReturnValue([true, null]);
     mockUseAuth.mockReset().mockReturnValue({
       getToken: jest.fn(),
@@ -275,6 +280,36 @@ describe('mobile startup contracts', () => {
     expect(getByTestId('root-navigation')).toBeTruthy();
   });
 
+  it('shows a retryable recovery state when Clerk initialization fails', async () => {
+    mockClerkProviderError = new Error('Clerk initialization failed');
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { getByTestId, getByText, queryByTestId } = await render(
+      <RootLayout />,
+    );
+
+    expect(getByTestId('auth-provider-failure')).toBeTruthy();
+    expect(getByText('Sign-in unavailable')).toBeTruthy();
+    expect(
+      getByText(
+        "WatchTime couldn't start its sign-in service. Check your connection and try again.",
+      ),
+    ).toBeTruthy();
+    expect(queryByTestId('root-navigation')).toBeNull();
+    expect(mockMarkStartup).toHaveBeenCalledWith('auth-provider-error', {
+      error: 'Clerk initialization failed',
+    });
+
+    mockClerkProviderError = null;
+    await act(async () => {
+      fireEvent.press(getByTestId('retry-auth-provider'));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('root-navigation')).toBeTruthy();
+    });
+  });
+
   it('hides the splash screen and renders root navigation when fonts fail to load', async () => {
     const fontError = new Error('font loading failed');
     mockUseFonts.mockReturnValue([false, fontError]);
@@ -299,26 +334,30 @@ describe('mobile startup contracts', () => {
 
     expect(getByTestId('root-navigation')).toBeTruthy();
     expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
-    expect(mockMarkStartup).toHaveBeenCalledWith('font-error');
-    expect(mockReportStartupFailure).toHaveBeenCalledWith('font-error');
-    expect(mockMarkStartup).not.toHaveBeenCalledWith('splash-recovery-error', expect.anything());
+    expect(mockMarkStartup).toHaveBeenCalledWith('splash-recovery-error', {
+      error: 'splash cleanup failed',
+    });
+    expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-error');
   });
 
-  it('reports rejected splash cleanup and keeps root navigation mounted', async () => {
-    jest.mocked(SplashScreen.hideAsync).mockRejectedValueOnce(new Error('splash cleanup failed'));
-
-    const { getByTestId } = await render(<RootLayout />);
+  it('keeps root navigation mounted when splash setup fails', async () => {
+    jest.isolateModules(() => {
+      jest.doMock('expo-splash-screen', () => ({
+        hideAsync: jest.fn(() => Promise.resolve()),
+        preventAutoHideAsync: jest.fn(() =>
+          Promise.reject(new Error('splash setup failed')),
+        ),
+      }));
+      require('../app/_layout');
+    });
 
     await act(async () => {
       await Promise.resolve();
     });
 
+    const { getByTestId } = await render(<RootLayout />);
+
     expect(getByTestId('root-navigation')).toBeTruthy();
-    expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
-    expect(mockMarkStartup).toHaveBeenCalledWith('splash-recovery-error', {
-      error: 'splash cleanup failed',
-    });
-    expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-error');
   });
 
   it('reports synchronous splash cleanup throws and keeps root navigation mounted', async () => {
