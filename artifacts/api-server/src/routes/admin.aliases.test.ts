@@ -7,7 +7,7 @@ import {
   titlesTable,
   usersTable,
 } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, lt, sql } from "drizzle-orm";
 import { runCatalogSync, type SourceItem } from "../seed-real";
 import { mockMalformedSafetyTimestamp } from "../test-utils/malformedSafetyTimestamp";
 
@@ -195,6 +195,74 @@ describe("admin title aliases", () => {
       ]),
     );
     expect(editorialResponse.body.items.every((alias: { isEditorial: boolean }) => alias.isEditorial)).toBe(true);
+  });
+
+  it("shows the remaining provider citation after another provider withdraws a shared alias", async () => {
+    const tvMazeCitation = {
+      sourceName: "TVMaze",
+      sourceUrl: "https://www.tvmaze.com/shows/990010",
+    };
+    const wikipediaCitation = {
+      sourceName: "EN Wikipedia",
+      sourceUrl: "https://en.wikipedia.org/wiki/Provider_Shared_Citation",
+    };
+    await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: "Provider Shared Citation",
+      normalizedAlias: "providersharedcitation",
+      language: "en",
+      sourceName: wikipediaCitation.sourceName,
+      sourceUrl: wikipediaCitation.sourceUrl,
+      providerSources: ["tvmaze", "wikipedia"],
+      providerCitations: {
+        tvmaze: tvMazeCitation,
+        wikipedia: wikipediaCitation,
+      },
+      isEditorial: false,
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      extract: "A sourced test summary.",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+
+    await runCatalogSync({
+      dryRun: false,
+      allowPartial: false,
+    }, [{
+      key: "movie:shared-alias-withdrawal-test",
+      source: "wikipedia",
+      type: "movie",
+      name: "Alias Test One",
+      imdbId: "tt-alias-test-1",
+      aliases: [],
+      popularity: 0,
+      wikiPage: "Alias Test One",
+    }]);
+
+    const [priorAliasCount] = await db.select({
+      count: sql<number>`count(*)::int`,
+    }).from(titleAliasesTable).where(lt(
+      titleAliasesTable.normalizedAlias,
+      "providersharedcitation",
+    ));
+    const report = await request(app)
+      .get(`/api/admin/content-aliases?offset=${priorAliasCount.count}&limit=1`)
+      .expect(200);
+    expect(report.body.items).toEqual([
+      expect.objectContaining({
+        alias: "Provider Shared Citation",
+        sourceName: tvMazeCitation.sourceName,
+        sourceUrl: tvMazeCitation.sourceUrl,
+        isEditorial: false,
+      }),
+    ]);
+    const [remaining] = await db.select().from(titleAliasesTable).where(
+      eq(titleAliasesTable.normalizedAlias, "providersharedcitation"),
+    );
+    expect(remaining.providerSources).toEqual(["tvmaze"]);
+    expect(remaining.providerCitations).toEqual({ tvmaze: tvMazeCitation });
   });
 
   it("pages through every alias matching the active search and ownership filters", async () => {

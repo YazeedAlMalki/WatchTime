@@ -25,6 +25,7 @@ import {
   pool,
   titlesTable,
   titleAliasesTable,
+  type TitleAliasProviderCitation,
   seasonsTable,
   episodesTable,
   castMembersTable,
@@ -965,6 +966,13 @@ async function syncAliases(tx: any, titleId: number, canonicalName: string, item
       sourceName: source.sourceName,
       sourceUrl: source.sourceUrl,
       providerSources: [...new Set([...(current?.providerSources ?? []), item.source])],
+      providerCitations: {
+        ...(current?.providerCitations ?? {}),
+        [item.source]: {
+          sourceName: source.sourceName,
+          sourceUrl: source.sourceUrl,
+        } satisfies TitleAliasProviderCitation,
+      },
       isEditorial: false,
       updatedAt: new Date(),
     };
@@ -985,8 +993,18 @@ async function syncAliases(tx: any, titleId: number, canonicalName: string, item
     ) {
       const providerSources = current.providerSources.filter((source: string) => source !== item.source);
       if (providerSources.length) {
+        const providerCitations: Record<string, TitleAliasProviderCitation> = {
+          ...(current.providerCitations ?? {}),
+        };
+        delete providerCitations[item.source];
+        const remainingCitation = providerSources
+          .map((provider: string) => providerCitations[provider])
+          .find((citation: TitleAliasProviderCitation | undefined) => citation !== undefined);
         await tx.update(titleAliasesTable).set({
           providerSources,
+          providerCitations,
+          sourceName: remainingCitation?.sourceName ?? getProviderLabel(providerSources[0]),
+          sourceUrl: remainingCitation?.sourceUrl ?? null,
           updatedAt: new Date(),
         }).where(eq(titleAliasesTable.id, current.id));
       } else {
@@ -1000,4 +1018,10 @@ async function syncAliases(tx: any, titleId: number, canonicalName: string, item
     .orderBy(titleAliasesTable.id);
   await tx.update(titlesTable).set({ altTitles: aliases.map((row: any) => row.alias) })
     .where(eq(titlesTable.id, titleId));
+}
+
+function getProviderLabel(provider: string): string {
+  if (provider === "tvmaze") return "TVMaze";
+  if (provider === "wikipedia") return "Wikipedia";
+  return provider;
 }

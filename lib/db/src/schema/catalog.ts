@@ -9,6 +9,7 @@ import {
   index,
   uniqueIndex,
   boolean,
+  jsonb,
 } from "drizzle-orm/pg-core";
 
 export const contentTypeEnum = pgEnum("content_type", [
@@ -41,6 +42,11 @@ export const titlesTable = pgTable("titles", {
   index("titles_type_popularity_idx").on(table.type, table.popularity),
 ]);
 
+export type TitleAliasProviderCitation = {
+  sourceName: string;
+  sourceUrl: string | null;
+};
+
 export const titleAliasesTable = pgTable("title_aliases", {
   id: serial("id").primaryKey(),
   titleId: integer("title_id")
@@ -52,6 +58,10 @@ export const titleAliasesTable = pgTable("title_aliases", {
   sourceName: text("source_name").notNull(),
   sourceUrl: text("source_url"),
   providerSources: text("provider_sources").array().notNull().default([]),
+  providerCitations: jsonb("provider_citations")
+    .$type<Record<string, TitleAliasProviderCitation>>()
+    .notNull()
+    .default({}),
   isEditorial: boolean("is_editorial").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

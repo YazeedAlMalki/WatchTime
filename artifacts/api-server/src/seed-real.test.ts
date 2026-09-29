@@ -307,6 +307,14 @@ describe("real catalog sync", () => {
     expect(aliases.find((alias) => alias.alias === "Alternate Test Title"))
       .toMatchObject({
         providerSources: ["wikipedia"],
+        providerCitations: {
+          wikipedia: {
+            sourceName: "EN Wikipedia",
+            sourceUrl: "https://en.wikipedia.org/wiki/Test_Identity_Series",
+          },
+        },
+        sourceName: "EN Wikipedia",
+        sourceUrl: "https://en.wikipedia.org/wiki/Test_Identity_Series",
         isEditorial: false,
       });
     expect(aliases.find((alias) => alias.alias === "Wikipedia Confirmed Title"))
