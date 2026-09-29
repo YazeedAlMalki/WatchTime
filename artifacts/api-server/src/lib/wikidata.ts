@@ -326,6 +326,8 @@ export type WikidataRefreshResult = {
   error: string;
 };
 
+type WikidataTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 function errorStatus(error: WikidataError): "provider_unavailable" | "missing" | "error" {
   if (error.code === "missing_mapping") return "missing";
   if (error.code === "authentication") return "provider_unavailable";
@@ -344,8 +346,8 @@ async function updateIntegrationHealth(values: {
   lastSuccessAt?: Date;
   lastError: string | null;
   refreshSucceeded: boolean;
-}) {
-  await db.transaction(async (tx) => {
+}, transaction?: WikidataTransaction) {
+  const update = async (tx: WikidataTransaction) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:wikidata-sync'))`);
     const [counts] = await tx
       .select({
@@ -390,14 +392,17 @@ async function updateIntegrationHealth(values: {
         ...healthValues,
       });
     }
-  });
+  };
+  if (transaction) await update(transaction);
+  else await db.transaction(update);
 }
 
 async function updateMappingStatus(
   titleId: number,
   status: "missing" | "error",
+  transaction?: WikidataTransaction,
 ) {
-  await db.transaction(async (tx) => {
+  const update = async (tx: WikidataTransaction) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:wikidata-sync'))`);
     const [currentMapping] = await tx
       .select()
@@ -423,7 +428,9 @@ async function updateMappingStatus(
     await tx.update(providerMappingsTable)
       .set({ status })
       .where(eq(providerMappingsTable.id, currentMapping.id));
-  });
+  };
+  if (transaction) await update(transaction);
+  else await db.transaction(update);
 }
 
 function toSafetyItems(item: WikidataItem) {
@@ -440,6 +447,7 @@ function toSafetyItems(item: WikidataItem) {
 export async function refreshWikidataTitle(
   titleId: number,
   client = createWikidataClient(),
+  transaction?: WikidataTransaction,
 ): Promise<WikidataRefreshResult> {
   const [title] = await db
     .select({ id: titlesTable.id, name: titlesTable.name, imdbId: titlesTable.imdbId })
@@ -451,20 +459,20 @@ export async function refreshWikidataTitle(
 
   if (!title.imdbId || !IMDB_ID_PATTERN.test(normalizeImdbId(title.imdbId))) {
     const error = new WikidataError("Title has no valid IMDb ID for Wikidata matching", "missing_mapping");
-    await updateMappingStatus(titleId, "missing");
+    await updateMappingStatus(titleId, "missing", transaction);
     await updateIntegrationHealth({
       status: "degraded",
       lastSyncAt: now,
       lastError: error.message,
       refreshSucceeded: false,
-    });
+    }, transaction);
     return { ok: false, titleId, titleName: title.name, status: "missing", error: error.message };
   }
 
   try {
     const item = await client.queryByImdbId(title.imdbId);
     const items = toSafetyItems(item);
-    await db.transaction(async (tx) => {
+    const persist = async (tx: WikidataTransaction) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:wikidata-sync'))`);
       const [lockedMapping] = await tx
         .select()
@@ -521,14 +529,16 @@ export async function refreshWikidataTitle(
       if (duplicateIds.length > 0) {
         await tx.delete(safetyRecordsTable).where(inArray(safetyRecordsTable.id, duplicateIds));
       }
-    });
+    };
+    if (transaction) await persist(transaction);
+    else await db.transaction(persist);
     await updateIntegrationHealth({
       status: "healthy",
       lastSyncAt: now,
       lastSuccessAt: now,
       lastError: null,
       refreshSucceeded: true,
-    });
+    }, transaction);
     return {
       ok: true,
       titleId,
@@ -541,14 +551,14 @@ export async function refreshWikidataTitle(
       ? caught
       : new WikidataError("Unexpected Wikidata refresh failure", "unavailable");
     if (error.code === "missing_mapping" || error.code === "ambiguous_mapping") {
-      await updateMappingStatus(titleId, error.code === "missing_mapping" ? "missing" : "error");
+      await updateMappingStatus(titleId, error.code === "missing_mapping" ? "missing" : "error", transaction);
     }
     await updateIntegrationHealth({
       status: errorHealthStatus(error),
       lastSyncAt: now,
       lastError: error.message,
       refreshSucceeded: false,
-    });
+    }, transaction);
     return {
       ok: false,
       titleId,

@@ -462,6 +462,159 @@ describe("Wikidata refresh persistence", () => {
     ]);
   });
 
+  it("removes duplicate title-level rows when a successful refresh has no classifications", async () => {
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_empty_classifications_test__",
+      year: 2020,
+      imdbId: "tt7654321",
+      popularity: 0,
+    }).returning();
+
+    try {
+      await db.transaction(async (tx) => {
+        await tx.execute(sql.raw("DROP INDEX safety_records_title_source_unique_idx"));
+
+        const officialRows = await tx.insert(safetyRecordsTable).values([
+          {
+            titleId: title.id,
+            sourceName: WIKIDATA_PROVIDER,
+            tier: 2,
+            isCommunity: false,
+            url: "https://www.wikidata.org/wiki/Q51",
+            status: "available",
+            items: [{
+              category: "MPAA",
+              label: "PG",
+              score: null,
+              maxScore: null,
+              description: "US rating · Wikidata property P1657",
+            }],
+            updatedAt: new Date("2024-01-01T00:00:00.000Z"),
+          },
+          {
+            titleId: title.id,
+            sourceName: WIKIDATA_PROVIDER,
+            tier: 2,
+            isCommunity: false,
+            url: "https://www.wikidata.org/wiki/Q52",
+            status: "available",
+            items: [{
+              category: "MPAA",
+              label: "PG-13",
+              score: null,
+              maxScore: null,
+              description: "US rating · Wikidata property P1657",
+            }],
+            updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+          },
+        ]).returning();
+
+        const [communityRow, otherProviderRow, seasonRow, episodeRow] = await tx.insert(safetyRecordsTable).values([
+          {
+            titleId: title.id,
+            sourceName: "WatchTime Community",
+            tier: 3,
+            isCommunity: true,
+            status: "available",
+            items: [{
+              category: "violence",
+              label: "violence",
+              score: null,
+              maxScore: null,
+              description: "community note",
+              severity: "moderate",
+            }],
+          },
+          {
+            titleId: title.id,
+            sourceName: "Does the Dog Die?",
+            tier: 2,
+            status: "available",
+            items: [{
+              category: "animal harm",
+              label: "animal harm",
+              score: 2,
+              maxScore: 3,
+              description: "richer provider data",
+            }],
+          },
+          {
+            titleId: title.id,
+            seasonNumber: 1,
+            sourceName: WIKIDATA_PROVIDER,
+            tier: 2,
+            isCommunity: false,
+            url: "https://www.wikidata.org/wiki/Q53-season",
+            status: "available",
+            items: [{
+              category: "MPAA",
+              label: "PG",
+              score: null,
+              maxScore: null,
+              description: "season rating",
+            }],
+            updatedAt: new Date("2024-02-01T00:00:00.000Z"),
+          },
+          {
+            titleId: title.id,
+            seasonNumber: 1,
+            episodeNumber: 1,
+            sourceName: WIKIDATA_PROVIDER,
+            tier: 2,
+            isCommunity: false,
+            url: "https://www.wikidata.org/wiki/Q53-episode",
+            status: "available",
+            items: [{
+              category: "MPAA",
+              label: "G",
+              score: null,
+              maxScore: null,
+              description: "episode rating",
+            }],
+            updatedAt: new Date("2024-03-01T00:00:00.000Z"),
+          },
+        ]).returning();
+        const untouchedRows = [communityRow, otherProviderRow, seasonRow, episodeRow];
+
+        await expect(refreshWikidataTitle(title.id, {
+          queryByImdbId: async () => ({
+            itemId: "Q54",
+            itemUrl: "https://www.wikidata.org/wiki/Q54",
+            imdbId: "tt7654321",
+            classifications: [],
+          }),
+        }, tx)).resolves.toMatchObject({
+          ok: true,
+          externalId: "Q54",
+          classifications: 0,
+        });
+
+        const records = await tx.select().from(safetyRecordsTable)
+          .where(eq(safetyRecordsTable.titleId, title.id));
+        const remainingOfficialRows = records.filter((record) =>
+          record.sourceName === WIKIDATA_PROVIDER &&
+          record.seasonNumber === null &&
+          record.episodeNumber === null,
+        );
+        expect(remainingOfficialRows).toEqual([officialRows[1]]);
+        expect(remainingOfficialRows[0]).toMatchObject({
+          url: "https://www.wikidata.org/wiki/Q52",
+          items: [{ category: "MPAA", label: "PG-13" }],
+        });
+        expect(records).toEqual(expect.arrayContaining(untouchedRows));
+
+        await tx.execute(sql.raw(`
+          CREATE UNIQUE INDEX safety_records_title_source_unique_idx
+          ON safety_records (title_id, source_name)
+          WHERE season_number IS NULL AND episode_number IS NULL
+        `));
+      });
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+    }
+  });
+
   it("does not replace a verified mapping or safety record when the provider fails", async () => {
     const [mapping] = await db.insert(providerMappingsTable).values({
       titleId,
