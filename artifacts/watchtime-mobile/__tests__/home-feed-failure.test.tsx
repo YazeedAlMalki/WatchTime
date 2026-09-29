@@ -1,6 +1,5 @@
 import React from 'react';
 import { act, fireEvent, render } from '@testing-library/react-native';
-import { InteractionManager } from 'react-native';
 
 const mockMarkStartup = jest.fn();
 const mockTrendingRefetch = jest.fn();
@@ -90,8 +89,7 @@ jest.mock('@/lib/startup-metrics', () => ({
 import HomeScreen from '../app/(tabs)/index';
 
 describe('mobile signed-out Home feed failure', () => {
-  let releaseInteractions: (() => void) | undefined;
-  let releaseFrame: ((time: number) => void) | undefined;
+  let pendingFrames: FrameRequestCallback[] = [];
 
   beforeEach(() => {
     mockTrendingRefetch.mockReset();
@@ -103,27 +101,22 @@ describe('mobile signed-out Home feed failure', () => {
       isLoading: true,
       isRefetching: false,
     };
-    jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation((task?: unknown) => {
-      releaseInteractions = typeof task === 'function' ? task as () => void : undefined;
-      return { cancel: jest.fn() } as never;
-    });
     globalThis.requestAnimationFrame = jest.fn((callback: FrameRequestCallback) => {
-      releaseFrame = callback;
-      return 1;
+      pendingFrames.push(callback);
+      return pendingFrames.length;
     });
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
-    releaseInteractions = undefined;
-    releaseFrame = undefined;
+    pendingFrames = [];
   });
 
   it('keeps its shell visible and recovers after retrying the unavailable feed', async () => {
     const screen = await render(<HomeScreen />);
 
-    await act(async () => releaseInteractions?.());
-    await act(async () => releaseFrame?.(0));
+    await act(async () => pendingFrames[0]?.(0));
+    await act(async () => pendingFrames[1]?.(0));
 
     expect(screen.getByText('Track your shows.')).toBeTruthy();
     expect(screen.getByText('Sign in to get started')).toBeTruthy();

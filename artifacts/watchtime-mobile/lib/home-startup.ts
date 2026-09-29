@@ -1,9 +1,8 @@
-import { InteractionManager } from 'react-native';
-
 export function startHomeStartup(setStartupReady: (ready: boolean) => void) {
   let cancelled = false;
   let animationFrame: number | null = null;
-  const interaction = InteractionManager.runAfterInteractions(() => {
+  // The second callback runs after the first frame has had a chance to paint.
+  animationFrame = requestAnimationFrame(() => {
     if (cancelled) return;
     animationFrame = requestAnimationFrame(() => {
       if (!cancelled) {
@@ -14,7 +13,6 @@ export function startHomeStartup(setStartupReady: (ready: boolean) => void) {
 
   return () => {
     cancelled = true;
-    interaction.cancel();
     if (animationFrame !== null) {
       cancelAnimationFrame(animationFrame);
     }

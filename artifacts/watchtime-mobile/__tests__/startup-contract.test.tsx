@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
-import { InteractionManager, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 
 const mockUseAuth = jest.fn();
@@ -11,7 +11,6 @@ const mockStartupStateUpdates = jest.fn();
 const mockRequestAnimationFrame = jest.fn();
 const mockCancelAnimationFrame = jest.fn();
 
-const mockCancelInteraction = jest.fn();
 const mockMarkStartup = jest.fn();
 const mockReportStartupFailure = jest.fn();
 const mockSetBaseUrl = jest.fn();
@@ -231,7 +230,6 @@ import RootLayout from '../app/_layout';
 import HomeScreen from '../app/(tabs)/index';
 
 describe('mobile startup contracts', () => {
-  let pendingInteractions: Array<() => void> = [];
   let pendingFrames: Array<(time: number) => void> = [];
 
   beforeEach(() => {
@@ -242,15 +240,9 @@ describe('mobile startup contracts', () => {
       isLoaded: true,
       isSignedIn: true,
     });
-    jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation((task?: any) => {
-      if (typeof task === 'function') {
-        pendingInteractions.push(task);
-      }
-      return { cancel: mockCancelInteraction } as any;
-    });
     mockRequestAnimationFrame.mockImplementation((callback: (time: number) => void) => {
       pendingFrames.push(callback);
-      return 1;
+      return pendingFrames.length;
     });
 
     Object.assign(globalThis, {
@@ -262,7 +254,6 @@ describe('mobile startup contracts', () => {
   afterEach(() => {
     cleanup();
     jest.restoreAllMocks();
-    pendingInteractions = [];
     pendingFrames = [];
     mockQueryEnabled.shows.length = 0;
     mockQueryEnabled.watchlist.length = 0;
@@ -440,10 +431,10 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.trending).toEqual([]);
 
     await act(async () => {
-      pendingInteractions[0]?.();
+      pendingFrames[0]?.(0);
     });
     await act(async () => {
-      pendingFrames[0]?.(0);
+      pendingFrames[1]?.(0);
     });
 
     await waitFor(() => {
@@ -456,15 +447,6 @@ describe('mobile startup contracts', () => {
   it('keeps signed-in home queries disabled until the post-first-frame gate opens', async () => {
     await render(<HomeScreen />);
 
-    expect(InteractionManager.runAfterInteractions).toHaveBeenCalledTimes(1);
-    expect(mockQueryEnabled.shows).toEqual([false]);
-    expect(mockQueryEnabled.watchlist).toEqual([false]);
-    expect(mockQueryEnabled.recommendations).toEqual([false]);
-
-    await act(async () => {
-      pendingInteractions[0]?.();
-    });
-
     expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
     expect(mockQueryEnabled.shows).toEqual([false]);
     expect(mockQueryEnabled.watchlist).toEqual([false]);
@@ -472,6 +454,15 @@ describe('mobile startup contracts', () => {
 
     await act(async () => {
       pendingFrames[0]?.(0);
+    });
+
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
+
+    await act(async () => {
+      pendingFrames[1]?.(0);
     });
 
     await waitFor(() => {
@@ -489,41 +480,41 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.watchlist).toEqual([false]);
     expect(mockQueryEnabled.recommendations).toEqual([false]);
 
-    await act(async () => {
-      pendingInteractions[0]?.();
-    });
-
     expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       firstHome.unmount();
     });
     const secondHome = await render(<HomeScreen />);
 
-    expect(InteractionManager.runAfterInteractions).toHaveBeenCalledTimes(2);
-    expect(mockQueryEnabled.shows).toEqual([false, false]);
-    expect(mockQueryEnabled.watchlist).toEqual([false, false]);
-    expect(mockQueryEnabled.recommendations).toEqual([false, false]);
-
-    await act(async () => {
-      pendingFrames[0]?.(0);
-    });
-
-    expect(mockQueryEnabled.shows).toEqual([false, false]);
-    expect(mockQueryEnabled.watchlist).toEqual([false, false]);
-    expect(mockQueryEnabled.recommendations).toEqual([false, false]);
-
-    await act(async () => {
-      pendingInteractions[1]?.();
-    });
-
-    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(3);
     expect(mockQueryEnabled.shows).toEqual([false, false]);
     expect(mockQueryEnabled.watchlist).toEqual([false, false]);
     expect(mockQueryEnabled.recommendations).toEqual([false, false]);
 
     await act(async () => {
       pendingFrames[1]?.(0);
+    });
+
+    expect(mockQueryEnabled.shows).toEqual([false, false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false, false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false, false]);
+
+    await act(async () => {
+      pendingFrames[2]?.(0);
+    });
+
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(4);
+    expect(mockQueryEnabled.shows).toEqual([false, false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false, false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false, false]);
+
+    await act(async () => {
+      pendingFrames[3]?.(0);
     });
 
     await waitFor(() => {
@@ -542,18 +533,18 @@ describe('mobile startup contracts', () => {
 
     await render(<HomeScreen />);
 
-    expect(InteractionManager.runAfterInteractions).toHaveBeenCalledTimes(1);
-    expect(mockQueryEnabled.trending).toEqual([false]);
-
-    await act(async () => {
-      pendingInteractions[0]?.();
-    });
-
     expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(1);
     expect(mockQueryEnabled.trending).toEqual([false]);
 
     await act(async () => {
       pendingFrames[0]?.(0);
+    });
+
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
+    await act(async () => {
+      pendingFrames[1]?.(0);
     });
 
     await waitFor(() => {
@@ -579,10 +570,10 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.recommendations).toEqual([]);
 
     await act(async () => {
-      pendingInteractions[0]?.();
+      pendingFrames[0]?.(0);
     });
     await act(async () => {
-      pendingFrames[0]?.(0);
+      pendingFrames[1]?.(0);
     });
 
     await waitFor(() => {
@@ -740,33 +731,46 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.watchlist).toEqual([false]);
     expect(mockQueryEnabled.recommendations).toEqual([false]);
 
-    await act(async () => {
-      pendingInteractions[0]?.();
-    });
-
     expect(pendingFrames).toHaveLength(1);
     const scheduledFrameCount = mockRequestAnimationFrame.mock.calls.length;
     await act(async () => {
       home.unmount();
     });
 
-    expect(mockCancelInteraction).toHaveBeenCalled();
+    expect(mockCancelAnimationFrame).toHaveBeenCalledWith(1);
     mockStartupStateUpdates.mockClear();
     await act(async () => {
-      pendingInteractions[0]?.();
+      pendingFrames[0]?.(0);
     });
     expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(scheduledFrameCount);
     expect(mockStartupStateUpdates).not.toHaveBeenCalled();
 
-    await act(async () => {
-      pendingFrames[0]?.(0);
-    });
-
-    expect(mockStartupStateUpdates).not.toHaveBeenCalled();
     expect(mockQueryEnabled.shows).toEqual([false]);
     expect(mockQueryEnabled.watchlist).toEqual([false]);
     expect(mockQueryEnabled.recommendations).toEqual([false]);
     expect(mockQueryEnabled.trending).toEqual([]);
+  });
+
+  it('cancels the second frame and ignores its callback after unmount', async () => {
+    const home = await render(<HomeScreen />);
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+
+    expect(mockRequestAnimationFrame).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      home.unmount();
+    });
+    expect(mockCancelAnimationFrame).toHaveBeenCalledWith(2);
+
+    mockStartupStateUpdates.mockClear();
+    await act(async () => {
+      pendingFrames[1]?.(0);
+    });
+    expect(mockStartupStateUpdates).not.toHaveBeenCalled();
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
   });
 
   it('keeps the signed-out home usable through a slow feed, failure, retry, and recovery', async () => {
@@ -782,10 +786,10 @@ describe('mobile startup contracts', () => {
     const screen = await render(<HomeScreen />);
 
     await act(async () => {
-      pendingInteractions[0]?.();
+      pendingFrames[0]?.(0);
     });
     await act(async () => {
-      pendingFrames[0]?.(0);
+      pendingFrames[1]?.(0);
     });
 
     expect(screen.getByText('Track your shows.')).toBeTruthy();
