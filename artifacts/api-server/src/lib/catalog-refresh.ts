@@ -142,6 +142,9 @@ export async function scheduleCatalogRefresh(delayOverride?: number) {
     const dueAt = latest?.createdAt ? latest.createdAt.getTime() + WEEK_MS : Date.now();
     delay = Math.max(1_000, dueAt - Date.now());
   }
+  // Keep the previous timer if scheduling fails, and cancel it only when
+  // the replacement is ready (including when two initializations overlap).
+  if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     startCatalogRefresh("scheduled")
       .catch((err) => logger.error({ err }, "unable to start scheduled catalog refresh"))

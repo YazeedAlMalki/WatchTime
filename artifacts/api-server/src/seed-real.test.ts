@@ -458,6 +458,25 @@ describe("real catalog sync", () => {
     expect(delay).toBeLessThanOrEqual(WEEK_MS);
   });
 
+  it("keeps only one pending refresh when scheduling is initialized twice", async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    try {
+      await scheduleCatalogRefresh(WEEK_MS);
+      const first = setTimeoutSpy.mock.results.at(-1)?.value as NodeJS.Timeout;
+      scheduledTimers.push(first);
+
+      await scheduleCatalogRefresh(WEEK_MS);
+      const second = setTimeoutSpy.mock.results.at(-1)?.value as NodeJS.Timeout;
+      scheduledTimers.push(second);
+      expect(second).not.toBe(first);
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(first);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(second);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("does not immediately retry a failed or skipped attempt after restart", async () => {
     const now = new Date();
     const [run] = await db.insert(catalogSyncRunsTable).values({
