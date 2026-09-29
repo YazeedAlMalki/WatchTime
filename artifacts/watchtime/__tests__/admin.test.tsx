@@ -665,6 +665,114 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).not.toContain("Current version");
   });
 
+  it("clears a stale-edit warning only after its correction is removed", async () => {
+    const currentCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer Admin Correction",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: currentCorrection,
+          },
+        });
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale draft correction",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      currentCorrection.alias,
+    );
+
+    render([currentCorrection]);
+    confirmSpy.mockReturnValue(true);
+    act(() => button(container, "Remove").click());
+    await flushEffects();
+
+    expect(mocks.deleteMutation.mutate).toHaveBeenCalledWith(
+      {
+        id: currentCorrection.id,
+        data: { expectedUpdatedAt: currentCorrection.updatedAt },
+      },
+      expect.any(Object),
+    );
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("keeps a stale-edit warning when removing its correction fails", async () => {
+    const currentCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer Admin Correction",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: currentCorrection,
+          },
+        });
+      },
+    );
+    mocks.deleteMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.(new Error("Removal unavailable"));
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale draft correction",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+    render([currentCorrection]);
+    confirmSpy.mockReturnValue(true);
+
+    act(() => button(container, "Remove").click());
+    await flushEffects();
+
+    const conflictNotice = container.querySelector('[role="alert"]');
+    expect(conflictNotice?.textContent).toContain(
+      "A newer correction is already saved",
+    );
+    expect(conflictNotice?.textContent).toContain(currentCorrection.alias);
+    expect(conflictNotice?.textContent).toContain("Current version");
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: "Could not remove alternate title",
+      description: "Removal unavailable",
+      variant: "destructive",
+    });
+  });
+
   it("requires removal confirmation and refreshes collision badges after removal", async () => {
     render();
     confirmSpy.mockReturnValueOnce(false);

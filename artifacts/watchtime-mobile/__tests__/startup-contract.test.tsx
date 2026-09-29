@@ -642,10 +642,10 @@ describe('mobile startup contracts', () => {
     const screen = await render(<HomeScreen />);
 
     await act(async () => {
-      pendingInteractions[0]?.();
+      pendingFrames[0]?.(0);
     });
     await act(async () => {
-      pendingFrames[0]?.(0);
+      pendingFrames[1]?.(0);
     });
 
     expect(screen.getByText('Personal tracked show')).toBeTruthy();
@@ -705,12 +705,12 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.trending).toEqual([false]);
 
     await act(async () => {
-      pendingInteractions[0]?.();
+      pendingFrames[0]?.(0);
     });
     expect(mockQueryEnabled.trending).toEqual([false]);
 
     await act(async () => {
-      pendingFrames[0]?.(0);
+      pendingFrames[1]?.(0);
     });
 
     await waitFor(() => {

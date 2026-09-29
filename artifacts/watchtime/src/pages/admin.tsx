@@ -2014,6 +2014,7 @@ export function AliasReview({
       {
         onSuccess: async () => {
           if (editingId === alias.id) setEditingId(null);
+          if (conflictAlias?.id === alias.id) setConflictAlias(null);
           const failedRequests = await refreshAliasViews();
           toast(
             failedRequests.length === 0
