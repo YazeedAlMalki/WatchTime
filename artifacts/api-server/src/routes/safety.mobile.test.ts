@@ -119,7 +119,10 @@ import {
   safetyRecordsTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { mockMalformedSafetyTimestamp } from "../test-utils/malformedSafetyTimestamp";
+import {
+  mockMalformedSafetyTimestamp,
+  mockMalformedSafetyTimestampDuplicate,
+} from "../test-utils/malformedSafetyTimestamp";
 
 // ─── Global fixtures ──────────────────────────────────────────────────────────
 
@@ -293,6 +296,50 @@ describe("shared rating-region preference", () => {
         recordId: rating.id,
         lastRefreshedAt: null,
         sourceUrl: null,
+      });
+    } finally {
+      restoreSelect();
+    }
+  });
+
+  it("keeps the valid regional rating when a duplicate has malformed refresh metadata", async () => {
+    const validUpdatedAt = new Date("2026-02-01T00:00:00.000Z");
+    const [validRating] = await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      updatedAt: validUpdatedAt,
+      url: "https://example.test/valid",
+      items: [{
+        category: "MPAA",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "Valid official rating",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+
+    const restoreSelect = mockMalformedSafetyTimestampDuplicate(
+      db,
+      validRating.id,
+      "not-a-timestamp",
+      { label: "R", url: "https://example.test/malformed-duplicate" },
+    );
+    try {
+      const response = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.preferredRating).toEqual({
+        region: "US",
+        countryName: "United States",
+        system: "MPAA",
+        label: "PG-13",
+        sourceName: "Wikidata",
+        recordId: validRating.id,
+        lastRefreshedAt: validUpdatedAt.toISOString(),
+        sourceUrl: "https://example.test/valid",
       });
     } finally {
       restoreSelect();

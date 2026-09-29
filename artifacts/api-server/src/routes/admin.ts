@@ -791,6 +791,8 @@ router.get("/catalog-refreshes", async (_req, res) => {
 
 router.post("/catalog-refreshes", async (req, res) => {
   const runId = await retryFailedCatalogTitles(id);
+
+  const rawQ = typeof req.query.q === "string" ? req.query.q : "";
   await db.insert(adminAuditLogTable).values({
     adminId: req.userId!,
     action: "start_catalog_refresh",
@@ -804,19 +806,9 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid run id" });
   const runId = await retryFailedCatalogTitles(id);
-  if (!runId) return res.status(409).json({ error: "This run has no failed titles to retry" });
-  await db.insert(adminAuditLogTable).values({
-    adminId: req.userId!,
-    action: "retry_catalog_refresh",
-    entityType: "catalog_sync",
-    entityId: runId,
-    details: { sourceRunId: id },
-  });
-  return res.status(202).json({ runId });
-});
 
-router.get("/content", async (req, res) => {
-  const q = rawQ?.trim() ?? "";
+  const rawQ = typeof req.query.q === "string" ? req.query.q : "";
+  const q = parsedParams.data.q?.trim() ?? "";
   const regionParam = req.query.region;
   const malformedRefreshTimestampParam = req.query.malformedRefreshTimestamp;
   if (
@@ -968,15 +960,15 @@ async function refreshTitleAliasSearchList(tx: any, titleId: number) {
 }
 
 router.get("/content-aliases", async (req, res): Promise<void> => {
-  const parsedParams = ListAdminContentAliasesQueryParams.safeParse(req.query);
+  const parsedParams = ExportAdminContentAliasesQueryParams.safeParse(req.query);
   if (!parsedParams.success) {
     res.status(400).json({ error: "Invalid alias list parameters" });
     return;
   }
   const { q: rawQ, ownership, id: requestedId, afterId } = parsedParams.data;
-  const q = rawQ?.trim() ?? "";
-  const limit = requestedId === undefined ? parsedParams.data.limit : 1;
-  const offset = requestedId === undefined ? parsedParams.data.offset : 0;
+  const q = parsedParams.data.q?.trim() ?? "";
+  const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
+  const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
   const baseWhere = buildContentAliasWhere(q, ownership, requestedId);
   const pageWhere = requestedId === undefined && afterId !== undefined
     ? and(baseWhere, gt(titleAliasesTable.id, afterId))
@@ -1016,7 +1008,9 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
         .where(inArray(titleAliasesTable.normalizedAlias, normalized))
         .groupBy(titleAliasesTable.normalizedAlias)
     : [];
-  const collisionCount = new Map(collisions.map((row) => [row.normalizedAlias, row.titleCount]));
+  const collisionCount = await getAliasCollisionCounts([
+    ...new Set(rows.map((row) => row.alias.normalizedAlias)),
+  ]);
   const nextAfterId = rows.length > limit && pageRows.length
     ? pageRows[pageRows.length - 1].alias.id
     : null;
@@ -1051,38 +1045,18 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
   }
 
   const q = parsedParams.data.q?.trim() ?? "";
-  const where = buildContentAliasWhere(q, parsedParams.data.ownership);
+  const where = buildAuditLogWhere(req.query as Record<string, string>);
   const rows = await db
-    .select({
-      alias: titleAliasesTable,
-      titleName: titlesTable.name,
-      titleType: titlesTable.type,
-      titleYear: titlesTable.year,
-    })
-    .from(titleAliasesTable)
-    .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
+    .from(adminAuditLogTable)
+    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
     .where(where)
-    .orderBy(titleAliasesTable.normalizedAlias, titlesTable.name, titleAliasesTable.id);
+    .orderBy(desc(adminAuditLogTable.createdAt));
   const collisionCount = await getAliasCollisionCounts([
     ...new Set(rows.map((row) => row.alias.normalizedAlias)),
   ]);
 
-  const header = [
-    "Alias ID",
-    "Catalog title ID",
-    "Catalog title",
-    "Type",
-    "Year",
-    "Alias",
-    "Language",
-    "Source",
-    "Source URL",
-    "Ownership",
-    "Editorial",
-    "Collision",
-    "Collision title count",
-    "Last updated",
-  ];
+  const header = ["ID", "Timestamp", "Admin", "Action", "Entity Type", "Entity ID", "Details"];
   const escapeCsv = (value: unknown) => {
     const text = String(value ?? "");
     const safeText = /^[\u0000-\u0020]*[=+\-@]/.test(text) ? `'${text}` : text;
@@ -1107,9 +1081,9 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
       alias.updatedAt.toISOString(),
     ];
   });
-  const csv = [header, ...csvRows]
-    .map((row) => row.map(escapeCsv).join(","))
-    .join("\r\n");
+  const csv = [header, ...dataRows]
+    .map(row => row.map(escape).join(","))
+    .join("\n");
 
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="alternate-title-review.csv"');

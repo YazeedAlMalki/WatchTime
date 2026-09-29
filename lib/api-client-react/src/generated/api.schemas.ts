@@ -1267,6 +1267,15 @@ q?: string;
  */
 ownership?: ExportAdminContentAliasesOwnership;
 };
+
+export type ExportAdminContentAliasesOwnership = typeof ExportAdminContentAliasesOwnership[keyof typeof ExportAdminContentAliasesOwnership];
+
+
+export const ExportAdminContentAliasesOwnership = {
+  provider: 'provider',
+  editorial: 'editorial',
+} as const;
+
 export type UpdateAdminContentAlias409 = AdminContentAliasConflict | {
   error: string;
 };
@@ -1310,10 +1319,3 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
-
-export const ExportAdminContentAliasesOwnership = {
-  provider: 'provider',
-  editorial: 'editorial',
-} as const;
-
-export type ExportAdminContentAliasesOwnership = typeof ExportAdminContentAliasesOwnership[keyof typeof ExportAdminContentAliasesOwnership];

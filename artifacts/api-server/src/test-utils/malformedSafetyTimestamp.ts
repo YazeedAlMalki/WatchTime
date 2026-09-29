@@ -45,6 +45,43 @@ export function mockMalformedSafetyTimestamp(
   return mockMalformedSafetyTimestamps(database, new Map([[recordId, timestamp]]));
 }
 
+export function mockMalformedSafetyTimestampDuplicate(
+  database: object,
+  recordId: number,
+  timestamp: Date | string,
+  duplicate: { label: string; url: string },
+): () => void {
+  const db = database as any;
+  const originalSelect = db.select.bind(db);
+  const selectSpy = vi.spyOn(db, "select").mockImplementation((...args: any[]) => {
+    const query = originalSelect(...args);
+    if (!args[0] || !Object.prototype.hasOwnProperty.call(args[0], "rawUpdatedAt")) {
+      return query;
+    }
+
+    return mapQueryRows(query, (rows) => {
+      const source = rows.find((row) => row.id === recordId);
+      if (!source) return rows;
+
+      return [
+        ...rows,
+        {
+          ...source,
+          id: -Math.abs(recordId),
+          updatedAt: timestamp,
+          rawUpdatedAt: timestamp,
+          url: duplicate.url,
+          items: source.items.map((item: any) =>
+            item.category === "MPAA" ? { ...item, label: duplicate.label } : item,
+          ),
+        },
+      ];
+    });
+  });
+
+  return () => selectSpy.mockRestore();
+}
+
 export function mockMalformedSafetyTimestamps(
   database: object,
   timestamps: ReadonlyMap<number, Date | string>,
