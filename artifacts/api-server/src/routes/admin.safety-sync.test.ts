@@ -81,8 +81,8 @@ describe("admin integration health", () => {
       successfulRefreshes: 1,
     });
     expect(response.body.find((entry: any) => entry.provider === "Legacy integration")).toMatchObject({
-      refreshAttempts: 0,
-      successfulRefreshes: 0,
+      refreshAttempts: null,
+      successfulRefreshes: null,
     });
   });
 });
