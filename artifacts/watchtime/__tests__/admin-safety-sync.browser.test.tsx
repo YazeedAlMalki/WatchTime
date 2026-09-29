@@ -220,7 +220,7 @@ it("shows the active provider and offset and prevents starting another batch", a
   }
 });
 
-it("shows refresh counts when available and keeps legacy health percentage-only", async () => {
+it("shows refresh counts only when both are available and keeps partial health percentage-only", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=integrations");
   mocks.integrations = [
@@ -252,6 +252,34 @@ it("shows refresh counts when available and keeps legacy health percentage-only"
       malformedRefreshTimestampCount: 0,
       sustainedFailureAlert: false,
     },
+    {
+      provider: "Attempts-only provider",
+      status: "degraded",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 66.7,
+      refreshAttempts: 9,
+      successfulRefreshes: null,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+    },
+    {
+      provider: "Successes-only provider",
+      status: "healthy",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 50,
+      refreshAttempts: null,
+      successfulRefreshes: 4,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+    },
   ];
 
   const container = document.createElement("div");
@@ -268,6 +296,12 @@ it("shows refresh counts when available and keeps legacy health percentage-only"
     const legacyCard = Array.from(
       container.querySelectorAll<HTMLElement>("h3"),
     ).find((heading) => heading.textContent === "Legacy provider")?.closest("div.bg-card");
+    const attemptsOnlyCard = Array.from(
+      container.querySelectorAll<HTMLElement>("h3"),
+    ).find((heading) => heading.textContent === "Attempts-only provider")?.closest("div.bg-card");
+    const successesOnlyCard = Array.from(
+      container.querySelectorAll<HTMLElement>("h3"),
+    ).find((heading) => heading.textContent === "Successes-only provider")?.closest("div.bg-card");
 
     expect(countedCard?.textContent).toContain("42.9% (3/7 refreshes)");
     expect(countedCard?.textContent).toContain(
@@ -278,6 +312,10 @@ it("shows refresh counts when available and keeps legacy health percentage-only"
     expect(legacyCard?.textContent).toContain(
       "Ratings with malformed refresh timestamps0",
     );
+    expect(attemptsOnlyCard?.textContent).toContain("66.7%");
+    expect(attemptsOnlyCard?.textContent).not.toContain("refreshes");
+    expect(successesOnlyCard?.textContent).toContain("50%");
+    expect(successesOnlyCard?.textContent).not.toContain("refreshes");
   } finally {
     root.unmount();
     container.remove();

@@ -104,6 +104,52 @@ describe("GET /api/admin/integrations", () => {
     });
   });
 
+  it("preserves each missing refresh count as null for partially populated rows", async () => {
+    const attemptsOnlyProvider = "Admin history attempts-only regression";
+    const successesOnlyProvider = "Admin history successes-only regression";
+    const storedRows = await db
+      .insert(integrationHealthTable)
+      .values([
+        {
+          provider: attemptsOnlyProvider,
+          status: "degraded",
+          successRatePercent: 66.7,
+          refreshAttempts: 9,
+          successfulRefreshes: null,
+        },
+        {
+          provider: successesOnlyProvider,
+          status: "healthy",
+          successRatePercent: 50,
+          refreshAttempts: null,
+          successfulRefreshes: 4,
+        },
+      ])
+      .returning({ id: integrationHealthTable.id });
+    insertedIds.push(...storedRows.map((row) => row.id));
+
+    const response = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+    const attemptsOnlyHealth = response.body.find(
+      (row: { provider: string }) => row.provider === attemptsOnlyProvider,
+    );
+    const successesOnlyHealth = response.body.find(
+      (row: { provider: string }) => row.provider === successesOnlyProvider,
+    );
+
+    expect(attemptsOnlyHealth).toMatchObject({
+      provider: attemptsOnlyProvider,
+      refreshAttempts: 9,
+      successfulRefreshes: null,
+    });
+    expect(successesOnlyHealth).toMatchObject({
+      provider: successesOnlyProvider,
+      refreshAttempts: null,
+      successfulRefreshes: 4,
+    });
+  });
+
   it("reports zero and non-zero malformed rating timestamp counts without changing health status", async () => {
     const zeroCountProvider = "Timestamp health zero regression";
     const malformedProvider = "Timestamp health malformed regression";
