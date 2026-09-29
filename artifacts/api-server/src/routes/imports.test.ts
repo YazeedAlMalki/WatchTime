@@ -27,14 +27,17 @@ vi.mock("../middlewares/clerkProxyMiddleware", () => ({
 import supertest from "supertest";
 import app from "../app";
 import { logger } from "../lib/logger";
+import { runCatalogSync, type SourceItem } from "../seed-real";
 import {
   db,
   episodesTable,
   importItemsTable,
   importsTable,
+  integrationHealthTable,
   pool,
   rateLimitHitsTable,
   titlesTable,
+  titleAliasesTable,
   usersTable,
   watchedEpisodesTable,
   watchedTitlesTable,
@@ -202,6 +205,109 @@ describe("private, idempotent watch-history imports", () => {
       selected: true,
       titleId: ambiguousTitleIds[0],
     });
+  });
+
+  it("matches a regional alias added by a catalog refresh while leaving a shared alias for manual review", async () => {
+    const fixtures: SourceItem[] = [
+      {
+        key: "test:import-refresh-primary",
+        source: "tvmaze",
+        type: "tv",
+        name: "__import_refresh_primary__",
+        tvmazeId: 990091,
+        expectedTitle: "__import_refresh_primary__",
+        expectedYear: 2020,
+        expectedImdbId: "tt9990091",
+        aliases: [
+          { alias: "地域限定タイトル", language: "ja", sourceName: "JA Wikipedia", sourceUrl: "https://ja.wikipedia.org/wiki/地域限定タイトル" },
+          { alias: "共通タイトル", language: "ja", sourceName: "JA Wikipedia", sourceUrl: "https://ja.wikipedia.org/wiki/共通タイトル" },
+        ],
+        popularity: 0,
+      },
+      {
+        key: "test:import-refresh-secondary",
+        source: "tvmaze",
+        type: "tv",
+        name: "__import_refresh_secondary__",
+        tvmazeId: 990092,
+        expectedTitle: "__import_refresh_secondary__",
+        expectedYear: 2020,
+        expectedImdbId: "tt9990092",
+        aliases: [
+          { alias: "共通タイトル", language: "ja", sourceName: "JA Wikipedia", sourceUrl: "https://ja.wikipedia.org/wiki/共通タイトル" },
+        ],
+        popularity: 0,
+      },
+    ];
+    const healthSnapshot = await db.select().from(integrationHealthTable);
+    let importId: number | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const fixture = fixtures.find((item) => String(input).includes(`/shows/${item.tvmazeId}?`));
+      if (!fixture) throw new Error(`Unexpected catalog request: ${input}`);
+      return new Response(JSON.stringify({
+        id: fixture.tvmazeId,
+        name: fixture.name,
+        type: "Scripted",
+        genres: ["Drama"],
+        premiered: "2020-01-01",
+        status: "Ended",
+        summary: "<p>Fixture</p>",
+        image: null,
+        externals: { imdb: fixture.expectedImdbId },
+        _embedded: { cast: [], episodes: [] },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    try {
+      // Seed the canonical titles first, then add their sourced aliases in a refresh.
+      const initial = await runCatalogSync({ dryRun: false, allowPartial: true }, fixtures.map((item) => ({ ...item, aliases: [] })));
+      expect(initial?.failures).toEqual([]);
+      const refreshed = await runCatalogSync({ dryRun: false, allowPartial: true }, fixtures);
+      expect(refreshed?.succeeded).toBe(2);
+      expect(refreshed?.failures).toEqual([]);
+
+      const titles = await db.select().from(titlesTable).where(inArray(titlesTable.imdbId, ["tt9990091", "tt9990092"]));
+      expect(titles).toHaveLength(2);
+      const primaryId = titles.find((title) => title.imdbId === "tt9990091")!.id;
+      const secondaryId = titles.find((title) => title.imdbId === "tt9990092")!.id;
+      const aliases = await db.select().from(titleAliasesTable).where(inArray(titleAliasesTable.titleId, [primaryId, secondaryId]));
+      expect(aliases.find((alias) => alias.titleId === primaryId && alias.alias === "地域限定タイトル")).toMatchObject({
+        language: "ja",
+        isEditorial: false,
+      });
+      expect(aliases.filter((alias) => alias.alias === "共通タイトル")).toHaveLength(2);
+
+      const created = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
+        source: "generic",
+        fileName: "refreshed-regional-titles.csv",
+        content: "kind,title,type,year\nwatchlist,地域限定タイトル,tv,2020\nwatchlist,共通タイトル,tv,2020",
+      });
+      expect(created.status).toBe(201);
+      importId = created.body.id;
+      expect(created.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId, selected: true });
+      expect(created.body.items[1]).toMatchObject({
+        classification: "ambiguous",
+        titleId: null,
+        selected: false,
+        errorCode: "multiple_titles",
+      });
+      expect(created.body.items[1].candidates.map((candidate: { titleId: number }) => candidate.titleId).sort((a: number, b: number) => a - b))
+        .toEqual([primaryId, secondaryId].sort((a, b) => a - b));
+
+      const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
+      expect(confirmed.status).toBe(200);
+      const tracked = await db.select().from(watchlistTable).where(and(
+        eq(watchlistTable.userId, USER_A),
+        inArray(watchlistTable.titleId, [primaryId, secondaryId]),
+      ));
+      expect(tracked.map((row) => row.titleId)).toEqual([primaryId]);
+    } finally {
+      vi.unstubAllGlobals();
+      if (importId !== undefined) await db.delete(importsTable).where(eq(importsTable.id, importId));
+      await db.delete(titlesTable).where(inArray(titlesTable.imdbId, ["tt9990091", "tt9990092"]));
+      await db.delete(integrationHealthTable);
+      if (healthSnapshot.length) await db.insert(integrationHealthTable).values(healthSnapshot);
+    }
   });
 
   it("rolls back prior tracking writes when any selected item fails during confirmation", async () => {
