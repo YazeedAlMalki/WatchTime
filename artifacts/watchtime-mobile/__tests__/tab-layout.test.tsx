@@ -5,6 +5,8 @@ const mockIsLiquidGlassAvailable = jest.fn();
 const mockNativeRoutes: string[] = [];
 const mockNativeLabels: string[] = [];
 const mockClassicTabs: [string, string][] = [];
+const mockClassicHrefs: [string, unknown][] = [];
+const mockAuthAvailability = { current: true };
 
 jest.mock('expo-glass-effect', () => ({
   isLiquidGlassAvailable: () => mockIsLiquidGlassAvailable(),
@@ -38,11 +40,16 @@ jest.mock('expo-router', () => {
   const Tabs: any = ({ children }: any) => <View testID="classic-tabs">{children}</View>;
   Tabs.Screen = ({ name, options }: any) => {
     mockClassicTabs.push([name, options.title]);
+    mockClassicHrefs.push([name, options.href]);
     return <View testID={`classic-tab-screen-${name}`} />;
   };
 
   return { Tabs };
 });
+
+jest.mock('@/lib/app-auth', () => ({
+  useAppAuth: () => ({ isAuthAvailable: mockAuthAvailability.current }),
+}));
 
 jest.mock('@/hooks/useColors', () => ({
   useColors: () => ({
@@ -84,6 +91,8 @@ describe('TabLayout', () => {
     mockNativeRoutes.length = 0;
     mockNativeLabels.length = 0;
     mockClassicTabs.length = 0;
+    mockClassicHrefs.length = 0;
+    mockAuthAvailability.current = true;
   });
 
   it('renders the five aligned NativeTabs triggers when liquid glass is available', async () => {
@@ -109,5 +118,29 @@ describe('TabLayout', () => {
     expect(queryByTestId('native-tabs')).toBeNull();
     expect(mockClassicTabs).toHaveLength(5);
     expect(mockClassicTabs).toEqual(expectedTabs);
+  });
+
+  it('keeps only Home and Browse tabs visible when sign-in is unavailable', async () => {
+    mockIsLiquidGlassAvailable.mockReturnValue(false);
+    mockAuthAvailability.current = false;
+
+    await render(<TabLayout />);
+
+    expect(mockClassicHrefs).toEqual([
+      ['index', undefined],
+      ['browse', undefined],
+      ['watchlist', null],
+      ['my-shows', null],
+      ['profile', null],
+    ]);
+  });
+
+  it('keeps only public routes in the native tab bar when sign-in is unavailable', async () => {
+    mockIsLiquidGlassAvailable.mockReturnValue(true);
+    mockAuthAvailability.current = false;
+
+    await render(<TabLayout />);
+
+    expect(mockNativeRoutes).toEqual(['index', 'browse']);
   });
 });

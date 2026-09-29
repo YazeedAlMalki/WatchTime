@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render } from '@testing-library/react-native';
 
 const mockRouter = { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn() };
 const mockRoute = { current: { id: '456' } };
-const mockAuth = { isSignedIn: false };
+const mockAuth = { isSignedIn: false, isAuthAvailable: true };
 const mockTitle = {
   id: 456,
   name: 'The selected movie',
@@ -20,7 +20,11 @@ const mockAdd = jest.fn();
 const mockRemove = jest.fn();
 const mockMark = jest.fn();
 const mockUnmark = jest.fn();
+const mockCreateReport = jest.fn();
+const mockCreateContribution = jest.fn();
 const mockTitleFetch = jest.fn();
+const mockSignInUnavailable = jest.fn();
+const mockSafetyInfo: { current: any } = { current: null };
 
 jest.mock('expo-router', () => ({
   useRouter: () => mockRouter,
@@ -29,6 +33,7 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('@/lib/app-auth', () => ({
   useAppAuth: () => mockAuth,
+  showSignInUnavailableMessage: () => mockSignInUnavailable(),
 }));
 jest.mock('expo-image', () => ({
   Image: () => null,
@@ -50,11 +55,16 @@ jest.mock('@workspace/api-client-react', () => ({
     return { data: { ...mockTitle }, isLoading: false, isError: false };
   },
   useGetSimilarTitles: () => ({ data: [] }),
-  useGetTitleSafety: () => ({ data: null, isLoading: false }),
+  useGetTitleSafety: () => ({ data: mockSafetyInfo.current, isLoading: false }),
   useAddToWatchlist: () => ({ mutate: mockAdd, isPending: false }),
   useRemoveFromWatchlist: () => ({ mutate: mockRemove, isPending: false }),
   useMarkTitleWatched: () => ({ mutate: mockMark, isPending: false }),
   useUnmarkTitleWatched: () => ({ mutate: mockUnmark, isPending: false }),
+  useCreateSafetyReport: () => ({ mutate: mockCreateReport, isPending: false }),
+  useCreateSafetyContribution: () => ({
+    mutate: mockCreateContribution,
+    isPending: false,
+  }),
 }));
 jest.mock('@/components/ui', () => ({
   SectionHeader: () => null,
@@ -77,9 +87,11 @@ describe('title action sign-in return', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockAuth.isSignedIn = false;
+    mockAuth.isAuthAvailable = true;
     mockRoute.current = { id: '456' };
     mockTitle.inWatchlist = false;
     mockTitle.watched = false;
+    mockSafetyInfo.current = null;
     mockRouter.canGoBack.mockReturnValue(false);
   });
 
@@ -102,6 +114,19 @@ describe('title action sign-in return', () => {
     expect(mockMark).not.toHaveBeenCalled();
   });
 
+  it('keeps title details available and explains sign-in outage instead of opening auth', async () => {
+    mockAuth.isAuthAvailable = false;
+    const detail = await render(<TitleDetailScreen />);
+
+    expect(detail.getByText('The selected movie')).toBeTruthy();
+    expect(mockTitleFetch).toHaveBeenCalledWith(456);
+    fireEvent.press(detail.getByTestId('watchlist-toggle'));
+
+    expect(mockSignInUnavailable).toHaveBeenCalledTimes(1);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockAdd).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['watchlist-toggle', 'Watchlist', mockAdd],
     ['watched-toggle', 'Mark watched', mockMark],
@@ -116,5 +141,23 @@ describe('title action sign-in return', () => {
 
     fireEvent.press(returned.getByTestId(action));
     expect(mutation).toHaveBeenCalledWith({ id: 456 });
+  });
+
+  it('explains the outage for safety actions without sending protected mutations', async () => {
+    mockAuth.isAuthAvailable = false;
+    mockSafetyInfo.current = {
+      preferredRating: null,
+      summary: [],
+      sources: [],
+    };
+    const detail = await render(<TitleDetailScreen />);
+
+    fireEvent.press(detail.getByTestId('report-safety-btn'));
+    fireEvent.press(detail.getByTestId('contribute-safety-btn'));
+
+    expect(mockSignInUnavailable).toHaveBeenCalledTimes(2);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockCreateReport).not.toHaveBeenCalled();
+    expect(mockCreateContribution).not.toHaveBeenCalled();
   });
 });

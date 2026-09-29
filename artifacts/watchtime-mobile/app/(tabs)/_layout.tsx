@@ -7,9 +7,10 @@ import { isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Tabs } from 'expo-router';
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
+import { useAppAuth } from '@/lib/app-auth';
 
 // iOS 26 native tabs with liquid glass; system-level appearance.
-function NativeTabLayout() {
+function NativeTabLayout({ publicOnly }: { publicOnly: boolean }) {
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="index">
@@ -20,18 +21,22 @@ function NativeTabLayout() {
         <NativeTabs.Trigger.Icon sf={{ default: 'magnifyingglass', selected: 'magnifyingglass' }} />
         <NativeTabs.Trigger.Label>Browse</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="watchlist">
-        <NativeTabs.Trigger.Icon sf={{ default: 'bookmark', selected: 'bookmark.fill' }} />
-        <NativeTabs.Trigger.Label>Watchlist</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="my-shows">
-        <NativeTabs.Trigger.Icon sf={{ default: 'play.square.stack', selected: 'play.square.stack.fill' }} />
-        <NativeTabs.Trigger.Label>My Shows</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="profile">
-        <NativeTabs.Trigger.Icon sf={{ default: 'person', selected: 'person.fill' }} />
-        <NativeTabs.Trigger.Label>Profile</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
+      {!publicOnly ? (
+        <>
+          <NativeTabs.Trigger name="watchlist">
+            <NativeTabs.Trigger.Icon sf={{ default: 'bookmark', selected: 'bookmark.fill' }} />
+            <NativeTabs.Trigger.Label>Watchlist</NativeTabs.Trigger.Label>
+          </NativeTabs.Trigger>
+          <NativeTabs.Trigger name="my-shows">
+            <NativeTabs.Trigger.Icon sf={{ default: 'play.square.stack', selected: 'play.square.stack.fill' }} />
+            <NativeTabs.Trigger.Label>My Shows</NativeTabs.Trigger.Label>
+          </NativeTabs.Trigger>
+          <NativeTabs.Trigger name="profile">
+            <NativeTabs.Trigger.Icon sf={{ default: 'person', selected: 'person.fill' }} />
+            <NativeTabs.Trigger.Label>Profile</NativeTabs.Trigger.Label>
+          </NativeTabs.Trigger>
+        </>
+      ) : null}
     </NativeTabs>
   );
 }
@@ -59,7 +64,7 @@ function Brand() {
   );
 }
 
-function ClassicTabLayout() {
+function ClassicTabLayout({ publicOnly }: { publicOnly: boolean }) {
   const colors = useColors();
   const isIOS = Platform.OS === 'ios';
   const isWeb = Platform.OS === 'web';
@@ -121,6 +126,7 @@ function ClassicTabLayout() {
         name="watchlist"
         options={{
           title: 'Watchlist',
+          href: publicOnly ? null : undefined,
           tabBarIcon: ({ color }) =>
             isIOS ? (
               <SymbolView name="bookmark" tintColor={color} size={24} />
@@ -133,6 +139,7 @@ function ClassicTabLayout() {
         name="my-shows"
         options={{
           title: 'My Shows',
+          href: publicOnly ? null : undefined,
           tabBarIcon: ({ color }) =>
             isIOS ? (
               <SymbolView name="play.square.stack" tintColor={color} size={24} />
@@ -145,6 +152,7 @@ function ClassicTabLayout() {
         name="profile"
         options={{
           title: 'Profile',
+          href: publicOnly ? null : undefined,
           tabBarIcon: ({ color }) =>
             isIOS ? (
               <SymbolView name="person" tintColor={color} size={24} />
@@ -158,8 +166,9 @@ function ClassicTabLayout() {
 }
 
 export default function TabLayout() {
+  const { isAuthAvailable } = useAppAuth();
   if (isLiquidGlassAvailable()) {
-    return <NativeTabLayout />;
+    return <NativeTabLayout publicOnly={!isAuthAvailable} />;
   }
-  return <ClassicTabLayout />;
+  return <ClassicTabLayout publicOnly={!isAuthAvailable} />;
 }

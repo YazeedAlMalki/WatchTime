@@ -80,12 +80,14 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 jest.mock('@/lib/app-auth', () => ({
+  AppAuthUnavailableProvider: ({ children }: any) => children,
   AppAuthProvider: ({ children }: any) => children,
   useAppAuth: () => {
     const auth = mockUseAuth();
     return {
       isLoaded: auth.isLoaded,
       isSignedIn: !!auth.isSignedIn,
+      isAuthAvailable: auth.isAuthAvailable ?? true,
       userId: auth.userId ?? (auth.isSignedIn ? 'startup-contract-user' : null),
       isDemoSignedIn: false,
       activateDemo: jest.fn(),
@@ -344,10 +346,10 @@ describe('mobile startup contracts', () => {
     expect(getByText('Sign-in unavailable')).toBeTruthy();
     expect(
       getByText(
-        "WatchTime couldn't start its sign-in service. Check your connection and try again.",
+        "WatchTime couldn't start its sign-in service. You can still browse public shows. Check your connection and retry sign-in setup.",
       ),
     ).toBeTruthy();
-    expect(queryByTestId('root-navigation')).toBeNull();
+    expect(queryByTestId('root-navigation')).toBeTruthy();
     expect(mockMarkStartup).toHaveBeenCalledWith('auth-provider-error', {
       error: 'Clerk initialization failed',
     });
@@ -360,6 +362,7 @@ describe('mobile startup contracts', () => {
 
     await waitFor(() => {
       expect(getByTestId('root-navigation')).toBeTruthy();
+      expect(queryByTestId('auth-provider-failure')).toBeNull();
     });
   });
 
@@ -456,16 +459,16 @@ describe('mobile startup contracts', () => {
   });
 
   it('keeps root navigation mounted when splash setup fails', async () => {
-    jest.isolateModules(() => {
-      jest.doMock('expo-splash-screen', () => ({
-        hide: jest.fn(),
-        hideAsync: jest.fn(() => Promise.resolve()),
-        preventAutoHideAsync: jest.fn(() =>
-          Promise.reject(new Error('splash setup failed')),
-        ),
-      }));
-      require('../app/_layout');
-    });
+    jest.doMock('react', () => mockReact);
+    jest.doMock('expo-splash-screen', () => ({
+      hide: jest.fn(),
+      hideAsync: jest.fn(() => Promise.resolve()),
+      preventAutoHideAsync: jest.fn(() =>
+        Promise.reject(new Error('splash setup failed')),
+      ),
+    }));
+    jest.resetModules();
+    require('../app/_layout');
 
     await act(async () => {
       await Promise.resolve();
@@ -667,15 +670,14 @@ describe('mobile startup contracts', () => {
     const screen = await render(<HomeScreen />);
 
     expect(screen.getByTestId('loading')).toBeTruthy();
+    expect(mockQueryEnabled.trending).toEqual([false]);
     expect(mockQueryEnabled.shows).toEqual([]);
     expect(mockQueryEnabled.watchlist).toEqual([]);
     expect(mockQueryEnabled.recommendations).toEqual([]);
-    expect(mockQueryEnabled.trending).toEqual([false]);
 
     await act(async () => {
       pendingFrames[0]?.(0);
     });
-    expect(mockQueryEnabled.trending).toEqual([false]);
 
     await act(async () => {
       pendingFrames[1]?.(0);
@@ -683,8 +685,8 @@ describe('mobile startup contracts', () => {
 
     await waitFor(() => {
       expect(mockQueryEnabled.trending).toEqual([false, true]);
+      expect(screen.getByText('Public trending title')).toBeTruthy();
     });
-    expect(screen.getByText('Public trending title')).toBeTruthy();
     expect(screen.getByText('Trending Now')).toBeTruthy();
 
     mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
@@ -692,20 +694,22 @@ describe('mobile startup contracts', () => {
       screen.rerender(<HomeScreen />);
     });
 
-    expect(screen.queryByText('Public trending title')).toBeNull();
+    expect(screen.queryByText('Track your shows.')).toBeNull();
     expect(screen.queryByText('Trending Now')).toBeNull();
+    expect(screen.queryByText('Public trending title')).toBeNull();
     expect(screen.getByText('Up Next')).toBeTruthy();
     expect(screen.getByText('Your Watchlist')).toBeTruthy();
     expect(mockQueryEnabled.shows).toEqual([true]);
     expect(mockQueryEnabled.watchlist).toEqual([true]);
     expect(mockQueryEnabled.recommendations).toEqual([true]);
+    expect(mockQueryEnabled.trending).toEqual([false, true]);
 
     await act(async () => {
       screen.unmount();
     });
   });
 
-  it('keeps trending behind the startup gate when Clerk signs out before Home starts', async () => {
+  it('hides personal home content immediately when Clerk signs out in place', async () => {
     mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
     mockSignedInHomeQueryState.shows.current = {
       data: [{

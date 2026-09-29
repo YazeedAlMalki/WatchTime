@@ -15,7 +15,10 @@ import {
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useAppAuth } from '@/lib/app-auth';
+import {
+  showSignInUnavailableMessage,
+  useAppAuth,
+} from '@/lib/app-auth';
 import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -520,10 +523,12 @@ function SafetySourceCard({ source }: { source: SafetySource }) {
 function SafetySection({
   titleId,
   isSignedIn,
+  isAuthAvailable,
   isMovie,
 }: {
   titleId: number;
   isSignedIn: boolean;
+  isAuthAvailable: boolean;
   isMovie: boolean;
 }) {
   const c = useColors();
@@ -542,6 +547,10 @@ function SafetySection({
 
   const handleReportPress = () => {
     if (!isSignedIn) {
+      if (isAuthAvailable === false) {
+        showSignInUnavailableMessage();
+        return;
+      }
       router.push({ pathname: '/(auth)/sign-in', params: { returnTo: `/title/${titleId}` } });
       return;
     }
@@ -550,6 +559,10 @@ function SafetySection({
 
   const handleContributePress = () => {
     if (!isSignedIn) {
+      if (isAuthAvailable === false) {
+        showSignInUnavailableMessage();
+        return;
+      }
       router.push({ pathname: '/(auth)/sign-in', params: { returnTo: `/title/${titleId}` } });
       return;
     }
@@ -800,7 +813,7 @@ export default function TitleDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const titleId = Number(id);
-  const { isSignedIn } = useAppAuth();
+  const { isSignedIn, isAuthAvailable } = useAppAuth();
   const queryClient = useQueryClient();
 
   const title = useGetTitle(titleId);
@@ -904,6 +917,10 @@ export default function TitleDetailScreen() {
             disabled={watchlistBusy}
             onPress={() => {
               if (!isSignedIn) {
+                if (isAuthAvailable === false) {
+                  showSignInUnavailableMessage();
+                  return;
+                }
                 router.push({ pathname: '/(auth)/sign-in', params: { returnTo: `/title/${titleId}` } });
                 return;
               }
@@ -945,6 +962,10 @@ export default function TitleDetailScreen() {
               disabled={watchedBusy}
               onPress={() => {
                 if (!isSignedIn) {
+                  if (isAuthAvailable === false) {
+                    showSignInUnavailableMessage();
+                    return;
+                  }
                   router.push({ pathname: '/(auth)/sign-in', params: { returnTo: `/title/${titleId}` } });
                   return;
                 }
@@ -1035,7 +1056,12 @@ export default function TitleDetailScreen() {
 
       {/* Content Safety */}
       <SectionHeader title="Content Safety" />
-      <SafetySection titleId={titleId} isSignedIn={!!isSignedIn} isMovie={t.type === 'movie'} />
+      <SafetySection
+        titleId={titleId}
+        isSignedIn={!!isSignedIn}
+        isAuthAvailable={isAuthAvailable}
+        isMovie={t.type === 'movie'}
+      />
 
       {/* Similar */}
       {(similar.data ?? []).length > 0 ? (

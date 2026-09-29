@@ -10,7 +10,10 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useAppAuth } from '@/lib/app-auth';
+import {
+  showSignInUnavailableMessage,
+  useAppAuth,
+} from '@/lib/app-auth';
 import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,7 +33,7 @@ export default function WatchlistScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isSignedIn } = useAppAuth();
+  const { isSignedIn, isAuthAvailable } = useAppAuth();
   const queryClient = useQueryClient();
   const watchlist = useInfiniteQuery({
     queryKey: [...getGetMyWatchlistQueryKey(), 'infinite'],
@@ -58,7 +61,13 @@ export default function WatchlistScreen() {
         />
         <Pressable
           testID="watchlist-sign-in"
-          onPress={() => router.push('/(auth)/sign-in')}
+          onPress={() => {
+            if (isAuthAvailable === false) {
+              showSignInUnavailableMessage();
+              return;
+            }
+            router.push('/(auth)/sign-in');
+          }}
           style={({ pressed }) => [
             {
               marginHorizontal: 32,

@@ -13,7 +13,10 @@ import { useEffect, useState } from 'react';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useAppAuth } from '@/lib/app-auth';
+import {
+  showSignInUnavailableMessage,
+  useAppAuth,
+} from '@/lib/app-auth';
 import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -279,7 +282,13 @@ function SignedInHome({ startupReady, userId }: { startupReady: boolean; userId:
   );
 }
 
-function SignedOutHome({ startupReady }: { startupReady: boolean }) {
+function SignedOutHome({
+  startupReady,
+  authAvailable,
+}: {
+  startupReady: boolean;
+  authAvailable: boolean;
+}) {
   const c = useColors();
   const router = useRouter();
   const trending = useGetTrendingTitles(
@@ -329,7 +338,13 @@ function SignedOutHome({ startupReady }: { startupReady: boolean }) {
         </Text>
         <Pressable
           testID="landing-sign-in"
-          onPress={() => router.push('/(auth)/sign-in')}
+          onPress={() => {
+            if (authAvailable === false) {
+              showSignInUnavailableMessage();
+              return;
+            }
+            router.push('/(auth)/sign-in');
+          }}
           style={({ pressed }) => [
             {
               marginTop: 16,
@@ -371,7 +386,7 @@ function SignedOutHome({ startupReady }: { startupReady: boolean }) {
 }
 
 export default function HomeScreen() {
-  const { isLoaded, isSignedIn, userId } = useAppAuth();
+  const { isLoaded, isSignedIn, userId, isAuthAvailable } = useAppAuth();
   const [startupReady, setStartupReady] = useState(false);
 
   useEffect(() => {
@@ -383,7 +398,12 @@ export default function HomeScreen() {
     if (!userId) return <Loading />;
     return <SignedInHome startupReady={startupReady} userId={userId} />;
   }
-  return <SignedOutHome startupReady={startupReady} />;
+  return (
+    <SignedOutHome
+      startupReady={startupReady}
+      authAvailable={isAuthAvailable}
+    />
+  );
 }
 
 const styles = StyleSheet.create({

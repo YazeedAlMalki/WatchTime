@@ -10,8 +10,10 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useAuth, useUser } from '@clerk/expo';
-import { useAppAuth } from '@/lib/app-auth';
+import {
+  showSignInUnavailableMessage,
+  useAppAuth,
+} from '@/lib/app-auth';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getGetMeQueryKey, useGetMe, useUpdateMe } from '@workspace/api-client-react';
@@ -38,9 +40,14 @@ export default function ProfileScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isSignedIn: clerkSignedIn, signOut } = useAuth();
-  const { isSignedIn, isDemoSignedIn, clearDemo } = useAppAuth();
-  const { user } = useUser();
+  const {
+    isSignedIn,
+    isAuthAvailable,
+    isClerkSignedIn: clerkSignedIn,
+    isDemoSignedIn,
+    clearDemo,
+    signOut,
+  } = useAppAuth();
   const queryClient = useQueryClient();
   const me = useGetMe({ query: { enabled: !!isSignedIn } as any });
   const updateMe = useUpdateMe({
@@ -67,7 +74,13 @@ export default function ProfileScreen() {
         />
         <Pressable
           testID="profile-sign-in"
-          onPress={() => router.push('/(auth)/sign-in')}
+          onPress={() => {
+            if (isAuthAvailable === false) {
+              showSignInUnavailableMessage();
+              return;
+            }
+            router.push('/(auth)/sign-in');
+          }}
           style={({ pressed }) => [
             {
               marginHorizontal: 32,
@@ -119,7 +132,7 @@ export default function ProfileScreen() {
           </Text>
         </View>
         <Text style={{ color: c.foreground, fontSize: 20, fontFamily: 'Inter_700Bold', marginTop: 12 }}>
-          {profile?.name ?? user?.fullName ?? 'WatchTime user'}
+          {profile?.name ?? 'WatchTime user'}
         </Text>
         <Text style={{ color: c.mutedForeground, fontSize: 14, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
           {profile?.email}

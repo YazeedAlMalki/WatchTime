@@ -24,7 +24,10 @@ import {
   type DevSplashFailure,
 } from '@/lib/dev-splash-failure';
 import { getDevDemoToken } from '@/lib/dev-demo-session';
-import { AppAuthProvider } from '@/lib/app-auth';
+import {
+  AppAuthProvider,
+  AppAuthUnavailableProvider,
+} from '@/lib/app-auth';
 import { ExpoPreviewReadiness } from '@/components/ExpoPreviewReadiness';
 import { markStartup, reportStartupFailure } from '@/lib/startup-metrics';
 
@@ -129,6 +132,7 @@ const proxyUrl = process.env.EXPO_PUBLIC_CLERK_PROXY_URL || undefined;
 
 const queryClient = new QueryClient();
 
+const authUnavailableQueryClient = new QueryClient();
 /** Attaches the Clerk bearer token to every generated API client request. */
 function AuthTokenBridge() {
   const { getToken, isLoaded } = useAuth();
@@ -162,7 +166,7 @@ function StartupFrameMarker() {
   return null;
 }
 
-function RootLayoutNav() {
+function RootLayoutNav({ authAvailable = true }: { authAvailable?: boolean }) {
   return (
     <Stack
       screenOptions={{
@@ -173,8 +177,12 @@ function RootLayoutNav() {
     >
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="title/[id]" />
-      <Stack.Screen name="(auth)/sign-in" options={{ presentation: 'modal' }} />
-      <Stack.Screen name="(auth)/sign-up" options={{ presentation: 'modal' }} />
+      {authAvailable ? (
+        <Stack.Screen name="(auth)/sign-in" options={{ presentation: 'modal' }} />
+      ) : null}
+      {authAvailable ? (
+        <Stack.Screen name="(auth)/sign-up" options={{ presentation: 'modal' }} />
+      ) : null}
     </Stack>
   );
 }
@@ -184,6 +192,23 @@ function AuthProviderFailureFallback({
 }: {
   resetError: () => void;
 }) {
+  return (
+    <AppAuthUnavailableProvider>
+      <SafeAreaProvider>
+        <ErrorBoundary>
+          <QueryClientProvider client={authUnavailableQueryClient}>
+            <RootNavigationFrame
+              authAvailable={false}
+              onRetry={resetError}
+            />
+          </QueryClientProvider>
+        </ErrorBoundary>
+      </SafeAreaProvider>
+    </AppAuthUnavailableProvider>
+  );
+}
+
+function AuthProviderFailureNotice({ onRetry }: { onRetry: () => void }) {
   return (
     <View
       testID="auth-provider-failure"
@@ -204,14 +229,14 @@ function AuthProviderFailureFallback({
           { color: colors.dark.mutedForeground },
         ]}
       >
-        WatchTime couldn&apos;t start its sign-in service. Check your connection
-        and try again.
+        WatchTime couldn&apos;t start its sign-in service. You can still browse
+        public shows. Check your connection and retry sign-in setup.
       </Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Retry sign-in setup"
         testID="retry-auth-provider"
-        onPress={resetError}
+        onPress={onRetry}
         style={({ pressed }) => [
           styles.authProviderRetry,
           {
@@ -253,15 +278,7 @@ function RootApplication() {
               <QueryClientProvider client={queryClient}>
                 <AuthTokenBridge />
                 <StartupFrameMarker />
-                <GestureHandlerRootView style={{ flex: 1 }}>
-                  <KeyboardProvider>
-                    <StatusBar style="light" />
-                    <View style={{ flex: 1 }}>
-                      <ExpoPreviewReadiness />
-                      <RootLayoutNav />
-                    </View>
-                  </KeyboardProvider>
-                </GestureHandlerRootView>
+                <RootNavigationFrame authAvailable />
               </QueryClientProvider>
             </ErrorBoundary>
           </SafeAreaProvider>
@@ -318,12 +335,11 @@ export default function RootLayout() {
 
 const styles = StyleSheet.create({
   authProviderFailure: {
-    flex: 1,
-    width: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.dark.mutedForeground,
   },
   authProviderFailureTitle: {
     fontSize: 22,
@@ -336,16 +352,41 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   authProviderRetry: {
-    minWidth: 140,
-    minHeight: 48,
+    minWidth: 110,
+    minHeight: 42,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: colors.radius,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
   },
   authProviderRetryText: {
     fontSize: 16,
     fontWeight: '600',
   },
 });
+
+function RootNavigationFrame({
+  authAvailable,
+  onRetry,
+}: {
+  authAvailable: boolean;
+  onRetry?: () => void;
+}) {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <KeyboardProvider>
+        <StatusBar style="light" />
+        <View style={{ flex: 1 }}>
+          {!authAvailable && onRetry ? (
+            <AuthProviderFailureNotice onRetry={onRetry} />
+          ) : null}
+          <View style={{ flex: 1 }}>
+            <ExpoPreviewReadiness />
+            <RootLayoutNav authAvailable={authAvailable} />
+          </View>
+        </View>
+      </KeyboardProvider>
+    </GestureHandlerRootView>
+  );
+}

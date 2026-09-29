@@ -14,7 +14,10 @@ import {
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useAppAuth } from '@/lib/app-auth';
+import {
+  showSignInUnavailableMessage,
+  useAppAuth,
+} from '@/lib/app-auth';
 import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -296,7 +299,7 @@ export default function MyShowsScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isSignedIn } = useAppAuth();
+  const { isSignedIn, isAuthAvailable } = useAppAuth();
   const [activeTab, setActiveTab] = useState<Tab>('shows');
   const [showSearch, setShowSearch] = useState('');
   const [showFilter, setShowFilter] = useState<ShowFilter>('all');
@@ -380,7 +383,13 @@ export default function MyShowsScreen() {
         />
         <Pressable
           testID="my-shows-sign-in"
-          onPress={() => router.push('/(auth)/sign-in')}
+          onPress={() => {
+            if (isAuthAvailable === false) {
+              showSignInUnavailableMessage();
+              return;
+            }
+            router.push('/(auth)/sign-in');
+          }}
           style={({ pressed }) => [
             {
               marginHorizontal: 32,
