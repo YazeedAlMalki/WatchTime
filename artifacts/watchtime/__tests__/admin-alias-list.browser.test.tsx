@@ -19,6 +19,7 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     useDeleteAdminContentAlias: () => ({ isPending: false, mutate: vi.fn() }),
   };
 });
+
 vi.mock("@clerk/react", () => ({ useAuth: () => ({ getToken: async () => null }) }));
 
 import AdminPage from "@/pages/admin";
@@ -172,6 +173,96 @@ it("pages through a filtered alias review without dropping its search or ownersh
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
     expect(requests.at(-1)?.searchParams.get("offset")).toBe("0");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("requests provider-owned and editorial aliases and keeps each source label visible", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const aliases = {
+    provider: [{
+      id: 301,
+      titleId: 101,
+      titleName: "The Lighthouse",
+      titleType: "movie",
+      titleYear: 2019,
+      alias: "Lighthouse Provider Alias",
+      language: "en",
+      sourceName: "TVMaze",
+      sourceUrl: "https://example.test/provider",
+      isEditorial: false,
+      collision: false,
+      collisionTitleCount: 1,
+      updatedAt: "2026-09-16T00:00:00.000Z",
+    }],
+    editorial: [{
+      id: 302,
+      titleId: 101,
+      titleName: "The Lighthouse",
+      titleType: "movie",
+      titleYear: 2019,
+      alias: "Le Phare Editorial",
+      language: "fr",
+      sourceName: "Wikipedia",
+      sourceUrl: "https://example.test/editorial",
+      isEditorial: true,
+      collision: false,
+      collisionTitleCount: 1,
+      updatedAt: "2026-09-16T00:00:00.000Z",
+    }],
+  };
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const ownership = url.searchParams.get("ownership");
+    const items = ownership ? aliases[ownership as keyof typeof aliases] : [];
+    return new Response(JSON.stringify({
+      items,
+      total: items.length,
+      limit: Number(url.searchParams.get("limit") ?? 50),
+      offset: Number(url.searchParams.get("offset") ?? 0),
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    const ownership = page.getByRole("combobox", { name: "Alias ownership" });
+    await expect.element(page.getByText("No alternate titles found")).toBeVisible();
+
+    await userEvent.click(ownership);
+    await userEvent.click(page.getByRole("option", { name: "Provider-owned" }));
+    await expect.element(page.getByText("Lighthouse Provider Alias")).toBeVisible();
+    await expect.element(page.getByText("TVMaze", { exact: true })).toBeVisible();
+    expect(requests.filter((request) =>
+      request.searchParams.get("ownership") === "provider",
+    )).toHaveLength(1);
+
+    await userEvent.click(ownership);
+    await userEvent.click(page.getByRole("option", { name: "Editorial" }));
+    await expect.element(page.getByText("Le Phare Editorial")).toBeVisible();
+    await expect.element(page.getByText("Wikipedia", { exact: true })).toBeVisible();
+    expect(requests.filter((request) =>
+      request.searchParams.get("ownership") === "editorial",
+    )).toHaveLength(1);
+    await expect.element(page.getByText("Lighthouse Provider Alias")).not.toBeInTheDocument();
   } finally {
     root.unmount();
     container.remove();
