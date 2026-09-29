@@ -27,6 +27,7 @@ import {
   DeleteAdminContentAliasBody,
   ListAdminContentAliasesQueryParams,
   ListAdminContentAliasesResponse,
+  ExportAdminContentAliasesQueryParams,
   ListAdminContentRefreshBatchHistoryResponse,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middlewares/auth";
@@ -919,6 +920,45 @@ router.get("/content", async (req, res) => {
 const normalizeAlias = (value: string) =>
   value.normalize("NFKD").replace(/\p{M}+/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
+function buildContentAliasWhere(
+  q: string,
+  ownership?: "provider" | "editorial",
+  requestedId?: number,
+) {
+  if (requestedId !== undefined) return eq(titleAliasesTable.id, requestedId);
+
+  const normalizedQ = normalizeAlias(q);
+  const searchFilter = q
+    ? or(
+        ilike(titleAliasesTable.alias, `%${q}%`),
+        normalizedQ ? ilike(titleAliasesTable.normalizedAlias, `%${normalizedQ}%`) : undefined,
+        ilike(titlesTable.name, `%${q}%`),
+      )
+    : undefined;
+  const ownershipFilter =
+    ownership === "provider"
+      ? eq(titleAliasesTable.isEditorial, false)
+      : ownership === "editorial"
+        ? eq(titleAliasesTable.isEditorial, true)
+        : undefined;
+  return and(searchFilter, ownershipFilter);
+}
+
+async function getAliasCollisionCounts(normalizedAliases: string[]) {
+  const collisionRows = [];
+  const batchSize = 500;
+  for (let index = 0; index < normalizedAliases.length; index += batchSize) {
+    const batch = normalizedAliases.slice(index, index + batchSize);
+    collisionRows.push(...await db.select({
+      normalizedAlias: titleAliasesTable.normalizedAlias,
+      titleCount: sql<number>`count(distinct ${titleAliasesTable.titleId})::int`,
+    }).from(titleAliasesTable)
+      .where(inArray(titleAliasesTable.normalizedAlias, batch))
+      .groupBy(titleAliasesTable.normalizedAlias));
+  }
+  return new Map(collisionRows.map((row) => [row.normalizedAlias, row.titleCount]));
+}
+
 async function refreshTitleAliasSearchList(tx: any, titleId: number) {
   const aliases = await tx.select({ alias: titleAliasesTable.alias }).from(titleAliasesTable)
     .where(eq(titleAliasesTable.titleId, titleId))
@@ -937,23 +977,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
   const q = rawQ?.trim() ?? "";
   const limit = requestedId === undefined ? parsedParams.data.limit : 1;
   const offset = requestedId === undefined ? parsedParams.data.offset : 0;
-  const ownershipFilter =
-    ownership === "provider"
-      ? eq(titleAliasesTable.isEditorial, false)
-      : ownership === "editorial"
-        ? eq(titleAliasesTable.isEditorial, true)
-        : undefined;
-  const normalizedQ = normalizeAlias(q);
-  const searchFilter = q
-    ? or(
-        ilike(titleAliasesTable.alias, `%${q}%`),
-        normalizedQ ? ilike(titleAliasesTable.normalizedAlias, `%${normalizedQ}%`) : undefined,
-        ilike(titlesTable.name, `%${q}%`),
-      )
-    : undefined;
-  const baseWhere = requestedId !== undefined
-    ? eq(titleAliasesTable.id, requestedId)
-    : and(searchFilter, ownershipFilter);
+  const baseWhere = buildContentAliasWhere(q, ownership, requestedId);
   const pageWhere = requestedId === undefined && afterId !== undefined
     ? and(baseWhere, gt(titleAliasesTable.id, afterId))
     : baseWhere;
@@ -1017,6 +1041,80 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
     offset,
     nextAfterId,
   }));
+});
+
+router.get("/content-aliases/export", async (req, res): Promise<void> => {
+  const parsedParams = ExportAdminContentAliasesQueryParams.safeParse(req.query);
+  if (!parsedParams.success) {
+    res.status(400).json({ error: "Invalid alias export parameters" });
+    return;
+  }
+
+  const q = parsedParams.data.q?.trim() ?? "";
+  const where = buildContentAliasWhere(q, parsedParams.data.ownership);
+  const rows = await db
+    .select({
+      alias: titleAliasesTable,
+      titleName: titlesTable.name,
+      titleType: titlesTable.type,
+      titleYear: titlesTable.year,
+    })
+    .from(titleAliasesTable)
+    .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+    .where(where)
+    .orderBy(titleAliasesTable.normalizedAlias, titlesTable.name, titleAliasesTable.id);
+  const collisionCount = await getAliasCollisionCounts([
+    ...new Set(rows.map((row) => row.alias.normalizedAlias)),
+  ]);
+
+  const header = [
+    "Alias ID",
+    "Catalog title ID",
+    "Catalog title",
+    "Type",
+    "Year",
+    "Alias",
+    "Language",
+    "Source",
+    "Source URL",
+    "Ownership",
+    "Editorial",
+    "Collision",
+    "Collision title count",
+    "Last updated",
+  ];
+  const escapeCsv = (value: unknown) => {
+    const text = String(value ?? "");
+    const safeText = /^[\u0000-\u0020]*[=+\-@]/.test(text) ? `'${text}` : text;
+    return `"${safeText.replace(/"/g, '""')}"`;
+  };
+  const csvRows = rows.map(({ alias, titleName, titleType, titleYear }) => {
+    const titleCount = collisionCount.get(alias.normalizedAlias) ?? 1;
+    return [
+      alias.id,
+      alias.titleId,
+      titleName,
+      titleType,
+      titleYear,
+      alias.alias,
+      alias.language,
+      alias.sourceName,
+      alias.sourceUrl,
+      alias.isEditorial ? "Editorial" : "Provider-owned",
+      alias.isEditorial ? "Yes" : "No",
+      titleCount > 1 ? "Yes" : "No",
+      titleCount,
+      alias.updatedAt.toISOString(),
+    ];
+  });
+  const csv = [header, ...csvRows]
+    .map((row) => row.map(escapeCsv).join(","))
+    .join("\r\n");
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="alternate-title-review.csv"');
+  res.setHeader("X-Export-Count", String(rows.length));
+  res.send(csv);
 });
 
 router.patch("/content-aliases/:id", async (req, res) => {

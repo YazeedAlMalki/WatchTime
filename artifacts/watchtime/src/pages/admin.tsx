@@ -991,6 +991,7 @@ function ContentTab({
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { getToken } = useAuth();
   const copyReviewLink = async () => {
     try {
       if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
@@ -1799,6 +1800,8 @@ function ContentTab({
       )}
       <AliasReview
         aliases={aliasesPage?.items}
+        q={debouncedQ}
+        getToken={getToken}
         aliasTotal={aliasesPage?.total}
         aliasPageSize={aliasPageSize}
         aliasOffset={aliasOffset}
@@ -1823,6 +1826,8 @@ function ContentTab({
 
 export function AliasReview({
   aliases,
+  q = "",
+  getToken = async () => null,
   aliasTotal = aliases?.length ?? 0,
   aliasPageSize = 50,
   aliasOffset = 0,
@@ -1842,6 +1847,8 @@ export function AliasReview({
   onRetryLinkedAlias,
 }: {
   aliases: AdminContentAlias[] | undefined;
+  q?: string;
+  getToken?: () => Promise<string | null>;
   aliasTotal?: number;
   aliasPageSize?: number;
   aliasOffset?: number;
@@ -1865,6 +1872,7 @@ export function AliasReview({
   const qc = useQueryClient();
   const { toast } = useToast();
   const linkedRowRef = React.useRef<HTMLTableRowElement>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const [savedAliasPreview, setSavedAliasPreview] =
     useState<AdminContentAlias | null>(null);
   React.useEffect(() => {
@@ -1904,6 +1912,65 @@ export function AliasReview({
         description: "Allow clipboard access and try again.",
         variant: "destructive",
       });
+    }
+  };
+  const exportAliases = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      const token = await getToken();
+      const params = new URLSearchParams();
+      if (q.trim()) params.set("q", q.trim());
+      if (ownership !== "all") params.set("ownership", ownership);
+      const query = params.size ? `?${params.toString()}` : "";
+      const response = await fetch(`/api/admin/content-aliases/export${query}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) {
+        let description = "The server could not create the export. Try again.";
+        try {
+          const body = await response.json() as { error?: unknown };
+          if (typeof body.error === "string") description = body.error;
+        } catch {
+          // Keep the actionable default when the response is not JSON.
+        }
+        toast({
+          title: "Could not export alternate titles",
+          description,
+          variant: "destructive",
+        });
+        return;
+      }
+      const count = Number(response.headers.get("X-Export-Count") ?? "0");
+      if (count === 0) {
+        toast({
+          title: "No alternate titles to export",
+          description: "No aliases match the current search and ownership filters.",
+        });
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const filename = disposition.match(/filename="([^"]+)"/)?.[1];
+      link.href = url;
+      link.download = filename ?? `alternate-title-review-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      toast({
+        title: "Alternate titles exported",
+        description: `${count} aliases downloaded.`,
+      });
+    } catch {
+      toast({
+        title: "Could not export alternate titles",
+        description: "The export request failed. Check your connection and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExporting(false);
     }
   };
   const updateAlias = useUpdateAdminContentAlias();
@@ -2148,7 +2215,7 @@ export function AliasReview({
             titles.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Select value={ownership} onValueChange={onOwnershipChange}>
             <SelectTrigger className="w-44 rounded-xl" aria-label="Alias ownership">
               <SelectValue placeholder="All ownership" />
@@ -2162,6 +2229,17 @@ export function AliasReview({
           <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
             {isError ? "Aliases unavailable" : `${aliasTotal} aliases`}
           </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="gap-1.5 whitespace-nowrap"
+            onClick={() => void exportAliases()}
+            disabled={isExporting}
+          >
+            <Download className="w-3.5 h-3.5" />
+            {isExporting ? "Exporting…" : "Export all CSV"}
+          </Button>
         </div>
       </div>
       {linkedAliasId !== null && (

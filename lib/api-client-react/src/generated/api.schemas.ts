@@ -1257,6 +1257,16 @@ export const ListAdminContentAliasesOwnership = {
   editorial: 'editorial',
 } as const;
 
+export type ExportAdminContentAliasesParams = {
+/**
+ * Search alternate titles and their catalog titles
+ */
+q?: string;
+/**
+ * Filter aliases by their source ownership
+ */
+ownership?: ExportAdminContentAliasesOwnership;
+};
 export type UpdateAdminContentAlias409 = AdminContentAliasConflict | {
   error: string;
 };
@@ -1300,3 +1310,10 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
+
+export const ExportAdminContentAliasesOwnership = {
+  provider: 'provider',
+  editorial: 'editorial',
+} as const;
+
+export type ExportAdminContentAliasesOwnership = typeof ExportAdminContentAliasesOwnership[keyof typeof ExportAdminContentAliasesOwnership];

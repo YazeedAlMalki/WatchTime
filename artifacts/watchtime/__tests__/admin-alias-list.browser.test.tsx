@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Toaster } from "@/components/ui/toaster";
 
 // Keep the generated alias-list hook and HTTP client intact so retry and
 // ownership/search parameters are checked against real browser requests.
@@ -427,6 +428,90 @@ it("keeps editorial aliases selected when an older provider request finishes lat
     container.remove();
     client.clear();
     window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("exports all matching aliases and explains empty or failed downloads", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial");
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalAnchorClick = HTMLAnchorElement.prototype.click;
+  const downloads: string[] = [];
+  let exportMode: "success" | "empty" | "failure" = "success";
+  URL.createObjectURL = vi.fn(() => "blob:alias-export");
+  HTMLAnchorElement.prototype.click = function () {
+    downloads.push(this.download);
+  };
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    requests.push(url);
+    if (url.pathname === "/api/admin/content-aliases/export") {
+      if (exportMode === "failure") {
+        return new Response(JSON.stringify({ error: "Export service unavailable" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(exportMode === "empty" ? '"Alias"\r\n' : '"Alias"\r\n"Le Phare"', {
+        status: 200,
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": 'attachment; filename="alternate-title-review.csv"',
+          "X-Export-Count": exportMode === "empty" ? "0" : "121",
+        },
+      });
+    }
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    return new Response(JSON.stringify({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(
+      <QueryClientProvider client={client}>
+        <AdminPage />
+        <Toaster />
+      </QueryClientProvider>,
+    );
+    await expect.element(page.getByText("No alternate titles found")).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Export all CSV" }));
+    await expect.element(page.getByText("121 aliases downloaded.")).toBeVisible();
+    expect(downloads).toEqual(["alternate-title-review.csv"]);
+    const exportRequest = requests.find((url) => url.pathname === "/api/admin/content-aliases/export");
+    expect(exportRequest?.searchParams.get("q")).toBe("Lighthouse");
+    expect(exportRequest?.searchParams.get("ownership")).toBe("editorial");
+    expect(exportRequest?.searchParams.has("offset")).toBe(false);
+    expect(exportRequest?.searchParams.has("limit")).toBe(false);
+
+    exportMode = "empty";
+    await userEvent.click(page.getByRole("button", { name: "Export all CSV" }));
+    await expect.element(page.getByText("No alternate titles to export")).toBeVisible();
+    expect(downloads).toEqual(["alternate-title-review.csv"]);
+
+    exportMode = "failure";
+    await userEvent.click(page.getByRole("button", { name: "Export all CSV" }));
+    await expect.element(page.getByText("Export service unavailable")).toBeVisible();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    URL.createObjectURL = originalCreateObjectURL;
+    HTMLAnchorElement.prototype.click = originalAnchorClick;
     window.history.replaceState({}, "", previousUrl);
   }
 });

@@ -422,8 +422,6 @@ export const getMyShowsQueryLimitDefault = 24;
 export const getMyShowsQueryLimitMax = 50;
 
 
-
-
 export const GetMyShowsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyShowsQueryLimitMax).default(getMyShowsQueryLimitDefault),
   "beforeId": zod.coerce.number().int().min(1).optional()
@@ -470,8 +468,6 @@ export const GetMyShowsResponse = zod.array(GetMyShowsResponseItem)
  */
 export const getMyInProgressShowsQueryLimitDefault = 24;
 export const getMyInProgressShowsQueryLimitMax = 50;
-
-
 
 
 export const GetMyInProgressShowsQueryParams = zod.object({
@@ -522,7 +518,6 @@ export const getMyMoviesQueryLimitDefault = 24;
 export const getMyMoviesQueryLimitMax = 50;
 
 
-
 export const GetMyMoviesQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyMoviesQueryLimitMax).default(getMyMoviesQueryLimitDefault),
   "before": zod.coerce.string().optional()
@@ -554,7 +549,6 @@ export const GetMyMoviesResponse = zod.array(GetMyMoviesResponseItem)
  */
 export const getMyWatchlistQueryLimitDefault = 24;
 export const getMyWatchlistQueryLimitMax = 50;
-
 
 
 export const GetMyWatchlistQueryParams = zod.object({
@@ -628,7 +622,6 @@ export const GetMyRecommendationsResponse = zod.array(GetMyRecommendationsRespon
 export const createImportBodyFileNameMax = 255;
 
 export const createImportBodyContentMax = 2097152;
-
 
 
 export const CreateImportBody = zod.object({
@@ -922,7 +915,6 @@ export const GetPublicStatsResponse = zod.object({
  */
 
 
-
 export const CreateFeedbackBody = zod.object({
   "category": zod.enum(['bug', 'feature', 'general']),
   "message": zod.string().min(1),
@@ -1203,7 +1195,6 @@ export const listAdminContentAliasesQueryOffsetDefault = 0;
 export const listAdminContentAliasesQueryOffsetMin = 0;
 
 
-
 export const ListAdminContentAliasesQueryParams = zod.object({
   "q": zod.coerce.string().optional(),
   "ownership": zod.enum(['provider', 'editorial']).optional().describe('Filter aliases by their source ownership'),
@@ -1218,8 +1209,6 @@ export const listAdminContentAliasesResponseTotalMin = 0;
 export const listAdminContentAliasesResponseLimitMax = 100;
 
 export const listAdminContentAliasesResponseOffsetMin = 0;
-
-
 
 
 export const ListAdminContentAliasesResponse = zod.object({
@@ -1244,7 +1233,13 @@ export const ListAdminContentAliasesResponse = zod.object({
   "nextAfterId": zod.int().min(1).nullable()
 })
 
-
+/**
+ * @summary Export all matching alternate-title review rows as CSV
+ */
+export const ExportAdminContentAliasesQueryParams = zod.object({
+  "q": zod.coerce.string().optional().describe('Search alternate titles and their catalog titles'),
+  "ownership": zod.enum(['provider', 'editorial']).optional().describe('Filter aliases by their source ownership')
+})
 /**
  * @summary Correct an alternate title without changing catalog identity
  */
@@ -1253,7 +1248,6 @@ export const UpdateAdminContentAliasParams = zod.object({
 })
 
 export const updateAdminContentAliasBodyAliasMax = 300;
-
 
 
 export const UpdateAdminContentAliasBody = zod.object({
@@ -1444,7 +1438,6 @@ export const listAdminContentRefreshBatchHistoryQueryLimitDefault = 20;
 export const listAdminContentRefreshBatchHistoryQueryLimitMax = 50;
 
 
-
 export const ListAdminContentRefreshBatchHistoryQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(listAdminContentRefreshBatchHistoryQueryLimitMax).default(listAdminContentRefreshBatchHistoryQueryLimitDefault)
 })
@@ -1533,3 +1526,4 @@ export const GetAdminAuditLogResponse = zod.object({
 })
 
 
+export const ExportAdminContentAliasesResponse = zod.unknown()

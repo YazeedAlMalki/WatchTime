@@ -351,6 +351,81 @@ describe("admin title aliases", () => {
     ]).toEqual([rows[0].id, rows[1].id, rows[3].id, inserted.id]);
   });
 
+  it("exports every matching alias with provenance and collision details", async () => {
+    await db.insert(titleAliasesTable).values([
+      ...Array.from({ length: 110 }, (_, index) => ({
+        titleId: createdTitleIds[0],
+        alias: `Export sample ${String(index).padStart(3, "0")}`,
+        normalizedAlias: `exportsample${String(index).padStart(3, "0")}`,
+        language: "en",
+        sourceName: "Provider archive",
+        sourceUrl: `https://example.test/provider/${index}`,
+        isEditorial: false,
+      })),
+      {
+        titleId: createdTitleIds[0],
+        alias: 'Export, "shared" sample',
+        normalizedAlias: "exportsharedsample",
+        language: "fr",
+        sourceName: "Editorial source",
+        sourceUrl: "https://example.test/editorial",
+        isEditorial: false,
+      },
+      {
+        titleId: createdTitleIds[1],
+        alias: 'Export, "shared" sample',
+        normalizedAlias: "exportsharedsample",
+        language: "fr",
+        sourceName: "Editorial source",
+        sourceUrl: "https://example.test/editorial",
+        isEditorial: false,
+      },
+      {
+        titleId: createdTitleIds[0],
+        alias: '=HYPERLINK("https://example.test","Export sample")',
+        normalizedAlias: "hyperlinkexportsample",
+        language: "en",
+        sourceName: "Provider archive",
+        sourceUrl: "https://example.test/formula",
+        isEditorial: false,
+      },
+    ]);
+
+    const response = await request(app)
+      .get("/api/admin/content-aliases/export")
+      .query({ q: "Export", ownership: "provider" })
+      .expect(200);
+    const lines = response.text.split("\r\n");
+
+    expect(response.headers["content-type"]).toContain("text/csv");
+    expect(response.headers["content-disposition"]).toContain("alternate-title-review.csv");
+    expect(response.headers["x-export-count"]).toBe("113");
+    expect(lines).toHaveLength(114);
+    expect(lines[0]).toContain('"Language","Source","Source URL","Ownership"');
+    expect(lines[0]).toContain('"Collision","Collision title count","Last updated"');
+    expect(lines.some((line) =>
+      line.includes('"Export, ""shared"" sample"')
+      && line.includes('"fr"')
+      && line.includes('"Editorial source"')
+      && line.includes('"https://example.test/editorial"')
+      && line.includes('"Provider-owned"')
+      && line.includes('"Yes","2"'),
+    )).toBe(true);
+    expect(lines.some((line) =>
+      line.includes(`"'=HYPERLINK(""https://example.test"",""Export sample"")"`),
+    )).toBe(true);
+    expect(lines.slice(1).every((line) => line.includes('"Provider-owned"'))).toBe(true);
+
+    const empty = await request(app)
+      .get("/api/admin/content-aliases/export")
+      .query({ q: "no export match", ownership: "editorial" })
+      .expect(200);
+    expect(empty.headers["x-export-count"]).toBe("0");
+    expect(empty.text.split("\r\n")).toHaveLength(1);
+    expect((await request(app)
+      .get("/api/admin/content-aliases/export?ownership=unknown")).status).toBe(400);
+  });
+
   it("rejects an unknown alias ownership filter", async () => {
     const response = await request(app).get("/api/admin/content-aliases?ownership=unknown");
     expect(response.status).toBe(400);

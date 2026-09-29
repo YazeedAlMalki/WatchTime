@@ -39,6 +39,7 @@ import type {
   DevAuthLogin200,
   DevAuthLoginBody,
   EpisodeWatchInput,
+  ExportAdminContentAliasesParams,
   FeedbackInput,
   FeedbackItem,
   FeedbackModeration,
@@ -3546,6 +3547,90 @@ export function useListAdminContentAliases<TData = Awaited<ReturnType<typeof lis
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListAdminContentAliasesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExportAdminContentAliasesUrl = (params?: ExportAdminContentAliasesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/content-aliases/export?${stringifiedParams}` : `/api/admin/content-aliases/export`
+}
+
+/**
+ * @summary Export all matching alternate-title review rows as CSV
+ */
+export const exportAdminContentAliases = async (params?: ExportAdminContentAliasesParams, options?: Parameters<typeof customFetch>[1]): Promise<string> => {
+
+  return customFetch<string>(getExportAdminContentAliasesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportAdminContentAliasesQueryKey = (params?: ExportAdminContentAliasesParams,) => {
+    return [
+    `/api/admin/content-aliases/export`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportAdminContentAliasesQueryOptions = <TData = Awaited<ReturnType<typeof exportAdminContentAliases>>, TError = ErrorType<void>>(params?: ExportAdminContentAliasesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportAdminContentAliases>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportAdminContentAliasesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportAdminContentAliases>>> = ({ signal }) => exportAdminContentAliases(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportAdminContentAliases>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportAdminContentAliasesQueryResult = NonNullable<Awaited<ReturnType<typeof exportAdminContentAliases>>>
+export type ExportAdminContentAliasesQueryError = ErrorType<void>
+
+
+/**
+ * @summary Export all matching alternate-title review rows as CSV
+ */
+
+export function useExportAdminContentAliases<TData = Awaited<ReturnType<typeof exportAdminContentAliases>>, TError = ErrorType<void>>(
+ params?: ExportAdminContentAliasesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportAdminContentAliases>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportAdminContentAliasesQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

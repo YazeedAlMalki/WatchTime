@@ -975,6 +975,34 @@ paths:
                 $ref: "#/components/schemas/AdminContentAliasPage"
         "403":
           description: Forbidden
+  /admin/content-aliases/export:
+    get:
+      operationId: exportAdminContentAliases
+      tags: [admin]
+      summary: Export all matching alternate-title review rows as CSV
+      parameters:
+        - name: q
+          in: query
+          description: Search alternate titles and their catalog titles
+          schema: { type: string }
+        - name: ownership
+          in: query
+          description: Filter aliases by their source ownership
+          schema: { type: string, enum: [provider, editorial] }
+      responses:
+        "200":
+          description: CSV containing every matching alternate title
+          headers:
+            X-Export-Count:
+              description: Number of matching aliases included in the export
+              schema: { type: integer, minimum: 0 }
+          content:
+            text/csv:
+              schema: { type: string }
+        "400":
+          description: Invalid export filters
+        "403":
+          description: Forbidden
   /admin/content-aliases/{id}:
     patch:
       operationId: updateAdminContentAlias
