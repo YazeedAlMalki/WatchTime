@@ -16,6 +16,7 @@ const limitReports = rateLimit({
 });
 
 const events = new Set([
+  "auth-provider-error",
   "font-error",
   "splash-hide-error",
   "splash-hide-timeout",

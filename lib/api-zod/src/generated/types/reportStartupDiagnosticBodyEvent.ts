@@ -10,6 +10,7 @@ export type ReportStartupDiagnosticBodyEvent = typeof ReportStartupDiagnosticBod
 
 
 export const ReportStartupDiagnosticBodyEvent = {
+  'auth-provider-error': 'auth-provider-error',
   'font-error': 'font-error',
   'splash-hide-error': 'splash-hide-error',
   'splash-hide-timeout': 'splash-hide-timeout',

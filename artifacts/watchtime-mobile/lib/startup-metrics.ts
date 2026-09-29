@@ -5,6 +5,7 @@ const startupStartedAt = Date.now();
 type StartupDiagnosticDetails = Readonly<Record<string, unknown>>;
 export type StartupFailure =
   | 'font-error'
+  | 'auth-provider-error'
   | 'splash-hide-error'
   | 'splash-hide-timeout'
   | 'splash-prevent-error';

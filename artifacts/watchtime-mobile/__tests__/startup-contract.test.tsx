@@ -351,6 +351,7 @@ describe('mobile startup contracts', () => {
     expect(mockMarkStartup).toHaveBeenCalledWith('auth-provider-error', {
       error: 'Clerk initialization failed',
     });
+    expect(mockReportStartupFailure.mock.calls).toEqual([['auth-provider-error']]);
 
     mockClerkProviderError = null;
     await act(async () => {

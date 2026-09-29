@@ -12,7 +12,7 @@ import * as zod from 'zod/v4';
  * @summary Record a non-sensitive mobile startup failure
  */
 export const ReportStartupDiagnosticBody = zod.object({
-  "event": zod.enum(['font-error', 'splash-hide-error', 'splash-hide-timeout', 'splash-prevent-error'])
+  "event": zod.enum(['auth-provider-error', 'font-error', 'splash-hide-error', 'splash-hide-timeout', 'splash-prevent-error'])
 })
 
 export const ReportStartupDiagnosticResponse = zod.void()

@@ -237,9 +237,10 @@ function RootApplication() {
   return (
     <ErrorBoundary
       FallbackComponent={AuthProviderFailureFallback}
-      onError={(error) =>
-        markStartup('auth-provider-error', { error: describeError(error) })
-      }
+      onError={(error) => {
+        markStartup('auth-provider-error', { error: describeError(error) });
+        reportStartupFailure('auth-provider-error');
+      }}
     >
       <ClerkProvider
         publishableKey={publishableKey}

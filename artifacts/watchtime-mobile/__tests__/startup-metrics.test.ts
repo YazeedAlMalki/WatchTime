@@ -25,6 +25,13 @@ describe('startup failure reporting', () => {
     await Promise.resolve();
   });
 
+  it('reports auth-provider startup failures using only the fixed event code', async () => {
+    mockReport.mockResolvedValue(undefined);
+    reportStartupFailure('auth-provider-error');
+    expect(mockReport.mock.calls).toEqual([[{ event: 'auth-provider-error' }]]);
+    await Promise.resolve();
+  });
+
   it('reports in release builds while keeping development-only checkpoints quiet', async () => {
     const runtime = globalThis as typeof globalThis & { __DEV__: boolean };
     const wasDev = runtime.__DEV__;

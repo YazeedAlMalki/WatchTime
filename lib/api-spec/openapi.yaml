@@ -35,7 +35,7 @@ paths:
               properties:
                 event:
                   type: string
-                  enum: [font-error, splash-hide-error, splash-hide-timeout, splash-prevent-error]
+                  enum: [auth-provider-error, font-error, splash-hide-error, splash-hide-timeout, splash-prevent-error]
       responses:
         "204": { description: Diagnostic recorded }
         "400": { description: Invalid diagnostic }

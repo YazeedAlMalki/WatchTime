@@ -53,6 +53,34 @@ describe("startup diagnostics", () => {
     );
   });
 
+  it("records auth-provider startup failures without accepting exception details", async () => {
+    const accepted = await supertest(app)
+      .post("/api/diagnostics/startup")
+      .set("X-Forwarded-For", testIps[0])
+      .send({ event: "auth-provider-error" });
+
+    expect(accepted.status).toBe(204);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { event: "auth-provider-error" },
+      "mobile startup recovery failure",
+    );
+
+    const rejected = await supertest(app)
+      .post("/api/diagnostics/startup")
+      .set("X-Forwarded-For", testIps[1])
+      .send({
+        event: "auth-provider-error",
+        error: "Clerk failure for account private@example.com",
+      });
+
+    expect(rejected.status).toBe(400);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.anything() }),
+      expect.anything(),
+    );
+  });
+
   it("rejects arbitrary text and extra fields without logging them", async () => {
     for (const body of [
       { event: "custom error: private content" },
