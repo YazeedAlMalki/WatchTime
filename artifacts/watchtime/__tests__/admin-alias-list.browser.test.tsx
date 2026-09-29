@@ -278,3 +278,117 @@ it("shows both alias sources for All ownership and keeps filtered source labels 
     window.history.replaceState({}, "", previousUrl);
   }
 });
+
+it("keeps editorial aliases selected when an older provider request finishes late", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  let resolveProviderResponse!: (response: Response) => void;
+  let providerFetchReturned!: () => void;
+  const providerResponse = new Promise<Response>((resolve) => {
+    resolveProviderResponse = resolve;
+  });
+  const providerFetchCompleted = new Promise<void>((resolve) => {
+    providerFetchReturned = resolve;
+  });
+  const aliases = {
+    provider: [{
+      id: 301,
+      titleId: 101,
+      titleName: "The Lighthouse",
+      titleType: "movie",
+      titleYear: 2019,
+      alias: "Lighthouse Provider Alias",
+      language: "en",
+      sourceName: "TVMaze",
+      sourceUrl: "https://example.test/provider",
+      isEditorial: false,
+      collision: false,
+      collisionTitleCount: 1,
+      updatedAt: "2026-09-16T00:00:00.000Z",
+    }],
+    editorial: [{
+      id: 302,
+      titleId: 101,
+      titleName: "The Lighthouse",
+      titleType: "movie",
+      titleYear: 2019,
+      alias: "Le Phare Editorial",
+      language: "fr",
+      sourceName: "Wikipedia",
+      sourceUrl: "https://example.test/editorial",
+      isEditorial: true,
+      collision: false,
+      collisionTitleCount: 1,
+      updatedAt: "2026-09-16T00:00:00.000Z",
+    }],
+  };
+  const responseFor = (items: typeof aliases.provider) => new Response(JSON.stringify({
+    items,
+    total: items.length,
+    limit: 50,
+    offset: 0,
+  }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+  window.fetch = vi.fn((input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const ownership = url.searchParams.get("ownership");
+    const items = ownership ? aliases[ownership as keyof typeof aliases] : [];
+    if (ownership === "provider") {
+      return providerResponse.then((response) => {
+        providerFetchReturned();
+        return response;
+      });
+    }
+    return Promise.resolve(responseFor(items ?? []));
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    const ownership = page.getByRole("combobox", { name: "Alias ownership" });
+    await expect.element(page.getByText("No alternate titles found")).toBeVisible();
+
+    await userEvent.click(ownership);
+    await userEvent.click(page.getByRole("option", { name: "Provider-owned" }));
+    expect(requests.filter((request) =>
+      request.searchParams.get("ownership") === "provider",
+    )).toHaveLength(1);
+
+    await userEvent.click(ownership);
+    await userEvent.click(page.getByRole("option", { name: "Editorial" }));
+    await expect.element(ownership).toHaveTextContent("Editorial");
+    await expect.element(page.getByText("Le Phare Editorial")).toBeVisible();
+    await expect.element(page.getByText("Wikipedia", { exact: true })).toBeVisible();
+    expect(requests.filter((request) =>
+      request.searchParams.get("ownership") === "editorial",
+    )).toHaveLength(1);
+    await expect.element(page.getByText("Lighthouse Provider Alias")).not.toBeInTheDocument();
+
+    resolveProviderResponse(responseFor(aliases.provider));
+    await providerFetchCompleted;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    await expect.element(ownership).toHaveTextContent("Editorial");
+    await expect.element(page.getByText("Le Phare Editorial")).toBeVisible();
+    await expect.element(page.getByText("Wikipedia", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Lighthouse Provider Alias")).not.toBeInTheDocument();
+    await expect.element(page.getByText("TVMaze", { exact: true })).not.toBeInTheDocument();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
