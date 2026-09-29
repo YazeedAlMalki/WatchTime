@@ -179,4 +179,65 @@ describe("catalog refresh history cleanup failure", () => {
       runCatalogSyncMock.mockReset();
     }
   });
+
+  it.each(["skipped", "failed"] as const)(
+    "leaves a %s refresh unchanged and logs the cleanup rejection",
+    async (status) => {
+      const cleanupError = new Error("history deletion failed");
+      const syncError = new Error("catalog sync failed");
+      const expectedError = status === "skipped"
+        ? "Another catalog refresh is already running"
+        : syncError.message;
+      let rejectCleanup!: (error: Error) => void;
+      const cleanupGate = new Promise<never>((_resolve, reject) => {
+        rejectCleanup = reject;
+      });
+      if (status === "skipped") {
+        runCatalogSyncMock.mockResolvedValueOnce(null);
+      } else {
+        runCatalogSyncMock.mockRejectedValueOnce(syncError);
+      }
+      const deleteSpy = vi.spyOn(db, "delete").mockReturnValue({
+        where: () => ({ returning: () => cleanupGate }),
+      } as unknown as ReturnType<typeof db.delete>);
+      const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
+      const unhandledRejections: unknown[] = [];
+      const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+      process.on("unhandledRejection", onUnhandledRejection);
+
+      try {
+        const runId = await startCatalogRefresh("manual", []);
+        createdRunIds.push(runId);
+        await vi.waitFor(() => expect(deleteSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+        const [beforeCleanup] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, runId));
+        expect(beforeCleanup.status).toBe(status);
+        expect(beforeCleanup.error).toBe(expectedError);
+        expect(beforeCleanup.finishedAt).toBeInstanceOf(Date);
+        if (status === "failed") {
+          expect(errorSpy).toHaveBeenCalledWith(
+            { err: syncError, runId }, "catalog refresh failed",
+          );
+        }
+
+        rejectCleanup(cleanupError);
+        await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(
+          { err: cleanupError }, "unable to prune catalog refresh history",
+        ));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const [afterCleanup] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, runId));
+        expect(afterCleanup.status).toBe(status);
+        expect(afterCleanup.error).toBe(expectedError);
+        expect(unhandledRejections).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onUnhandledRejection);
+        deleteSpy.mockRestore();
+        warnSpy.mockRestore();
+        errorSpy.mockRestore();
+        runCatalogSyncMock.mockReset();
+      }
+    },
+  );
 });
