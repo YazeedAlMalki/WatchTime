@@ -22,6 +22,11 @@ const mockQueryEnabled = {
   recommendations: [] as boolean[],
   trending: [] as boolean[],
 };
+const mockSignedInHomeQueryState = {
+  shows: { current: { data: [] as any[], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
+  watchlist: { current: { data: [] as any[], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
+  recommendations: { current: { data: [] as any[], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
+};
 
 jest.mock('@/lib/home-startup', () => {
   const actual = jest.requireActual('@/lib/home-startup');
@@ -152,15 +157,15 @@ jest.mock('@workspace/api-client-react', () => ({
   setAuthTokenGetter: (...args: any[]) => mockSetAuthTokenGetter(...args),
   useGetMyShows: (_params: any, options: any) => {
     mockQueryEnabled.shows.push(options?.query?.enabled);
-    return { data: [], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false, refetch: jest.fn() };
+    return { ...mockSignedInHomeQueryState.shows.current, refetch: jest.fn() };
   },
   useGetMyWatchlist: (_params: any, options: any) => {
     mockQueryEnabled.watchlist.push(options?.query?.enabled);
-    return { data: [], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false, refetch: jest.fn() };
+    return { ...mockSignedInHomeQueryState.watchlist.current, refetch: jest.fn() };
   },
   useGetMyRecommendations: (options: any) => {
     mockQueryEnabled.recommendations.push(options?.query?.enabled);
-    return { data: [], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false, refetch: jest.fn() };
+    return { ...mockSignedInHomeQueryState.recommendations.current, refetch: jest.fn() };
   },
   useGetTrendingTitles: (_params: any, options: any) => {
     mockQueryEnabled.trending.push(options?.query?.enabled);
@@ -263,6 +268,27 @@ describe('mobile startup contracts', () => {
     mockQueryEnabled.watchlist.length = 0;
     mockQueryEnabled.recommendations.length = 0;
     mockQueryEnabled.trending.length = 0;
+    mockSignedInHomeQueryState.shows.current = {
+      data: [],
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.watchlist.current = {
+      data: [],
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.recommendations.current = {
+      data: [],
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
     mockTrendingQueryState.current = {
       data: [],
       dataUpdatedAt: 0,
@@ -579,6 +605,128 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.watchlist).toEqual([true]);
     expect(mockQueryEnabled.recommendations).toEqual([true]);
     expect(mockQueryEnabled.trending).toEqual([false, true]);
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it('hides personal home content immediately when Clerk signs out in place', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
+    mockSignedInHomeQueryState.shows.current = {
+      data: [{
+        title: { id: 901, name: 'Personal tracked show' },
+        nextEpisode: {
+          id: 9001,
+          seasonNumber: 1,
+          episodeNumber: 2,
+          name: 'Personal next episode',
+        },
+        watchedEpisodes: 1,
+        totalEpisodes: 10,
+      }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.watchlist.current = {
+      data: [{ id: 902, name: 'Personal watchlist title' }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.recommendations.current = {
+      data: [{
+        reason: 'Because you watched Personal tracked show',
+        titles: [{ id: 904, name: 'Personal recommendation' }],
+      }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+
+    const screen = await render(<HomeScreen />);
+
+    await act(async () => {
+      pendingInteractions[0]?.();
+    });
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+
+    expect(screen.getByText('Personal tracked show')).toBeTruthy();
+    expect(screen.getByText(/Personal next episode/)).toBeTruthy();
+    expect(screen.getByText('Personal watchlist title')).toBeTruthy();
+    expect(screen.getByText('Personal recommendation')).toBeTruthy();
+    expect(screen.getByText('Up Next')).toBeTruthy();
+    expect(screen.getByText('Your Watchlist')).toBeTruthy();
+    expect(screen.getByText('Because you watched Personal tracked show')).toBeTruthy();
+
+    mockTrendingQueryState.current = {
+      data: [{ id: 903, name: 'Public trending after sign out' }],
+      dataUpdatedAt: 456,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
+
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.queryByText('Personal tracked show')).toBeNull();
+    expect(screen.queryByText(/Personal next episode/)).toBeNull();
+    expect(screen.queryByText('Personal watchlist title')).toBeNull();
+    expect(screen.queryByText('Personal recommendation')).toBeNull();
+    expect(screen.queryByText('Up Next')).toBeNull();
+    expect(screen.queryByText('Your Watchlist')).toBeNull();
+    expect(screen.queryByText('Because you watched Personal tracked show')).toBeNull();
+    expect(screen.getByText('Track your shows.')).toBeTruthy();
+    expect(screen.getByText('Trending Now')).toBeTruthy();
+    expect(screen.getByText('Public trending after sign out')).toBeTruthy();
+    expect(mockQueryEnabled.trending).toEqual([true]);
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it('keeps trending behind the startup gate when Clerk signs out before Home starts', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
+
+    const screen = await render(<HomeScreen />);
+
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
+    expect(mockQueryEnabled.trending).toEqual([]);
+
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByTestId('loading')).toBeTruthy();
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
+    await act(async () => {
+      pendingInteractions[0]?.();
+    });
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+
+    await waitFor(() => {
+      expect(mockQueryEnabled.trending).toEqual([false, true]);
+      expect(screen.getByText('Track your shows.')).toBeTruthy();
+      expect(screen.getByText('Trending Now')).toBeTruthy();
+    });
 
     await act(async () => {
       screen.unmount();
