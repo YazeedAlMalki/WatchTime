@@ -30,3 +30,4 @@
 - [Expo feed mock updates](expo-feed-mock-updates.md) — for changing mocked query results, notify subscribers; parent rerenders may leave feed children unchanged.
 - [Account-scoped mobile query caches](account-scoped-mobile-query-cache.md) — scope personal query keys to the active auth identity; request URLs alone do not distinguish users.
 - [Precise test patches](precise-test-patches.md) — use unique surrounding context when tests repeat, then inspect the full diff before validation.
+- [Targeted API Vitest runs](vitest-targeted-api-tests.md) — use direct `vitest run <path>` execution to isolate one API test file.
