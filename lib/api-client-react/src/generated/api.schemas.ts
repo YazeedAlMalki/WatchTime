@@ -888,6 +888,8 @@ export interface IntegrationHealth {
   missingMappings: number;
   malformedRefreshTimestampCount: number;
   sustainedFailureAlert: boolean;
+  /** True for Wikidata when at least five tracked refreshes have a success rate below 50%, independent of the latest status. */
+  lowAccumulatedSuccessRateAlert: boolean;
 }
 
 export type CatalogRefreshFailureProvider = typeof CatalogRefreshFailureProvider[keyof typeof CatalogRefreshFailureProvider];

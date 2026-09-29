@@ -81,55 +81,82 @@ import AdminPage from "@/pages/admin";
 
 it("uses the returned batch offset and processed count for the next resume offset", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
-  window.history.replaceState({}, "", "/admin?tab=content&region=US");
-  mocks.batchStatus = {
-    lastCompleted: {
-      id: 90,
-      provider: "does_the_dog_die",
-      status: "completed",
-      limit: 2,
-      offset: 1,
-      processed: 2,
-      nextOffset: 3,
-      catalogFingerprint: "saved-catalog",
-      results: [],
-      startedAt: "2026-09-24T09:00:00.000Z",
-      completedAt: "2026-09-24T09:01:00.000Z",
-      mapped: 0,
-      missing: 0,
-      errors: 0,
-      error: null,
+  window.history.replaceState({}, "", "/admin?tab=integrations");
+  mocks.integrations = [
+    {
+      provider: "Counted provider",
+      status: "degraded",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: (3 / 7) * 100,
+      refreshAttempts: 7,
+      successfulRefreshes: 3,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 4,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: false,
     },
-    running: null,
-    interrupted: null,
-  };
-  mocks.batchMutate.mockImplementation((_variables: unknown, options?: {
-    onSuccess?: (result: typeof batchResponse) => void;
-  }) => {
-    options?.onSuccess?.(batchResponse);
-    mocks.batchStatus = {
-      lastCompleted: {
-        id: 92,
-        provider: "does_the_dog_die",
-        status: "completed",
-        limit: batchResponse.limit,
-        offset: batchResponse.offset,
-        processed: batchResponse.processed,
-        nextOffset: batchResponse.offset + batchResponse.processed,
-        catalogFingerprint: "saved-catalog",
-        results: batchResponse.results,
-        startedAt: "2026-09-24T09:02:00.000Z",
-        completedAt: "2026-09-24T09:03:00.000Z",
-        mapped: 0,
-        missing: 2,
-        errors: 0,
-        error: null,
-      },
-      running: null,
-      interrupted: null,
-    };
-    for (const listener of mocks.batchStatusListeners) listener();
-  });
+    {
+      provider: "Legacy provider",
+      status: "healthy",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 83.3,
+      refreshAttempts: null,
+      successfulRefreshes: null,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: false,
+    },
+    {
+      provider: "Wikidata",
+      status: "healthy",
+      lastSyncAt: "2026-09-24T09:00:00.000Z",
+      lastSuccessAt: "2026-09-24T09:00:00.000Z",
+      lastError: null,
+      successRatePercent: 40,
+      refreshAttempts: 5,
+      successfulRefreshes: 2,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: true,
+    },
+    {
+      provider: "Attempts-only provider",
+      status: "degraded",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 66.7,
+      refreshAttempts: 9,
+      successfulRefreshes: null,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+    },
+    {
+      provider: "Successes-only provider",
+      status: "healthy",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 50,
+      refreshAttempts: null,
+      successfulRefreshes: 4,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+    },
+  ];
 
   const container = document.createElement("div");
   document.body.append(container);
@@ -170,28 +197,82 @@ it("uses the returned batch offset and processed count for the next resume offse
 
 it("shows the active provider and offset and prevents starting another batch", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
-  window.history.replaceState({}, "", "/admin?tab=content&region=US");
-  mocks.batchStatus = {
-    running: {
-      id: 91,
-      provider: "wikidata",
-      status: "running",
-      limit: 3,
-      offset: 5,
-      processed: 0,
-      mapped: 0,
-      missing: 0,
-      errors: 0,
-      nextOffset: 5,
-      catalogFingerprint: null,
-      results: [],
-      startedAt: "2026-09-24T10:00:00.000Z",
-      completedAt: null,
-      error: null,
+  window.history.replaceState({}, "", "/admin?tab=integrations");
+  mocks.integrations = [
+    {
+      provider: "Counted provider",
+      status: "degraded",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: (3 / 7) * 100,
+      refreshAttempts: 7,
+      successfulRefreshes: 3,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 4,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: false,
     },
-    lastCompleted: null,
-    interrupted: null,
-  };
+    {
+      provider: "Legacy provider",
+      status: "healthy",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 83.3,
+      refreshAttempts: null,
+      successfulRefreshes: null,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: false,
+    },
+    {
+      provider: "Wikidata",
+      status: "healthy",
+      lastSyncAt: "2026-09-24T09:00:00.000Z",
+      lastSuccessAt: "2026-09-24T09:00:00.000Z",
+      lastError: null,
+      successRatePercent: 40,
+      refreshAttempts: 5,
+      successfulRefreshes: 2,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: true,
+    },
+    {
+      provider: "Attempts-only provider",
+      status: "degraded",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 66.7,
+      refreshAttempts: 9,
+      successfulRefreshes: null,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+    },
+    {
+      provider: "Successes-only provider",
+      status: "healthy",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 50,
+      refreshAttempts: null,
+      successfulRefreshes: 4,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+    },
+  ];
 
   const container = document.createElement("div");
   document.body.append(container);
@@ -237,6 +318,7 @@ it("shows refresh counts only when both are available and keeps partial health p
       missingMappings: 0,
       malformedRefreshTimestampCount: 4,
       sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: false,
     },
     {
       provider: "Legacy provider",
@@ -251,6 +333,22 @@ it("shows refresh counts only when both are available and keeps partial health p
       missingMappings: 0,
       malformedRefreshTimestampCount: 0,
       sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: false,
+    },
+    {
+      provider: "Wikidata",
+      status: "healthy",
+      lastSyncAt: "2026-09-24T09:00:00.000Z",
+      lastSuccessAt: "2026-09-24T09:00:00.000Z",
+      lastError: null,
+      successRatePercent: 40,
+      refreshAttempts: 5,
+      successfulRefreshes: 2,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: true,
     },
     {
       provider: "Attempts-only provider",
@@ -296,21 +394,22 @@ it("shows refresh counts only when both are available and keeps partial health p
     const legacyCard = Array.from(
       container.querySelectorAll<HTMLElement>("h3"),
     ).find((heading) => heading.textContent === "Legacy provider")?.closest("div.bg-card");
+
+    const wikidataCard = Array.from(
+      container.querySelectorAll<HTMLElement>("h3"),
+    ).find((heading) => heading.textContent === "Wikidata")?.closest("div.bg-card");
     const attemptsOnlyCard = Array.from(
       container.querySelectorAll<HTMLElement>("h3"),
     ).find((heading) => heading.textContent === "Attempts-only provider")?.closest("div.bg-card");
     const successesOnlyCard = Array.from(
       container.querySelectorAll<HTMLElement>("h3"),
     ).find((heading) => heading.textContent === "Successes-only provider")?.closest("div.bg-card");
-
-    expect(countedCard?.textContent).toContain("42.9% (3/7 refreshes)");
-    expect(countedCard?.textContent).toContain(
-      "Ratings with malformed refresh timestamps4",
+    expect(wikidataCard?.textContent).toContain("healthy");
+    expect(wikidataCard?.textContent).toContain(
+      "Persistently low accumulated success rate",
     );
-    expect(legacyCard?.textContent).toContain("83.3%");
-    expect(legacyCard?.textContent).not.toContain("refreshes");
-    expect(legacyCard?.textContent).toContain(
-      "Ratings with malformed refresh timestamps0",
+    expect(wikidataCard?.textContent).toContain(
+      "A recent successful refresh does not clear this warning.",
     );
     expect(attemptsOnlyCard?.textContent).toContain("66.7%");
     expect(attemptsOnlyCard?.textContent).not.toContain("refreshes");

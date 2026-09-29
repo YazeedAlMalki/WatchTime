@@ -2989,6 +2989,15 @@ function IntegrationsTab() {
                   be stale.
                 </div>
               )}
+              {int.lowAccumulatedSuccessRateAlert && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                  <strong className="block">
+                    Persistently low accumulated success rate
+                  </strong>
+                  Below 50% after at least 5 tracked refreshes. A recent
+                  successful refresh does not clear this warning.
+                </div>
+              )}
               <div className="flex justify-between items-center py-2 border-b border-border/50">
                 <span className="text-muted-foreground">Success Rate</span>
                 <span className="font-medium">

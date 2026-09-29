@@ -1100,7 +1100,8 @@ export const ListAdminIntegrationsResponseItem = zod.object({
   "mappedTitles": zod.int(),
   "missingMappings": zod.int(),
   "malformedRefreshTimestampCount": zod.int(),
-  "sustainedFailureAlert": zod.boolean()
+  "sustainedFailureAlert": zod.boolean(),
+  "lowAccumulatedSuccessRateAlert": zod.boolean().describe('True for Wikidata when at least five tracked refreshes have a success rate below 50%, independent of the latest status.')
 })
 export const ListAdminIntegrationsResponse = zod.array(ListAdminIntegrationsResponseItem)
 

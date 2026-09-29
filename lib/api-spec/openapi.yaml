@@ -1783,7 +1783,7 @@ components:
             - type: "null"
     IntegrationHealth:
       type: object
-      required: [provider, status, successRatePercent, refreshAttempts, successfulRefreshes, mappedTitles, missingMappings, malformedRefreshTimestampCount, sustainedFailureAlert]
+      required: [provider, status, successRatePercent, refreshAttempts, successfulRefreshes, mappedTitles, missingMappings, malformedRefreshTimestampCount, sustainedFailureAlert, lowAccumulatedSuccessRateAlert]
       properties:
         provider: { type: string }
         status: { type: string, enum: [healthy, degraded, failing, provider_unavailable] }
@@ -1797,6 +1797,9 @@ components:
         missingMappings: { type: integer }
         malformedRefreshTimestampCount: { type: integer }
         sustainedFailureAlert: { type: boolean }
+        lowAccumulatedSuccessRateAlert:
+          type: boolean
+          description: True for Wikidata when at least five tracked refreshes have a success rate below 50%, independent of the latest status.
     CatalogRefreshFailure:
       type: object
       required: [title, provider]

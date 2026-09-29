@@ -85,6 +85,32 @@ describe("admin integration health", () => {
       successfulRefreshes: null,
     });
   });
+
+  it("warns when Wikidata recovers but its accumulated success rate remains low", async () => {
+    const [health] = await db.insert(integrationHealthTable).values({
+      provider: "Wikidata",
+      status: "healthy",
+      lastSyncAt: new Date(),
+      lastSuccessAt: new Date(),
+      successRatePercent: 40,
+      refreshAttempts: 5,
+      successfulRefreshes: 2,
+    }).returning({ id: integrationHealthTable.id });
+    healthIds.push(health.id);
+
+    const response = await request(app).get("/api/admin/integrations").expect(200);
+    const wikidataHealth = response.body.find(
+      (entry: any) => entry.provider === "Wikidata",
+    );
+
+    expect(wikidataHealth).toMatchObject({
+      status: "healthy",
+      successRatePercent: 40,
+      refreshAttempts: 5,
+      successfulRefreshes: 2,
+      lowAccumulatedSuccessRateAlert: true,
+    });
+  });
 });
 
 describe("admin safety sync status", () => {
