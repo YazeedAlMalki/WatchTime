@@ -149,12 +149,18 @@ export async function scheduleCatalogRefresh(delayOverride?: number) {
   // Keep the previous timer if scheduling fails, and cancel it only when
   // the replacement is ready (including when two initializations overlap).
   if (timer) clearTimeout(timer);
-  timer = setTimeout(() => {
+  const scheduledTimer = setTimeout(() => {
     startCatalogRefresh("scheduled")
       .catch((err) => logger.error({ err }, "unable to start scheduled catalog refresh"))
-      .finally(() => scheduleCatalogRefresh(WEEK_MS)
-        .catch((err) => logger.error({ err }, "unable to reschedule catalog refresh")));
+      .finally(() => {
+        // A newer initialization owns the schedule if it replaced this timer
+        // while the scheduled run was starting.
+        if (timer !== scheduledTimer) return;
+        void scheduleCatalogRefresh(WEEK_MS)
+          .catch((err) => logger.error({ err }, "unable to reschedule catalog refresh"));
+      });
   }, delay);
+  timer = scheduledTimer;
   timer.unref();
   logger.info({ dueAt: new Date(Date.now() + delay) }, "catalog refresh scheduled");
 }

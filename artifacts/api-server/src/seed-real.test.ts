@@ -12,7 +12,7 @@ import {
   titleAliasesTable,
   watchProvidersTable,
 } from "@workspace/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   parseArgs,
   isCatalogSyncCli,
@@ -647,6 +647,59 @@ describe("real catalog sync", () => {
       expect(clearTimeoutSpy).toHaveBeenCalledWith(first);
       expect(clearTimeoutSpy).not.toHaveBeenCalledWith(second);
     } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("does not replace a newer schedule when an older scheduled run finishes", async () => {
+    const originalItems = [...sourceItems];
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve; });
+    const fetchMock = vi.fn(async () => {
+      await fetchGate;
+      return jsonResponse(showPayload);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const [previous] = await db.select({ id: catalogSyncRunsTable.id })
+      .from(catalogSyncRunsTable).orderBy(desc(catalogSyncRunsTable.id)).limit(1);
+
+    try {
+      // Use one known item so the scheduled callback runs a real, gated sync.
+      sourceItems.splice(0, sourceItems.length, testItem);
+      await scheduleCatalogRefresh(WEEK_MS);
+      const firstIndex = setTimeoutSpy.mock.calls.findLastIndex(([, delay]) => delay === WEEK_MS);
+      const first = setTimeoutSpy.mock.results[firstIndex]?.value as NodeJS.Timeout;
+      const fireFirst = setTimeoutSpy.mock.calls[firstIndex]?.[0] as () => void;
+      scheduledTimers.push(first);
+      fireFirst();
+
+      // The replacement is installed while the previous scheduled start is pending.
+      await scheduleCatalogRefresh(WEEK_MS / 2);
+      const secondIndex = setTimeoutSpy.mock.calls.findLastIndex(([, delay]) => delay === WEEK_MS / 2);
+      const second = setTimeoutSpy.mock.results[secondIndex]?.value as NodeJS.Timeout;
+      scheduledTimers.push(second);
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(first);
+
+      let runId = 0;
+      await vi.waitFor(async () => {
+        const [run] = await db.select({ id: catalogSyncRunsTable.id })
+          .from(catalogSyncRunsTable).orderBy(desc(catalogSyncRunsTable.id)).limit(1);
+        expect(run?.id).toBeGreaterThan(previous?.id ?? 0);
+        runId = run.id;
+      });
+      catalogRunIds.push(runId);
+      await waitForCatalogRun(runId, () => fetchMock.mock.calls.length === 1);
+      releaseFetch();
+      await waitForCatalogRun(runId, (run) => run.status === "succeeded");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === WEEK_MS)).toHaveLength(1);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(second);
+    } finally {
+      releaseFetch();
+      sourceItems.splice(0, sourceItems.length, ...originalItems);
       vi.restoreAllMocks();
     }
   });
