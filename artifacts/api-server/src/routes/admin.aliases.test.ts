@@ -10,6 +10,7 @@ import {
 } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
 import { runCatalogSync, type SourceItem } from "../seed-real";
+import { mockMalformedSafetyTimestamp } from "../test-utils/malformedSafetyTimestamp";
 
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
@@ -105,13 +106,18 @@ describe("admin title aliases", () => {
     });
   });
 
-  it("flags a malformed rating refresh timestamp for admins but keeps the public rating null", async () => {
+  it.each([
+    ["an invalid Date object", new Date(Number.NaN)],
+    ["a malformed timestamp string", "not-a-timestamp"],
+  ])("keeps public and admin rating responses available for %s", async (_description, malformedTimestamp) => {
     const [rating] = await db.insert(safetyRecordsTable).values({
       titleId: createdTitleIds[0],
       sourceName: "Wikidata",
       tier: 2,
       isCommunity: false,
       status: "available",
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      url: "https://www.wikidata.org/wiki/Q123",
       items: [{
         category: "MPAA",
         label: "PG-13",
@@ -121,32 +127,41 @@ describe("admin title aliases", () => {
       }],
     }).returning({ id: safetyRecordsTable.id });
 
-    await db.execute(sql`
-      UPDATE safety_records
-      SET updated_at = 'infinity'
-      WHERE id = ${rating.id}
-    `);
+    const restoreSelect = mockMalformedSafetyTimestamp(db, rating.id, malformedTimestamp);
+      const adminResponse = await request(app)
+        .get("/api/admin/content?q=Alias%20Test%20One")
+        .expect(200);
+      expect(adminResponse.body).toHaveLength(1);
+      expect(adminResponse.body[0].selectedRating).toEqual({
+        region: "US",
+        countryName: "United States",
+        system: "MPAA",
+        label: "PG-13",
+        sourceName: "Wikidata",
+        recordId: rating.id,
+        lastRefreshedAt: null,
+        sourceUrl: "https://www.wikidata.org/wiki/Q123",
+        refreshTimestampMalformed: true,
+      });
 
-    const adminResponse = await request(app)
-      .get("/api/admin/content?q=Alias%20Test%20One")
-      .expect(200);
-    expect(adminResponse.body[0].selectedRating).toMatchObject({
-      sourceName: "Wikidata",
-      recordId: rating.id,
-      lastRefreshedAt: null,
-      refreshTimestampMalformed: true,
-    });
-
-    const publicResponse = await request(app)
-      .get(`/api/safety?titleId=${createdTitleIds[0]}`)
-      .expect(200);
-    expect(publicResponse.body.preferredRating).toMatchObject({
-      sourceName: "Wikidata",
-      recordId: rating.id,
-      lastRefreshedAt: null,
-    });
-    expect(publicResponse.body.preferredRating)
-      .not.toHaveProperty("refreshTimestampMalformed");
+      const publicResponse = await request(app)
+        .get(`/api/safety?titleId=${createdTitleIds[0]}`)
+        .expect(200);
+      expect(publicResponse.body.preferredRating).toEqual({
+        region: "US",
+        countryName: "United States",
+        system: "MPAA",
+        label: "PG-13",
+        sourceName: "Wikidata",
+        recordId: rating.id,
+        lastRefreshedAt: null,
+        sourceUrl: "https://www.wikidata.org/wiki/Q123",
+      });
+      expect(publicResponse.body.preferredRating)
+        .not.toHaveProperty("refreshTimestampMalformed");
+    } finally {
+      restoreSelect();
+    }
   });
 
   it("shows provenance and collisions", async () => {

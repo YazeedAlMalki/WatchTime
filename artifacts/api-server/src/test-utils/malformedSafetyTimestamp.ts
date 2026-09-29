@@ -1,0 +1,61 @@
+import { vi } from "vitest";
+
+function mapQueryRows(
+  query: any,
+  mapRows: (rows: any[]) => any[],
+): any {
+  let proxy: any;
+  proxy = new Proxy(query, {
+    get(target, property) {
+      if (property === "then") {
+        const then = Reflect.get(target, property, target);
+        return (onFulfilled: (rows: any[]) => unknown, onRejected: (error: unknown) => unknown) =>
+          then.call(
+            target,
+            (rows: any[]) => onFulfilled(mapRows(rows)),
+            onRejected,
+          );
+      }
+
+      const member = Reflect.get(target, property, target);
+      if (typeof member !== "function") return member;
+
+      return (...args: any[]) => {
+        const next = Reflect.apply(member, target, args);
+        if (next === target) return proxy;
+        if (next && typeof next === "object" && typeof (next as any).then === "function") {
+          return mapQueryRows(next, mapRows);
+        }
+        return next;
+      };
+    },
+  });
+  return proxy;
+}
+
+/**
+ * Inject a malformed timestamp into a selected safety-record query result.
+ * The database row itself remains valid, avoiding PostgreSQL timestamp decoding.
+ */
+export function mockMalformedSafetyTimestamp(
+  database: object,
+  recordId: number,
+  timestamp: Date | string,
+): () => void {
+  const db = database as any;
+  const originalSelect = db.select.bind(db);
+  const selectSpy = vi.spyOn(db, "select").mockImplementation((...args: any[]) => {
+    const query = originalSelect(...args);
+    if (!args[0] || !Object.prototype.hasOwnProperty.call(args[0], "rawUpdatedAt")) {
+      return query;
+    }
+
+    return mapQueryRows(query, (rows) => rows.map((row) =>
+      row.id === recordId
+        ? { ...row, updatedAt: timestamp, rawUpdatedAt: timestamp }
+        : row,
+    ));
+  });
+
+  return () => selectSpy.mockRestore();
+}

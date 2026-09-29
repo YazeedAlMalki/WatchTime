@@ -119,6 +119,7 @@ import {
   safetyRecordsTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
+import { mockMalformedSafetyTimestamp } from "../test-utils/malformedSafetyTimestamp";
 
 // ─── Global fixtures ──────────────────────────────────────────────────────────
 
@@ -256,6 +257,46 @@ describe("shared rating-region preference", () => {
     expect(missing.status).toBe(200);
     expect(missing.body.preferredRatingRegion).toBe("BR");
     expect(missing.body.preferredRating).toBeNull();
+  });
+
+  it.each([
+    ["an invalid Date object", new Date(Number.NaN)],
+    ["a malformed timestamp string", "not-a-timestamp"],
+  ])("keeps the public rating response valid for %s", async (_description, malformedTimestamp) => {
+    const [rating] = await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      items: [{
+        category: "MPAA",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "Official rating",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+
+    const restoreSelect = mockMalformedSafetyTimestamp(db, rating.id, malformedTimestamp);
+    try {
+      const response = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.preferredRating).toEqual({
+        region: "US",
+        countryName: "United States",
+        system: "MPAA",
+        label: "PG-13",
+        sourceName: "Wikidata",
+        recordId: rating.id,
+        lastRefreshedAt: null,
+        sourceUrl: null,
+      });
+    } finally {
+      restoreSelect();
+    }
   });
 
   it.each([
