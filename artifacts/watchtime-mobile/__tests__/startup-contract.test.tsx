@@ -709,6 +709,110 @@ describe('mobile startup contracts', () => {
     });
   });
 
+  it('hides signed-in home content while Clerk rechecks auth, then restores it in place', async () => {
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'reload-contract-user',
+    });
+    mockSignedInHomeQueryState.shows.current = {
+      data: [{
+        title: { id: 911, name: 'Reload tracked show' },
+        nextEpisode: {
+          id: 9111,
+          seasonNumber: 2,
+          episodeNumber: 3,
+          name: 'Reload next episode',
+        },
+        watchedEpisodes: 2,
+        totalEpisodes: 10,
+      }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.watchlist.current = {
+      data: [{ id: 912, name: 'Reload watchlist title' }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.recommendations.current = {
+      data: [{
+        reason: 'Because you watched Reload tracked show',
+        titles: [{ id: 913, name: 'Reload recommendation' }],
+      }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+
+    const screen = await render(<HomeScreen />);
+
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+    await act(async () => {
+      pendingFrames[1]?.(0);
+    });
+
+    expect(screen.getByText('Reload tracked show')).toBeTruthy();
+    expect(screen.getByText(/Reload next episode/)).toBeTruthy();
+    expect(screen.getByText('Reload watchlist title')).toBeTruthy();
+    expect(screen.getByText('Reload recommendation')).toBeTruthy();
+    expect(screen.getByText('Up Next')).toBeTruthy();
+    expect(screen.getByText('Your Watchlist')).toBeTruthy();
+
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: false,
+      isSignedIn: true,
+      userId: 'reload-contract-user',
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByTestId('loading')).toBeTruthy();
+    expect(screen.queryByText('Reload tracked show')).toBeNull();
+    expect(screen.queryByText(/Reload next episode/)).toBeNull();
+    expect(screen.queryByText('Reload watchlist title')).toBeNull();
+    expect(screen.queryByText('Reload recommendation')).toBeNull();
+    expect(screen.queryByText('Up Next')).toBeNull();
+    expect(screen.queryByText('Your Watchlist')).toBeNull();
+    expect(screen.queryByText('Track your shows.')).toBeNull();
+    expect(mockQueryEnabled.trending).toEqual([]);
+
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'reload-contract-user',
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText('Reload tracked show')).toBeTruthy();
+    expect(screen.getByText(/Reload next episode/)).toBeTruthy();
+    expect(screen.getByText('Reload watchlist title')).toBeTruthy();
+    expect(screen.getByText('Reload recommendation')).toBeTruthy();
+    expect(screen.getByText('Up Next')).toBeTruthy();
+    expect(screen.getByText('Your Watchlist')).toBeTruthy();
+    expect(mockQueryEnabled.shows.at(-1)).toBe(true);
+    expect(mockQueryEnabled.watchlist.at(-1)).toBe(true);
+    expect(mockQueryEnabled.recommendations.at(-1)).toBe(true);
+    expect(mockQueryEnabled.trending).toEqual([]);
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
   it('hides personal home content immediately when Clerk signs out in place', async () => {
     mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
     mockSignedInHomeQueryState.shows.current = {
