@@ -103,7 +103,8 @@ afterEach(async () => {
     await db.delete(catalogSyncRunsTable).where(inArray(catalogSyncRunsTable.id, catalogRunIds.splice(0)));
   }
   vi.unstubAllGlobals();
-    const [title] = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
+  const [title] = await db.select({ id: titlesTable.id }).from(titlesTable)
+    .where(eq(titlesTable.imdbId, testImdb)).limit(1);
   if (title) await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
   await db.delete(integrationHealthTable);
   if (healthSnapshot.length) await db.insert(integrationHealthTable).values(healthSnapshot);
@@ -121,8 +122,7 @@ describe("real catalog sync", () => {
     )).toBe(true);
   });
   it("includes sourced original-language aliases for the remaining popular anime", () => {
-    let aliases = await db.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.titleId, title.id));
+    const aliases = new Map(TVMAZE_MANIFEST.map((entry) => [entry.name, entry.aliases ?? []]));
     expect(aliases.get("Cowboy Bebop")?.map((source) => source.alias)).toContain("カウボーイビバップ");
     expect(aliases.get("Neon Genesis Evangelion")?.map((source) => source.alias)).toContain("新世紀エヴァンゲリオン");
     expect(aliases.get("Sailor Moon")?.map((source) => source.alias)).toContain("美少女戦士セーラームーン");
@@ -131,8 +131,7 @@ describe("real catalog sync", () => {
   });
 
   it("keeps verifiable provenance on each curated alias", () => {
-    let aliases = await db.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.titleId, title.id));
+    const aliases = new Map(TVMAZE_MANIFEST.map((entry) => [entry.name, entry.aliases ?? []]));
     expect(aliases.get("Attack on Titan")?.find((source) => source.alias === "進撃の巨人")).toMatchObject({
       language: "ja",
       sourceName: "JA Wikipedia",
@@ -157,13 +156,7 @@ describe("real catalog sync", () => {
   });
 
   it("is repeatable, preserves providers, alternate titles, and episode identity", async () => {
-    const fetchMock = vi.fn(async () => {
-      await fetchGate;
-      return jsonResponse(showPayload);
-    });
-
-    const [titleBeforeFailure] = await db.select().from(titlesTable)
-      .where(eq(titlesTable.imdbId, testImdb));
+    const fetchMock = vi.fn(async () => jsonResponse(showPayload));
     vi.stubGlobal("fetch", fetchMock);
     await runCatalogSync({ dryRun: false, allowPartial: false }, [testItem]);
     const [title] = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
@@ -205,18 +198,10 @@ describe("real catalog sync", () => {
 
     await runCatalogSync({ dryRun: false, allowPartial: false }, [testItem]);
     const [again] = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
-    const episodes = Array.from({ length: 100 }, (_, index) => ({
-      season: Math.floor(index / 10) + 1,
-      number: (index % 10) + 1,
-      name: `Episode ${index + 1}`,
-      summary: `<p>Summary ${index + 1}</p>`,
-      runtime: 42,
-      airdate: "2020-01-01",
-    }));
+    const episodes = await db.select().from(episodesTable).where(eq(episodesTable.titleId, again.id));
     const mappings = await db.select().from(providerMappingsTable).where(eq(providerMappingsTable.titleId, again.id));
     const providers = await db.select().from(watchProvidersTable).where(eq(watchProvidersTable.titleId, again.id));
-    let aliases = await db.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.titleId, title.id));
+    const aliases = await db.select().from(titleAliasesTable).where(eq(titleAliasesTable.titleId, again.id));
     expect(again.altTitles).toContain("Alternate Test Title");
     expect(again.altTitles).toContain("Existing Alias");
     expect(again.altTitles).toContain("テスト作品");
@@ -328,16 +313,54 @@ describe("real catalog sync", () => {
     expect(aliases.some((alias) => alias.alias === "テスト作品")).toBe(false);
   });
 
+  it("does not withdraw aliases when a refresh fails, but withdraws them after a successful refresh", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(showPayload)));
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [testItem]);
+    const [titleBeforeFailure] = await db.select().from(titlesTable)
+      .where(eq(titlesTable.imdbId, testImdb));
+    const aliasesBeforeFailure = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, titleBeforeFailure.id))
+      .orderBy(titleAliasesTable.id);
+    const itemWithWithdrawnAliases = { ...testItem, aliases: [] };
+
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: "unavailable" }, 404)));
+    const failedRefresh = await runCatalogSync(
+      { dryRun: false, allowPartial: true },
+      [itemWithWithdrawnAliases],
+    );
+
+    const [titleAfterFailure] = await db.select().from(titlesTable)
+      .where(eq(titlesTable.id, titleBeforeFailure.id));
+    const aliasesAfterFailure = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, titleBeforeFailure.id))
+      .orderBy(titleAliasesTable.id);
+    expect(failedRefresh?.failures).toHaveLength(1);
+    expect(titleAfterFailure.altTitles).toEqual(titleBeforeFailure.altTitles);
+    expect(aliasesAfterFailure).toEqual(aliasesBeforeFailure);
+
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(showPayload)));
+    const successfulRefresh = await runCatalogSync(
+      { dryRun: false, allowPartial: true },
+      [itemWithWithdrawnAliases],
+    );
+
+    const [titleAfterSuccess] = await db.select().from(titlesTable)
+      .where(eq(titlesTable.id, titleBeforeFailure.id));
+    const aliasesAfterSuccess = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, titleBeforeFailure.id));
+    expect(successfulRefresh?.failures).toHaveLength(0);
+    expect(titleAfterSuccess.altTitles).toEqual([]);
+    expect(aliasesAfterSuccess).toHaveLength(0);
+  });
+
   it("isolates a failed source item and records scoped partial health", async () => {
     const goodItem = { ...testItem, key: "test:good" };
     const badItem = { ...testItem, key: "test:bad", name: "Bad Source", tvmazeId: testId + 1, expectedTitle: "Bad Source", expectedImdbId: "tt9990002" };
-    const fetchMock = vi.fn(async () => {
-      await fetchGate;
-      return jsonResponse(showPayload);
-    });
-
-    const [titleBeforeFailure] = await db.select().from(titlesTable)
-      .where(eq(titlesTable.imdbId, testImdb));
+    const fetchMock = vi.fn(async (input: string | URL | Request) =>
+      String(input).includes(String(testId + 1))
+        ? jsonResponse({ error: "unavailable" }, 404)
+        : jsonResponse(showPayload),
+    );
     vi.stubGlobal("fetch", fetchMock);
     await runCatalogSync({ dryRun: false, allowPartial: true }, [goodItem, badItem]);
     const [health] = await db.select().from(integrationHealthTable).where(eq(integrationHealthTable.provider, "TVMaze"));
@@ -458,8 +481,6 @@ describe("real catalog sync", () => {
       return jsonResponse(showPayload);
     });
 
-    const [titleBeforeFailure] = await db.select().from(titlesTable)
-      .where(eq(titlesTable.imdbId, testImdb));
     vi.stubGlobal("fetch", fetchMock);
 
     const scheduledId = await startCatalogRefresh("scheduled", [testItem]);
@@ -483,12 +504,19 @@ describe("real catalog sync", () => {
     const retryableItem = sourceItems[0];
     const [run] = await db.insert(catalogSyncRunsTable).values({
       trigger: "scheduled",
-      status: "failed",
+      status: "running",
       totalItems: 1,
-      createdAt: now,
-      finishedAt: now,
+      startedAt: new Date(),
     }).returning();
     catalogRunIds.push(run.id);
+    await db.insert(catalogSyncItemsTable).values({
+      runId: run.id,
+      itemKey: retryableItem.key,
+      title: retryableItem.name,
+      provider: "TVMaze",
+      status: "running",
+      startedAt: new Date(),
+    });
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
 
     await scheduleCatalogRefresh();
@@ -515,10 +543,10 @@ describe("real catalog sync", () => {
   it("keeps the next scheduled run one week after an immediate completed run", async () => {
     const now = new Date();
     const [run] = await db.insert(catalogSyncRunsTable).values({
-      trigger: "scheduled",
-      status: "failed",
-      totalItems: 1,
+      trigger: "manual",
+      status: "succeeded",
       createdAt: now,
+      startedAt: now,
       finishedAt: now,
     }).returning();
     catalogRunIds.push(run.id);
@@ -573,29 +601,3 @@ describe("real catalog sync", () => {
     expect(delay).toBeLessThanOrEqual(WEEK_MS);
   });
 });
-
-    const [titleAfterFailure] = await db.select().from(titlesTable)
-      .where(eq(titlesTable.id, titleBeforeFailure.id));
-
-    const aliasesAfterFailure = await db.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.titleId, titleBeforeFailure.id))
-      .orderBy(titleAliasesTable.id);
-
-    const failedRefresh = await runCatalogSync(
-      { dryRun: false, allowPartial: true },
-      [itemWithWithdrawnAliases],
-    );
-
-    const successfulRefresh = await runCatalogSync(
-      { dryRun: false, allowPartial: true },
-      [itemWithWithdrawnAliases],
-    );
-
-    const itemWithWithdrawnAliases = { ...testItem, aliases: [] };
-
-    const [titleAfterSuccess] = await db.select().from(titlesTable)
-      .where(eq(titlesTable.id, titleBeforeFailure.id));
-
-    const aliasesBeforeFailure = await db.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.titleId, titleBeforeFailure.id))
-      .orderBy(titleAliasesTable.id);

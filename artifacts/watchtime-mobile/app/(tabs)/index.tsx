@@ -165,17 +165,14 @@ function SignedInHome({ startupReady }: { startupReady: boolean }) {
     }
   }, [recs.dataUpdatedAt]);
 
-  const refreshing = shows.isRefetching || watchlist.isRefetching;
+  const refreshing = shows.isRefetching || watchlist.isRefetching || recs.isRefetching;
   const onRefresh = () => {
     shows.refetch();
     watchlist.refetch();
     recs.refetch();
   };
 
-  if (!startupReady || (shows.isLoading && watchlist.isLoading)) return <Loading />;
-  if (shows.isError && watchlist.isError) {
-    return <ErrorState onRetry={onRefresh} />;
-  }
+  if (!startupReady) return <Loading />;
 
   const upNext = (shows.data ?? []).filter((s) => s.nextEpisode);
 
@@ -188,7 +185,13 @@ function SignedInHome({ startupReady }: { startupReady: boolean }) {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
     >
       <SectionHeader title="Up Next" />
-      {upNext.length === 0 ? (
+      {shows.isError ? (
+        <View testID="up-next-error">
+          <ErrorState message="Couldn't load Up Next" onRetry={() => void shows.refetch()} />
+        </View>
+      ) : shows.isLoading ? (
+        <Loading />
+      ) : upNext.length === 0 ? (
         <EmptyState
           icon="tv"
           title="Nothing to watch yet"
@@ -207,7 +210,13 @@ function SignedInHome({ startupReady }: { startupReady: boolean }) {
       )}
 
       <SectionHeader title="Your Watchlist" />
-      {(watchlist.data ?? []).length === 0 ? (
+      {watchlist.isError ? (
+        <View testID="watchlist-error">
+          <ErrorState message="Couldn't load your watchlist" onRetry={() => void watchlist.refetch()} />
+        </View>
+      ) : watchlist.isLoading ? (
+        <Loading />
+      ) : (watchlist.data ?? []).length === 0 ? (
         <EmptyState icon="bookmark" title="Watchlist is empty" subtitle="Save titles you want to watch later." />
       ) : (
         <FlatList
@@ -221,20 +230,35 @@ function SignedInHome({ startupReady }: { startupReady: boolean }) {
         />
       )}
 
-      {(recs.data ?? []).map((group) => (
-        <View key={group.reason}>
-          <SectionHeader title={group.reason} />
-          <FlatList
-            horizontal
-            data={group.titles}
-            scrollEnabled={group.titles.length > 0}
-            keyExtractor={(t) => String(t.id)}
-            renderItem={({ item }) => <PosterCard title={item} />}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-            showsHorizontalScrollIndicator={false}
-          />
-        </View>
-      ))}
+      {recs.isError || recs.isLoading || (recs.data ?? []).length === 0 ? (
+        <>
+          <SectionHeader title="Recommendations" />
+          {recs.isError ? (
+            <View testID="recommendations-error">
+              <ErrorState message="Couldn't load recommendations" onRetry={() => void recs.refetch()} />
+            </View>
+          ) : recs.isLoading ? (
+            <Loading />
+          ) : (
+            <EmptyState icon="star" title="No recommendations yet" subtitle="Track shows to get suggestions." />
+          )}
+        </>
+      ) : (
+        recs.data?.map((group) => (
+          <View key={group.reason}>
+            <SectionHeader title={group.reason} />
+            <FlatList
+              horizontal
+              data={group.titles}
+              scrollEnabled={group.titles.length > 0}
+              keyExtractor={(t) => String(t.id)}
+              renderItem={({ item }) => <PosterCard title={item} />}
+              contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+              showsHorizontalScrollIndicator={false}
+            />
+          </View>
+        ))
+      )}
     </ScrollView>
   );
 }
