@@ -615,6 +615,112 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
+  it("does not create a title-level Wikidata row when an empty refresh has no existing row", async () => {
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_no_existing_empty_classifications_test__",
+      year: 2020,
+      imdbId: "tt7654322",
+      popularity: 0,
+    }).returning();
+
+    try {
+      const initialRows = await db.insert(safetyRecordsTable).values([
+        {
+          titleId: title.id,
+          sourceName: "WatchTime Community",
+          tier: 3,
+          isCommunity: true,
+          status: "available",
+          items: [{
+            category: "violence",
+            label: "violence",
+            score: null,
+            maxScore: null,
+            description: "community note",
+            severity: "moderate",
+          }],
+        },
+        {
+          titleId: title.id,
+          sourceName: "Does the Dog Die?",
+          tier: 2,
+          isCommunity: false,
+          status: "available",
+          items: [{
+            category: "animal harm",
+            label: "animal harm",
+            score: 2,
+            maxScore: 3,
+            description: "provider data",
+          }],
+        },
+        {
+          titleId: title.id,
+          seasonNumber: 1,
+          sourceName: WIKIDATA_PROVIDER,
+          tier: 2,
+          isCommunity: false,
+          status: "available",
+          items: [{
+            category: "MPAA",
+            label: "PG",
+            score: null,
+            maxScore: null,
+            description: "season rating",
+          }],
+        },
+        {
+          titleId: title.id,
+          seasonNumber: 1,
+          episodeNumber: 1,
+          sourceName: WIKIDATA_PROVIDER,
+          tier: 2,
+          isCommunity: false,
+          status: "available",
+          items: [{
+            category: "MPAA",
+            label: "G",
+            score: null,
+            maxScore: null,
+            description: "episode rating",
+          }],
+        },
+      ]).returning();
+
+      expect(initialRows.filter((record) =>
+        record.sourceName === WIKIDATA_PROVIDER &&
+        record.seasonNumber === null &&
+        record.episodeNumber === null,
+      )).toHaveLength(0);
+
+      await expect(refreshWikidataTitle(title.id, {
+        queryByImdbId: async () => ({
+          itemId: "Q55",
+          itemUrl: "https://www.wikidata.org/wiki/Q55",
+          imdbId: "tt7654322",
+          classifications: [],
+        }),
+      })).resolves.toMatchObject({
+        ok: true,
+        externalId: "Q55",
+        classifications: 0,
+      });
+
+      const records = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id))
+        .orderBy(asc(safetyRecordsTable.id));
+      expect(records.filter((record) =>
+        record.sourceName === WIKIDATA_PROVIDER &&
+        record.seasonNumber === null &&
+        record.episodeNumber === null,
+      )).toHaveLength(0);
+      expect(records).toEqual([...initialRows].sort((a, b) => a.id - b.id));
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+    }
+  });
+
   it("does not replace a verified mapping or safety record when the provider fails", async () => {
     const [mapping] = await db.insert(providerMappingsTable).values({
       titleId,

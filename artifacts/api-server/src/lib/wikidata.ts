@@ -498,8 +498,9 @@ export async function refreshWikidataTitle(
 
       // A title can have multiple independent safety sources. Only replace
       // Wikidata's own row, and retain it when the provider currently exposes
-      // no classification labels. Community and richer provider rows are
-      // never touched.
+      // no classification labels. Do not create a title-level row for an empty
+      // response when no Wikidata row exists. Community and richer provider
+      // rows are never touched.
       const existingRecords = await tx.select()
         .from(safetyRecordsTable)
         .where(and(
@@ -510,20 +511,22 @@ export async function refreshWikidataTitle(
         ))
         .orderBy(desc(safetyRecordsTable.updatedAt), asc(safetyRecordsTable.id));
       const [existingRecord] = existingRecords;
-      const values = {
-        titleId,
-        sourceName: WIKIDATA_PROVIDER,
-        tier: 2,
-        isCommunity: false,
-        url: item.itemUrl,
-        status: "available" as const,
-        items,
-        updatedAt: now,
-      };
-      if (existingRecord && items.length > 0) {
-        await tx.update(safetyRecordsTable).set(values).where(eq(safetyRecordsTable.id, existingRecord.id));
-      } else if (!existingRecord && items.length > 0) {
-        await tx.insert(safetyRecordsTable).values(values);
+      if (items.length > 0) {
+        const values = {
+          titleId,
+          sourceName: WIKIDATA_PROVIDER,
+          tier: 2,
+          isCommunity: false,
+          url: item.itemUrl,
+          status: "available" as const,
+          items,
+          updatedAt: now,
+        };
+        if (existingRecord) {
+          await tx.update(safetyRecordsTable).set(values).where(eq(safetyRecordsTable.id, existingRecord.id));
+        } else {
+          await tx.insert(safetyRecordsTable).values(values);
+        }
       }
       const duplicateIds = existingRecords.slice(1).map((record) => record.id);
       if (duplicateIds.length > 0) {
