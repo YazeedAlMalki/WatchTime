@@ -1,7 +1,10 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { vi } from "vitest";
-import type { AdminContentAlias } from "@workspace/api-client-react";
+import type {
+  AdminContentAlias,
+  AdminContentAliasRecord,
+} from "@workspace/api-client-react";
 
 const mocks = vi.hoisted(() => ({
   queryClient: {
@@ -405,6 +408,124 @@ describe("admin alternate-title review", () => {
     );
     expect(container.textContent).toContain(currentAlias.alias);
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps a saved conflict correction visible when the alias refresh fails", async () => {
+    const currentAlias: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer Admin Correction",
+      language: "de",
+      sourceName: "Admin editorial",
+      sourceUrl: "https://example.test/newer-correction",
+      collision: true,
+      collisionTitleCount: 3,
+      updatedAt: "2026-09-18T12:30:00.000Z",
+    };
+    const savedRecord: AdminContentAliasRecord = {
+      id: currentAlias.id,
+      titleId: currentAlias.titleId,
+      alias: "Accepted Admin Correction",
+      normalizedAlias: "accepted admin correction",
+      language: "fr",
+      sourceName: currentAlias.sourceName,
+      sourceUrl: "https://example.test/accepted-correction",
+      isEditorial: currentAlias.isEditorial,
+      createdAt: initialAlias.updatedAt,
+      updatedAt: "2026-09-19T12:30:00.000Z",
+    };
+    let mutationCount = 0;
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: {
+          onSuccess?: (record: AdminContentAliasRecord) => Promise<void>;
+          onError?: (error: unknown) => Promise<void>;
+        },
+      ) => {
+        mutationCount += 1;
+        if (mutationCount === 1) {
+          void options?.onError?.({
+            data: {
+              code: "stale_alias",
+              error: "This alternate title changed while you were editing.",
+              current: currentAlias,
+            },
+          });
+        } else {
+          void options?.onSuccess?.(savedRecord);
+        }
+      },
+    );
+    render();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale draft correction",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("A newer correction is already saved");
+    mocks.queryClient.invalidateQueries.mockRejectedValueOnce(
+      new Error("Alias refresh unavailable"),
+    );
+    act(() => button(container, "Edit current correction").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for current correction",
+        savedRecord.alias,
+      );
+      setInput(
+        container,
+        "Language for current correction",
+        savedRecord.language ?? "",
+      );
+      setInput(
+        container,
+        "Source link for current correction",
+        savedRecord.sourceUrl ?? "",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    const savedRow = container.querySelector("tbody tr");
+    expect(savedRow?.textContent).toContain(savedRecord.alias);
+    expect(savedRow?.textContent).toContain(savedRecord.language);
+    expect(savedRow?.querySelector<HTMLAnchorElement>(
+      `a[href="${savedRecord.sourceUrl}"]`,
+    )?.textContent).toBe(savedRecord.sourceName);
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain(
+      "Your saved correction is shown in the table below",
+    );
+    expect(container.textContent).toContain("Retry refresh");
+    expect(container.textContent).not.toContain("A newer correction is already saved");
+
+    const latestServerAlias: AdminContentAlias = {
+      ...currentAlias,
+      alias: "Latest server correction",
+      language: "it",
+      sourceUrl: "https://example.test/latest-server-correction",
+    };
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+    render([latestServerAlias]);
+
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+    expect(container.querySelector("tbody tr")?.textContent).toContain(
+      latestServerAlias.alias,
+    );
+    expect(container.querySelector("tbody tr")?.textContent).not.toContain(
+      savedRecord.alias,
+    );
   });
 
   it("edits the authoritative conflict correction while list refresh is pending and failed", async () => {

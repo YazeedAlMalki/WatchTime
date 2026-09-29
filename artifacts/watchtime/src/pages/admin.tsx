@@ -35,6 +35,7 @@ import {
   type AdminContentRefreshBatch,
   type AdminContentRefreshBatchHistoryEntry,
   type AdminContentAlias,
+  type AdminContentAliasRecord,
   type ListAdminContentAliasesOwnership,
 } from "@workspace/api-client-react";
 import { RATING_REGIONS, type RatingRegion } from "@workspace/rating-regions";
@@ -1834,12 +1835,30 @@ export function AliasReview({
   const qc = useQueryClient();
   const { toast } = useToast();
   const linkedRowRef = React.useRef<HTMLTableRowElement>(null);
+  const [savedAliasPreview, setSavedAliasPreview] =
+    useState<AdminContentAlias | null>(null);
   React.useEffect(() => {
     if (linkedAlias) linkedRowRef.current?.scrollIntoView?.({ block: "center" });
   }, [linkedAlias?.id]);
-  const visibleAliases = linkedAlias && !aliases?.some((alias) => alias.id === linkedAlias.id)
-    ? [linkedAlias, ...(aliases ?? [])]
-    : aliases;
+  const aliasesWithSavedPreview = aliases?.map((alias) =>
+    savedAliasPreview?.id === alias.id ? savedAliasPreview : alias,
+  );
+  const savedPreviewOutsidePage =
+    savedAliasPreview &&
+    !aliases?.some((alias) => alias.id === savedAliasPreview.id)
+      ? savedAliasPreview
+      : null;
+  const reviewAliases = aliasesWithSavedPreview
+    ? savedPreviewOutsidePage
+      ? [savedPreviewOutsidePage, ...aliasesWithSavedPreview]
+      : aliasesWithSavedPreview
+    : savedAliasPreview
+      ? [savedAliasPreview]
+      : undefined;
+  const visibleAliases =
+    linkedAlias && !reviewAliases?.some((alias) => alias.id === linkedAlias.id)
+      ? [linkedAlias, ...(reviewAliases ?? [])]
+      : reviewAliases;
   const firstAliasNumber = aliasTotal === 0 ? 0 : aliasOffset + 1;
   const lastAliasNumber = Math.min(aliasOffset + aliasPageSize, aliasTotal);
   const copyAliasLink = async (alias: AdminContentAlias) => {
@@ -1909,6 +1928,7 @@ export function AliasReview({
       if (results[0].status === "rejected") failedRequests.push("aliases");
       if (results[1].status === "rejected") failedRequests.push("catalog");
       setRefreshError(failedRequests.length > 0 ? failedRequests : null);
+      if (!failedRequests.includes("aliases")) setSavedAliasPreview(null);
       return failedRequests;
     } finally {
       setIsRefreshingAliasViews(false);
@@ -1959,6 +1979,10 @@ export function AliasReview({
       });
       return;
     }
+    const editedAlias =
+      conflictAlias?.id === editingId
+        ? conflictAlias
+        : aliases?.find((candidate) => candidate.id === editingId) ?? null;
     updateAlias.mutate(
       {
         id: editingId,
@@ -1970,9 +1994,21 @@ export function AliasReview({
         },
       },
       {
-        onSuccess: async () => {
+        onSuccess: async (savedRecord?: AdminContentAliasRecord) => {
           setEditingId(null);
           setConflictAlias(null);
+          if (editedAlias) {
+            setSavedAliasPreview({
+              ...editedAlias,
+              alias: savedRecord?.alias ?? alias,
+              language: savedRecord?.language ?? (draft.language.trim() || null),
+              sourceName: savedRecord?.sourceName ?? editedAlias.sourceName,
+              sourceUrl:
+                savedRecord?.sourceUrl ?? (draft.sourceUrl.trim() || null),
+              isEditorial: savedRecord?.isEditorial ?? editedAlias.isEditorial,
+              updatedAt: savedRecord?.updatedAt ?? editedAlias.updatedAt,
+            });
+          }
           const failedRequests = await refreshAliasViews();
           toast(
             failedRequests.length === 0
@@ -2116,7 +2152,11 @@ export function AliasReview({
           <div>
             <p className="font-semibold">Alternate-title refresh failed</p>
             <p>
-              The review data may be stale. {formatRefreshFailures(refreshError)}{" "}
+              The review data may be stale.{" "}
+              {savedAliasPreview
+                ? "Your saved correction is shown in the table below, but its review details may be out of date. "
+                : ""}
+              {formatRefreshFailures(refreshError)}{" "}
               Retry the refresh to check the latest correction and collision
               information.
             </p>
