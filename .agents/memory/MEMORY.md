@@ -26,3 +26,4 @@
 - [API test database isolation](api-test-database-isolation.md) — `singleFork` alone did not stop DB-backed test files from racing on shared tables; disable file parallelism.
 - [PostgreSQL special timestamps](postgres-special-timestamps.md) — validate raw timestamp text when PostgreSQL infinity values cross Drizzle's timestamp conversion.
 - [Proxied rate-limit checks](proxied-rate-limit-checks.md) — shared preview proxy may replace a supplied forwarded IP; isolate live counter checks from normal preview traffic.
+- [Mobile cross-screen cache tests](mobile-cross-screen-cache-tests.md) — seed inactive season queries with infinite staleness and verify cross-screen invalidation through a shared query client.
