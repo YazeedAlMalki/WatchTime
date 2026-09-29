@@ -944,6 +944,7 @@ async function syncAliases(tx: any, titleId: number, canonicalName: string, item
       language: source.language,
       sourceName: source.sourceName,
       sourceUrl: source.sourceUrl,
+      providerSources: [...new Set([...(current?.providerSources ?? []), item.source])],
       isEditorial: false,
       updatedAt: new Date(),
     };
@@ -954,16 +955,23 @@ async function syncAliases(tx: any, titleId: number, canonicalName: string, item
     }
   }
 
-  // Provider responses are authoritative for provider-owned aliases. Remove
-  // only rows with explicit provider provenance; editorial corrections remain
-  // untouched even when they replaced an alias from an earlier response.
+  // Provider responses are authoritative only for aliases owned by that
+  // provider. Keep another provider's ownership (and the alias row) intact.
   for (const current of existing) {
     if (
       current.isEditorial === false &&
-      current.sourceUrl &&
+      current.providerSources?.includes(item.source) &&
       !sourceAliases.has(current.normalizedAlias)
     ) {
-      await tx.delete(titleAliasesTable).where(eq(titleAliasesTable.id, current.id));
+      const providerSources = current.providerSources.filter((source: string) => source !== item.source);
+      if (providerSources.length) {
+        await tx.update(titleAliasesTable).set({
+          providerSources,
+          updatedAt: new Date(),
+        }).where(eq(titleAliasesTable.id, current.id));
+      } else {
+        await tx.delete(titleAliasesTable).where(eq(titleAliasesTable.id, current.id));
+      }
     }
   }
 

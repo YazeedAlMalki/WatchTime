@@ -51,6 +51,7 @@ export const titleAliasesTable = pgTable("title_aliases", {
   language: text("language"),
   sourceName: text("source_name").notNull(),
   sourceUrl: text("source_url"),
+  providerSources: text("provider_sources").array().notNull().default([]),
   isEditorial: boolean("is_editorial").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

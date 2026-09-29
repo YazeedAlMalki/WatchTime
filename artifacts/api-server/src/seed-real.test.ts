@@ -253,6 +253,66 @@ describe("real catalog sync", () => {
     expect(concurrentEpisodes).toHaveLength(1);
   });
 
+  it("withdraws only aliases owned by the refreshing provider", async () => {
+    const wikipediaItem: SourceItem = {
+      key: "movie:shared-title-alias-test",
+      source: "wikipedia",
+      type: "movie",
+      name: testItem.name,
+      imdbId: testImdb,
+      wikiPage: "Test Identity Series",
+      aliases: [
+        {
+          alias: "Alternate Test Title",
+          language: "en",
+          sourceName: "EN Wikipedia",
+          sourceUrl: "https://en.wikipedia.org/wiki/Test_Identity_Series",
+        },
+        {
+          alias: "Wikipedia Confirmed Title",
+          language: "fr",
+          sourceName: "FR Wikipedia",
+          sourceUrl: "https://fr.wikipedia.org/wiki/Test_Identity_Series",
+        },
+      ],
+      popularity: 0,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      if (String(input).includes("wikipedia.org")) {
+        return jsonResponse({ extract: "A sourced test summary." });
+      }
+      return jsonResponse(showPayload);
+    }));
+
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [testItem, wikipediaItem]);
+    const [title] = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
+    let aliases = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, title.id));
+    expect(aliases.find((alias) => alias.alias === "Alternate Test Title")?.providerSources)
+      .toEqual(["tvmaze", "wikipedia"]);
+    expect(aliases.find((alias) => alias.alias === "Wikipedia Confirmed Title")?.providerSources)
+      .toEqual(["wikipedia"]);
+
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [
+      { ...testItem, aliases: [] },
+    ]);
+
+    aliases = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, title.id));
+    expect(aliases.find((alias) => alias.alias === "Alternate Test Title"))
+      .toMatchObject({
+        providerSources: ["wikipedia"],
+        isEditorial: false,
+      });
+    expect(aliases.find((alias) => alias.alias === "Wikipedia Confirmed Title"))
+      .toMatchObject({
+        sourceName: "FR Wikipedia",
+        providerSources: ["wikipedia"],
+        isEditorial: false,
+      });
+    expect(aliases.some((alias) => alias.alias === "テスト作品")).toBe(false);
+  });
+
   it("isolates a failed source item and records scoped partial health", async () => {
     const goodItem = { ...testItem, key: "test:good" };
     const badItem = { ...testItem, key: "test:bad", name: "Bad Source", tvmazeId: testId + 1, expectedTitle: "Bad Source", expectedImdbId: "tt9990002" };

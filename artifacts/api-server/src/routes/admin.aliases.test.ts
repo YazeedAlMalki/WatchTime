@@ -524,6 +524,16 @@ describe("admin title aliases", () => {
     })));
 
     await runCatalogSync({ dryRun: false, allowPartial: false }, [sourceItem]);
+    await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: "TVMaze Confirmed Title",
+      normalizedAlias: "tvmazeconfirmedtitle",
+      language: "en",
+      sourceName: "TVMaze",
+      sourceUrl: "https://www.tvmaze.com/shows/990010",
+      providerSources: ["tvmaze"],
+      isEditorial: false,
+    });
     const [providerAlias] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]))
       .then((aliases) => aliases.filter((alias) => alias.alias === "Provider Retained Title"));
@@ -544,7 +554,11 @@ describe("admin title aliases", () => {
 
     const [title] = await db.select().from(titlesTable)
       .where(eq(titlesTable.id, createdTitleIds[0]));
-    expect(title.altTitles).toEqual(["Shared Local Title", "Corrected Provider Title"]);
+    expect(title.altTitles).toEqual([
+      "Shared Local Title",
+      "Corrected Provider Title",
+      "TVMaze Confirmed Title",
+    ]);
     expect(await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0])))
       .toEqual(expect.arrayContaining([
@@ -568,6 +582,20 @@ describe("admin title aliases", () => {
         isEditorial: true,
       }),
     ]);
+    const otherProviderReport = await request(app).get("/api/admin/content-aliases?q=TVMaze%20Confirmed");
+    expect(otherProviderReport.status).toBe(200);
+    expect(otherProviderReport.body).toEqual([
+      expect.objectContaining({
+        titleId: createdTitleIds[0],
+        alias: "TVMaze Confirmed Title",
+        sourceName: "TVMaze",
+        isEditorial: false,
+      }),
+    ]);
+    const [otherProviderAlias] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]))
+      .then((aliases) => aliases.filter((alias) => alias.alias === "TVMaze Confirmed Title"));
+    expect(otherProviderAlias.providerSources).toEqual(["tvmaze"]);
   });
 
   it("migrates a legacy provider alias to provider ownership without losing its value", async () => {

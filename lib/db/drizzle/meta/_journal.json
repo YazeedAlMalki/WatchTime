@@ -29,6 +29,13 @@
       "when": 1790380800000,
       "tag": "0003_persist_rate_limit_hits",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790640000000,
+      "tag": "0004_track_alias_provider_ownership",
+      "breakpoints": true
     }
   ]
 }
