@@ -2173,7 +2173,9 @@ export function AliasReview({
       {
         onSuccess: async () => {
           if (editingId === alias.id) setEditingId(null);
-          if (conflictAlias?.id === alias.id) setConflictAlias(null);
+          setConflictAlias((current) =>
+            current?.id === alias.id ? null : current,
+          );
           const failedRequests = await refreshAliasViews();
           toast(
             failedRequests.length === 0

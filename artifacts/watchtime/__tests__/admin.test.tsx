@@ -960,6 +960,84 @@ describe("admin alternate-title review", () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("keeps a stale-edit warning when a different alias is removed", async () => {
+    const currentCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer Admin Correction",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    const unrelatedAlias: AdminContentAlias = {
+      ...initialAlias,
+      id: 18,
+      titleId: 102,
+      titleName: "The Other Lighthouse",
+      alias: "Unrelated Alternate Title",
+      language: "es",
+      sourceName: "Unrelated source",
+      sourceUrl: "https://example.test/unrelated-source",
+    };
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: currentCorrection,
+          },
+        });
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale draft correction",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      currentCorrection.alias,
+    );
+
+    render([currentCorrection, unrelatedAlias]);
+    confirmSpy.mockReturnValue(true);
+    const unrelatedRow = Array.from(
+      container.querySelectorAll<HTMLTableRowElement>("tbody tr"),
+    ).find((row) => row.textContent?.includes(unrelatedAlias.alias));
+    const removeButton = Array.from(
+      unrelatedRow?.querySelectorAll("button") ?? [],
+    ).find((candidate) => candidate.textContent?.trim() === "Remove");
+    if (!removeButton) throw new Error("Unrelated alias Remove button not found");
+    act(() => removeButton.click());
+    await flushEffects();
+
+    expect(mocks.deleteMutation.mutate).toHaveBeenCalledWith(
+      {
+        id: unrelatedAlias.id,
+        data: { expectedUpdatedAt: unrelatedAlias.updatedAt },
+      },
+      expect.any(Object),
+    );
+    const conflictNotice = container.querySelector('[role="alert"]');
+    expect(conflictNotice?.textContent).toContain(
+      "A newer correction is already saved",
+    );
+    expect(conflictNotice?.textContent).toContain(currentCorrection.alias);
+    expect(conflictNotice?.textContent).toContain(currentCorrection.titleName);
+    expect(conflictNotice?.textContent).toContain(currentCorrection.language);
+    expect(conflictNotice?.textContent).toContain(currentCorrection.sourceName);
+    expect(conflictNotice?.textContent).toContain("Current version");
+    expect(conflictNotice?.querySelector("a")?.getAttribute("href")).toBe(
+      currentCorrection.sourceUrl,
+    );
+  });
+
   it("keeps a stale-edit warning when removing its correction fails", async () => {
     const currentCorrection: AdminContentAlias = {
       ...initialAlias,
