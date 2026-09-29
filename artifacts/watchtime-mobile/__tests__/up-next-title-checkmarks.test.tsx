@@ -18,6 +18,7 @@ const mockEpisodes = [
 ];
 const mockSeasonFetch = jest.fn();
 const mockTitleFetch = jest.fn();
+const mockActivityFetch = jest.fn();
 
 const mockTitleData = () => ({
   id: 42,
@@ -59,6 +60,7 @@ jest.mock('@/lib/startup-metrics', () => ({ markStartup: jest.fn() }));
 jest.mock('expo-image', () => ({ Image: () => null }));
 jest.mock('expo-haptics', () => ({
   impactAsync: jest.fn(),
+  selectionAsync: jest.fn(),
   ImpactFeedbackStyle: { Light: 'light' },
 }));
 jest.mock('react-native-safe-area-context', () => ({
@@ -95,11 +97,30 @@ jest.mock('@workspace/api-client-react', () => {
   const seasonKey = (id: number, season: number) => [`/api/titles/${id}/seasons/${season}`];
   const showsKey = () => ['/api/me/shows'];
   const recsKey = () => ['/api/me/recommendations'];
+  const activityKey = () => ['/api/me/recent-activity'];
   return {
     getGetTitleQueryKey: titleKey,
     getGetSeasonQueryKey: seasonKey,
     getGetMyShowsQueryKey: showsKey,
     getGetMyRecommendationsQueryKey: recsKey,
+    getGetMyRecentActivityQueryKey: activityKey,
+    getGetMyInProgressShowsQueryKey: () => ['/api/me/shows/in-progress'],
+    getGetMyMoviesQueryKey: () => ['/api/me/movies'],
+    getMyShows: async () => [],
+    getMyInProgressShows: async () => [],
+    getMyMovies: async () => [],
+    mergeTrackedShows: (shows: unknown[]) => shows,
+    useGetMyRecentActivity: (options: { query: { enabled: boolean } }) => useQuery({
+      queryKey: activityKey(),
+      queryFn: () => {
+        mockActivityFetch();
+        return mockWatched.has(201) ? [{
+          titleId: 42, titleName: 'Example Show', kind: 'episode',
+          episodeLabel: 'S2 E1 — Third', watchedAt: '2026-09-29T12:00:00Z',
+        }] : [];
+      },
+      enabled: options.query.enabled,
+    }),
     getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
     getGetTitleSafetyQueryKey: () => ['/api/safety'],
     useGetTitle: (id: number) => useQuery({
@@ -152,6 +173,7 @@ jest.mock('@workspace/api-client-react', () => {
 });
 
 import HomeScreen from '../app/(tabs)/index';
+import MyShowsScreen from '../app/(tabs)/my-shows';
 import TitleDetailScreen from '../app/title/[id]';
 
 function SeasonRows({ season }: { season: number }) {
@@ -169,7 +191,7 @@ function SeasonRows({ season }: { season: number }) {
   );
 }
 
-it('refreshes cached seasons and title when opening a show after marking with includePrevious', async () => {
+it('refreshes title, seasons, and My Shows activity after marking on Home', async () => {
   mockWatched.clear();
   mockSeasonFetch.mockClear();
   mockTitleFetch.mockClear();
@@ -177,7 +199,10 @@ it('refreshes cached seasons and title when opening a show after marking with in
   const client = new QueryClient({
     defaultOptions: { queries: { staleTime: Infinity, retry: false }, mutations: { retry: false } },
   });
-  const { getGetSeasonQueryKey, getGetTitleQueryKey } = require('@workspace/api-client-react');
+  const { getGetSeasonQueryKey, getGetTitleQueryKey, getGetMyRecentActivityQueryKey } = require('@workspace/api-client-react');
+  const activityKey = getGetMyRecentActivityQueryKey();
+  mockActivityFetch.mockClear();
+  client.setQueryData(activityKey, []);
 
   // Simulate a previous visit: both season accordions and title are cached as
   // unwatched, and would remain that way indefinitely without invalidation.
@@ -196,6 +221,7 @@ it('refreshes cached seasons and title when opening a show after marking with in
     expect(client.getQueryState(getGetSeasonQueryKey(42, 1))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetSeasonQueryKey(42, 2))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetTitleQueryKey(42))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(activityKey)?.isInvalidated).toBe(true);
   });
 
   fireEvent.press(home.getByTestId('upnext-42'));
@@ -207,6 +233,7 @@ it('refreshes cached seasons and title when opening a show after marking with in
       <TitleDetailScreen />
       <SeasonRows season={1} />
       <SeasonRows season={2} />
+      <MyShowsScreen />
     </QueryClientProvider>,
   );
   await waitFor(() => expect(detail.getByText('2/2 watched')).toBeTruthy());
@@ -220,6 +247,13 @@ it('refreshes cached seasons and title when opening a show after marking with in
     expect(detail.getByTestId('episode-state-202').props.children).toEqual(['○', ' ', 'Fourth']);
   });
   expect(mockTitleFetch).toHaveBeenCalled();
+  await waitFor(() => {
+    expect(detail.getByTestId('tab-history')).toBeTruthy();
+    expect(client.getQueryData(activityKey)).toEqual([expect.objectContaining({
+      titleId: 42, episodeLabel: 'S2 E1 — Third',
+    })]);
+  });
+  expect(mockActivityFetch).toHaveBeenCalledTimes(1);
   await act(async () => detail.unmount());
   client.clear();
 });

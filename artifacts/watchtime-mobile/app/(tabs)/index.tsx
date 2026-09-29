@@ -27,6 +27,7 @@ import {
   useGetTrendingTitles,
   useMarkEpisodeWatched,
   getGetMyShowsQueryKey,
+  getGetMyRecentActivityQueryKey,
   getGetMyWatchlistQueryKey,
   getGetMyRecommendationsQueryKey,
   getGetTitleQueryKey,
@@ -47,6 +48,7 @@ function UpNextCard({ show }: { show: TrackedShow }) {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
         // Invalidate the title detail so the title page reflects the new watched state.
         queryClient.invalidateQueries({ queryKey: getGetTitleQueryKey(show.title.id) });
         // includePrevious can touch episodes across multiple seasons; clear every
