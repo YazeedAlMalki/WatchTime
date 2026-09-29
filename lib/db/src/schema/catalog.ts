@@ -57,6 +57,7 @@ export const titleAliasesTable = pgTable("title_aliases", {
   language: text("language"),
   sourceName: text("source_name").notNull(),
   sourceUrl: text("source_url"),
+  // Only listed providers may withdraw this alias; an empty list grants none.
   providerSources: text("provider_sources").array().notNull().default([]),
   providerCitations: jsonb("provider_citations")
     .$type<Record<string, TitleAliasProviderCitation>>()

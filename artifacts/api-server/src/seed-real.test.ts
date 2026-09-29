@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import {
   catalogSyncItemsTable,
   catalogSyncRunsTable,
@@ -158,6 +159,55 @@ describe("real catalog sync", () => {
   it("validates manifest identity and rejects a collision before writes", () => {
     expect(() => validateTvMazeResponse(testItem, { ...showPayload, id: testId + 1 })).toThrow(/identity mismatch/);
     expect(() => validateTvMazeResponse(testItem, { ...showPayload, name: "Wrong Series" })).toThrow(/title mismatch/);
+  });
+
+  it("backfills only a provider supported by the alias citation or a single title mapping", async () => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL search_path TO pg_temp");
+      await client.query(`
+        CREATE TEMP TABLE provider_mappings (title_id integer, provider text);
+        CREATE TEMP TABLE title_aliases (
+          title_id integer,
+          alias text,
+          source_name text NOT NULL,
+          source_url text,
+          is_editorial boolean NOT NULL
+        );
+        INSERT INTO provider_mappings (title_id, provider) VALUES
+          (1, 'TVMaze'),
+          (2, 'Wikipedia'),
+          (3, 'TVMaze'),
+          (3, 'Wikipedia');
+        INSERT INTO title_aliases (title_id, alias, source_name, source_url, is_editorial) VALUES
+          (1, 'TVMaze-only mapping', 'Legacy catalog', 'https://source.test/tvmaze', false),
+          (2, 'Wikipedia-only mapping', 'Legacy catalog', 'https://source.test/wikipedia', false),
+          (3, 'TVMaze citation', 'TVMaze', 'https://www.tvmaze.com/shows/3', false),
+          (3, 'Wikipedia citation', 'EN Wikipedia', 'https://en.wikipedia.org/wiki/Three', false),
+          (3, 'Ambiguous citation', 'Legacy catalog', 'https://source.test/ambiguous', false),
+          (3, 'Conflicting citations', 'TVMaze', 'https://en.wikipedia.org/wiki/Three', false);
+      `);
+      const migration = await readFile(
+        new URL("../../../lib/db/drizzle/0004_track_alias_provider_ownership.sql", import.meta.url),
+        "utf8",
+      );
+      await client.query(migration);
+      const { rows } = await client.query(
+        "SELECT alias, provider_sources FROM title_aliases ORDER BY alias",
+      );
+      expect(rows).toEqual([
+        { alias: "Ambiguous citation", provider_sources: [] },
+        { alias: "Conflicting citations", provider_sources: [] },
+        { alias: "TVMaze citation", provider_sources: ["tvmaze"] },
+        { alias: "TVMaze-only mapping", provider_sources: ["tvmaze"] },
+        { alias: "Wikipedia citation", provider_sources: ["wikipedia"] },
+        { alias: "Wikipedia-only mapping", provider_sources: ["wikipedia"] },
+      ]);
+    } finally {
+      await client.query("ROLLBACK").catch(() => {});
+      client.release();
+    }
   });
 
   it("is repeatable, preserves providers, alternate titles, and episode identity", async () => {
@@ -324,6 +374,40 @@ describe("real catalog sync", () => {
         isEditorial: false,
       });
     expect(aliases.some((alias) => alias.alias === "テスト作品")).toBe(false);
+  });
+
+  it("does not withdraw an uncertain legacy alias on provider refresh", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(showPayload)));
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [testItem]);
+    const [title] = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
+    const uncertainAlias = "Historical Title With Unknown Owner";
+    await db.insert(titleAliasesTable).values({
+      titleId: title.id,
+      alias: uncertainAlias,
+      normalizedAlias: "historicaltitlewithunknownowner",
+      language: "en",
+      sourceName: "Legacy catalog",
+      sourceUrl: "https://source.test/legacy-title",
+      providerSources: [],
+      providerCitations: {},
+      isEditorial: false,
+    });
+
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [
+      { ...testItem, aliases: [] },
+    ]);
+
+    const [preservedAlias] = await db.select().from(titleAliasesTable).where(and(
+      eq(titleAliasesTable.titleId, title.id),
+      eq(titleAliasesTable.normalizedAlias, "historicaltitlewithunknownowner"),
+    ));
+    const [refreshedTitle] = await db.select().from(titlesTable).where(eq(titlesTable.id, title.id));
+    expect(preservedAlias).toMatchObject({
+      alias: uncertainAlias,
+      providerSources: [],
+      isEditorial: false,
+    });
+    expect(refreshedTitle.altTitles).toContain(uncertainAlias);
   });
 
   it("does not withdraw aliases when a refresh fails, but withdraws them after a successful refresh", async () => {
