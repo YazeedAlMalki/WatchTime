@@ -182,9 +182,9 @@ it("pages through a filtered alias review without dropping its search or ownersh
   }
 });
 
-it("requests provider-owned and editorial aliases and keeps each source label visible", async () => {
+it("shows both alias sources for All ownership and keeps filtered source labels visible", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
-  window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  window.history.replaceState({}, "", "/admin?tab=content&region=US&ownership=provider");
   const requests: URL[] = [];
   const originalFetch = window.fetch;
   const aliases = {
@@ -226,7 +226,9 @@ it("requests provider-owned and editorial aliases and keeps each source label vi
     }
     requests.push(url);
     const ownership = url.searchParams.get("ownership");
-    const items = ownership ? aliases[ownership as keyof typeof aliases] : [];
+    const items = ownership
+      ? aliases[ownership as keyof typeof aliases]
+      : [...aliases.provider, ...aliases.editorial];
     return new Response(JSON.stringify({
       items,
       total: items.length,
@@ -245,10 +247,6 @@ it("requests provider-owned and editorial aliases and keeps each source label vi
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
     const ownership = page.getByRole("combobox", { name: "Alias ownership" });
-    await expect.element(page.getByText("No alternate titles found")).toBeVisible();
-
-    await userEvent.click(ownership);
-    await userEvent.click(page.getByRole("option", { name: "Provider-owned" }));
     await expect.element(page.getByText("Lighthouse Provider Alias")).toBeVisible();
     await expect.element(page.getByText("TVMaze", { exact: true })).toBeVisible();
     expect(requests.filter((request) =>
@@ -263,6 +261,15 @@ it("requests provider-owned and editorial aliases and keeps each source label vi
       request.searchParams.get("ownership") === "editorial",
     )).toHaveLength(1);
     await expect.element(page.getByText("Lighthouse Provider Alias")).not.toBeInTheDocument();
+
+    await userEvent.click(ownership);
+    await userEvent.click(page.getByRole("option", { name: "All ownership" }));
+    await expect.element(ownership).toHaveTextContent("All ownership");
+    await expect.element(page.getByText("Lighthouse Provider Alias")).toBeVisible();
+    await expect.element(page.getByText("TVMaze", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Le Phare Editorial")).toBeVisible();
+    await expect.element(page.getByText("Wikipedia", { exact: true })).toBeVisible();
+    expect(requests.at(-1)?.searchParams.has("ownership")).toBe(false);
   } finally {
     root.unmount();
     container.remove();
