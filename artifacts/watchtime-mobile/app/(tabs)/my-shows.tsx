@@ -33,6 +33,7 @@ import {
   getGetMyMoviesQueryKey,
   getGetMyRecentActivityQueryKey,
   getGetMyRecommendationsQueryKey,
+  getGetTitleQueryKey,
   type TrackedShow,
   type RecentActivityItem,
 } from '@workspace/api-client-react';
@@ -118,6 +119,13 @@ function ShowRow({ show }: { show: TrackedShow }) {
         queryClient.invalidateQueries({ queryKey: getGetMyInProgressShowsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
+        const titleKey = getGetTitleQueryKey(show.title.id);
+        queryClient.invalidateQueries({ queryKey: titleKey });
+        queryClient.invalidateQueries({
+          predicate: (query) =>
+            typeof query.queryKey[0] === 'string' &&
+            query.queryKey[0].startsWith(`${titleKey[0]}/seasons/`),
+        });
       },
     },
   });
