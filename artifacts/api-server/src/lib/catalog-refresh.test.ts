@@ -1,7 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { inArray } from "drizzle-orm";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { eq, inArray } from "drizzle-orm";
 import { catalogSyncItemsTable, catalogSyncRunsTable, db } from "@workspace/db";
-import { pruneCatalogRefreshHistory } from "./catalog-refresh";
+import { logger } from "./logger";
+import { pruneCatalogRefreshHistory, startCatalogRefresh } from "./catalog-refresh";
+
+const runCatalogSyncMock = vi.hoisted(() => vi.fn());
+vi.mock("../seed-real", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../seed-real")>(),
+  runCatalogSync: runCatalogSyncMock,
+}));
 
 const createdRunIds: number[] = [];
 
@@ -56,5 +63,52 @@ describe("pruneCatalogRefreshHistory", () => {
       runId: runs[1].id,
       error: "recent diagnostic details",
     });
+  });
+});
+
+
+describe("catalog refresh history cleanup failure", () => {
+  it("leaves a successful refresh successful and logs the cleanup rejection", async () => {
+    const cleanupError = new Error("history deletion failed");
+    let rejectCleanup!: (error: Error) => void;
+    const cleanupGate = new Promise<never>((_resolve, reject) => {
+      rejectCleanup = reject;
+    });
+    runCatalogSyncMock.mockResolvedValueOnce({
+      selected: 0, succeeded: 0, episodes: 0, failures: [],
+    });
+    const deleteSpy = vi.spyOn(db, "delete").mockReturnValue({
+      where: () => ({ returning: () => cleanupGate }),
+    } as unknown as ReturnType<typeof db.delete>);
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      const runId = await startCatalogRefresh("manual", []);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(deleteSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+      const [beforeCleanup] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(beforeCleanup.status).toBe("succeeded");
+      expect(beforeCleanup.finishedAt).toBeInstanceOf(Date);
+
+      rejectCleanup(cleanupError);
+      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(
+        { err: cleanupError }, "unable to prune catalog refresh history",
+      ));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const [afterCleanup] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(afterCleanup.status).toBe("succeeded");
+      expect(afterCleanup.error).toBeNull();
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      deleteSpy.mockRestore();
+      warnSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+    }
   });
 });

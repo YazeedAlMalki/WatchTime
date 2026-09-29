@@ -281,6 +281,18 @@ describe('mobile startup contracts', () => {
 
     const { getByTestId } = await render(<RootLayout />);
 
+    expect(getByTestId('root-navigation')).toBeTruthy();
+    expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('font-error');
+    expect(mockReportStartupFailure).toHaveBeenCalledWith('font-error');
+  });
+
+  it('keeps root navigation mounted when splash screen cleanup fails', async () => {
+    const splashError = new Error('splash cleanup failed');
+    jest.mocked(SplashScreen.hideAsync).mockRejectedValueOnce(splashError);
+
+    const { getByTestId } = await render(<RootLayout />);
+
     await act(async () => {
       await Promise.resolve();
     });
