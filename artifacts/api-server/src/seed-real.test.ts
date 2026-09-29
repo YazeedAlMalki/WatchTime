@@ -5,6 +5,7 @@ import {
   db,
   episodesTable,
   integrationHealthTable,
+  pool,
   providerMappingsTable,
   safetyRecordsTable,
   titlesTable,
@@ -649,6 +650,65 @@ describe("real catalog sync", () => {
       vi.restoreAllMocks();
     }
   });
+
+  it.each([0, 1])(
+    "keeps exactly one pending refresh when simultaneous starts finish in order %i",
+    async (firstToFinish) => {
+      const now = new Date();
+      const [run] = await db.insert(catalogSyncRunsTable).values({
+        trigger: "manual",
+        status: "succeeded",
+        createdAt: now,
+        finishedAt: now,
+      }).returning();
+      catalogRunIds.push(run.id);
+
+      const originalConnect = pool.connect.bind(pool);
+      const releases: Array<() => void> = [];
+      let bothEntered!: () => void;
+      const bothPending = new Promise<void>((resolve) => { bothEntered = resolve; });
+      vi.spyOn(pool, "connect").mockImplementation(((callback?: Parameters<typeof pool.connect>[0]) => {
+        if (callback) return originalConnect(callback);
+        // Only pause the two recovery connections; Drizzle also uses this
+        // pool for the queries that follow once either start is released.
+        if (releases.length >= 2) return originalConnect();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        releases.push(release);
+        if (releases.length === 2) bothEntered();
+        return gate.then(() => originalConnect());
+      }) as typeof pool.connect);
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+      const starts = [scheduleCatalogRefresh(), scheduleCatalogRefresh()];
+      const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+        Number(delay) > WEEK_MS - 2_000
+          ? [setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout]
+          : []);
+
+      try {
+        await bothPending;
+        expect(refreshTimers()).toHaveLength(0);
+
+        releases[firstToFinish]();
+        await starts[firstToFinish];
+        expect(refreshTimers()).toHaveLength(1);
+
+        releases[1 - firstToFinish]();
+        await Promise.all(starts);
+        const [older, newer] = refreshTimers();
+        expect(refreshTimers()).toHaveLength(2);
+        expect(newer).not.toBe(older);
+        expect(clearTimeoutSpy).toHaveBeenCalledWith(older);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(newer);
+      } finally {
+        releases.forEach((release) => release());
+        await Promise.allSettled(starts);
+        scheduledTimers.push(...refreshTimers());
+        vi.restoreAllMocks();
+      }
+    },
+  );
 
   it("does not immediately retry a failed or skipped attempt after restart", async () => {
     const now = new Date();
