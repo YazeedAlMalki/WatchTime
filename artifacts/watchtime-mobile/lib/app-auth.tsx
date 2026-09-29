@@ -10,6 +10,7 @@ const demoEnabled = isDevelopmentAuthEnabled(
 type AppAuth = {
   isLoaded: boolean;
   isSignedIn: boolean;
+  userId: string | null;
   isDemoSignedIn: boolean;
   activateDemo: () => void;
   clearDemo: () => Promise<void>;
@@ -45,10 +46,11 @@ export function AppAuthProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(() => ({
     isLoaded: clerk.isLoaded && demoLoaded,
     isSignedIn: !!clerk.isSignedIn || isDemoSignedIn,
+    userId: isDemoSignedIn ? 'dev-demo' : (clerk.userId ?? null),
     isDemoSignedIn,
     activateDemo,
     clearDemo,
-  }), [clerk.isLoaded, clerk.isSignedIn, demoLoaded, isDemoSignedIn, activateDemo, clearDemo]);
+  }), [clerk.isLoaded, clerk.isSignedIn, clerk.userId, demoLoaded, isDemoSignedIn, activateDemo, clearDemo]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

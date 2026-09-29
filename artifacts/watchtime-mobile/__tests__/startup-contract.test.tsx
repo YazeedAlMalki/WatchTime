@@ -62,9 +62,12 @@ jest.mock('@clerk/expo', () => {
   };
 });
 
-
 jest.mock('@clerk/expo/token-cache', () => ({
   tokenCache: {},
+}));
+
+jest.mock('@/lib/dev-demo-session', () => ({
+  getDevDemoToken: jest.fn(() => Promise.resolve(null)),
 }));
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
@@ -83,6 +86,7 @@ jest.mock('@/lib/app-auth', () => ({
     return {
       isLoaded: auth.isLoaded,
       isSignedIn: !!auth.isSignedIn,
+      userId: auth.userId ?? (auth.isSignedIn ? 'startup-contract-user' : null),
       isDemoSignedIn: false,
       activateDemo: jest.fn(),
       clearDemo: jest.fn(),
@@ -175,6 +179,7 @@ jest.mock('@workspace/api-client-react', () => ({
   },
   useMarkEpisodeWatched: () => ({ isPending: false, mutate: jest.fn() }),
   getGetMyShowsQueryKey: () => ['/api/me/shows'],
+  getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
   getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
   getGetTitleQueryKey: (id: number) => [`/api/titles/${id}`],
 }));
@@ -239,6 +244,7 @@ describe('mobile startup contracts', () => {
       getToken: jest.fn(),
       isLoaded: true,
       isSignedIn: true,
+      userId: 'startup-contract-user',
     });
     mockRequestAnimationFrame.mockImplementation((callback: (time: number) => void) => {
       pendingFrames.push(callback);
@@ -295,6 +301,33 @@ describe('mobile startup contracts', () => {
     const { getByTestId } = await render(<RootLayout />);
 
     expect(getByTestId('root-navigation')).toBeTruthy();
+  });
+
+  it('keeps generated API requests connected to the current Clerk session token', async () => {
+    const activeSession = { token: 'clerk-session-account-a' };
+    const getToken = jest.fn(async () => activeSession.token);
+    mockUseAuth.mockReturnValue({
+      getToken,
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'account-a',
+    });
+
+    await render(<RootLayout />);
+
+    await waitFor(() => {
+      expect(mockSetAuthTokenGetter).toHaveBeenCalledWith(expect.any(Function));
+    });
+    const tokenGetter = mockSetAuthTokenGetter.mock.calls
+      .map(([getter]) => getter)
+      .filter((getter) => typeof getter === 'function')
+      .at(-1);
+
+    await expect(tokenGetter()).resolves.toBe('clerk-session-account-a');
+
+    activeSession.token = 'clerk-session-account-b';
+    await expect(tokenGetter()).resolves.toBe('clerk-session-account-b');
+    expect(getToken).toHaveBeenCalledTimes(2);
   });
 
   it('shows a retryable recovery state when Clerk initialization fails', async () => {
@@ -428,7 +461,6 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.shows).toEqual([false]);
     expect(mockQueryEnabled.watchlist).toEqual([false]);
     expect(mockQueryEnabled.recommendations).toEqual([false]);
-    expect(mockQueryEnabled.trending).toEqual([]);
 
     await act(async () => {
       pendingFrames[0]?.(0);
@@ -602,6 +634,44 @@ describe('mobile startup contracts', () => {
     });
   });
 
+  it('keeps trending behind the startup gate when Clerk signs out before Home starts', async () => {
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
+
+    const screen = await render(<HomeScreen />);
+
+    expect(mockQueryEnabled.shows).toEqual([false]);
+    expect(mockQueryEnabled.watchlist).toEqual([false]);
+    expect(mockQueryEnabled.recommendations).toEqual([false]);
+    expect(mockQueryEnabled.trending).toEqual([]);
+
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByTestId('loading')).toBeTruthy();
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+    expect(mockQueryEnabled.trending).toEqual([false]);
+
+    await act(async () => {
+      pendingFrames[1]?.(0);
+    });
+
+    await waitFor(() => {
+      expect(mockQueryEnabled.trending).toEqual([false, true]);
+      expect(screen.getByText('Track your shows.')).toBeTruthy();
+      expect(screen.getByText('Trending Now')).toBeTruthy();
+    });
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
   it('hides personal home content immediately when Clerk signs out in place', async () => {
     mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
     mockSignedInHomeQueryState.shows.current = {
@@ -680,44 +750,6 @@ describe('mobile startup contracts', () => {
     expect(screen.getByText('Trending Now')).toBeTruthy();
     expect(screen.getByText('Public trending after sign out')).toBeTruthy();
     expect(mockQueryEnabled.trending).toEqual([true]);
-
-    await act(async () => {
-      screen.unmount();
-    });
-  });
-
-  it('keeps trending behind the startup gate when Clerk signs out before Home starts', async () => {
-    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
-
-    const screen = await render(<HomeScreen />);
-
-    expect(mockQueryEnabled.shows).toEqual([false]);
-    expect(mockQueryEnabled.watchlist).toEqual([false]);
-    expect(mockQueryEnabled.recommendations).toEqual([false]);
-    expect(mockQueryEnabled.trending).toEqual([]);
-
-    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
-    await act(async () => {
-      screen.rerender(<HomeScreen />);
-    });
-
-    expect(screen.getByTestId('loading')).toBeTruthy();
-    expect(mockQueryEnabled.trending).toEqual([false]);
-
-    await act(async () => {
-      pendingFrames[0]?.(0);
-    });
-    expect(mockQueryEnabled.trending).toEqual([false]);
-
-    await act(async () => {
-      pendingFrames[1]?.(0);
-    });
-
-    await waitFor(() => {
-      expect(mockQueryEnabled.trending).toEqual([false, true]);
-      expect(screen.getByText('Track your shows.')).toBeTruthy();
-      expect(screen.getByText('Trending Now')).toBeTruthy();
-    });
 
     await act(async () => {
       screen.unmount();

@@ -24,6 +24,7 @@ import {
   useGetTrendingTitles,
   useMarkEpisodeWatched,
   getGetMyShowsQueryKey,
+  getGetMyWatchlistQueryKey,
   getGetMyRecommendationsQueryKey,
   getGetTitleQueryKey,
   type TrackedShow,
@@ -134,11 +135,26 @@ function UpNextCard({ show }: { show: TrackedShow }) {
   );
 }
 
-function SignedInHome({ startupReady }: { startupReady: boolean }) {
+function SignedInHome({ startupReady, userId }: { startupReady: boolean; userId: string }) {
   const c = useColors();
-  const shows = useGetMyShows(undefined, { query: { enabled: startupReady } as any });
-  const watchlist = useGetMyWatchlist(undefined, { query: { enabled: startupReady } as any });
-  const recs = useGetMyRecommendations({ query: { enabled: startupReady } as any });
+  const shows = useGetMyShows(undefined, {
+    query: {
+      enabled: startupReady,
+      queryKey: [...getGetMyShowsQueryKey(), 'account', userId],
+    } as any,
+  });
+  const watchlist = useGetMyWatchlist(undefined, {
+    query: {
+      enabled: startupReady,
+      queryKey: [...getGetMyWatchlistQueryKey(), 'account', userId],
+    } as any,
+  });
+  const recs = useGetMyRecommendations({
+    query: {
+      enabled: startupReady,
+      queryKey: [...getGetMyRecommendationsQueryKey(), 'account', userId],
+    } as any,
+  });
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
@@ -355,7 +371,7 @@ function SignedOutHome({ startupReady }: { startupReady: boolean }) {
 }
 
 export default function HomeScreen() {
-  const { isLoaded, isSignedIn } = useAppAuth();
+  const { isLoaded, isSignedIn, userId } = useAppAuth();
   const [startupReady, setStartupReady] = useState(false);
 
   useEffect(() => {
@@ -363,11 +379,11 @@ export default function HomeScreen() {
   }, []);
 
   if (!isLoaded) return <Loading />;
-  return isSignedIn ? (
-    <SignedInHome startupReady={startupReady} />
-  ) : (
-    <SignedOutHome startupReady={startupReady} />
-  );
+  if (isSignedIn) {
+    if (!userId) return <Loading />;
+    return <SignedInHome startupReady={startupReady} userId={userId} />;
+  }
+  return <SignedOutHome startupReady={startupReady} />;
 }
 
 const styles = StyleSheet.create({

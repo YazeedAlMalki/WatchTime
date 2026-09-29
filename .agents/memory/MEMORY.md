@@ -28,3 +28,5 @@
 - [Proxied rate-limit checks](proxied-rate-limit-checks.md) — shared preview proxy may replace a supplied forwarded IP; isolate live counter checks from normal preview traffic.
 - [Mobile cross-screen cache tests](mobile-cross-screen-cache-tests.md) — seed inactive season queries with infinite staleness and verify cross-screen invalidation through a shared query client.
 - [Expo feed mock updates](expo-feed-mock-updates.md) — for changing mocked query results, notify subscribers; parent rerenders may leave feed children unchanged.
+- [Account-scoped mobile query caches](account-scoped-mobile-query-cache.md) — scope personal query keys to the active auth identity; request URLs alone do not distinguish users.
+- [Precise test patches](precise-test-patches.md) — use unique surrounding context when tests repeat, then inspect the full diff before validation.

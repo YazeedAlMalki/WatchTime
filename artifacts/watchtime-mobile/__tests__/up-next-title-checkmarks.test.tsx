@@ -47,7 +47,7 @@ jest.mock('expo-router', () => ({
   Link: ({ children }: { children: React.ReactNode }) => children,
 }));
 jest.mock('@/lib/app-auth', () => ({
-  useAppAuth: () => ({ isLoaded: true, isSignedIn: true }),
+  useAppAuth: () => ({ isLoaded: true, isSignedIn: true, userId: 'checkmarks-user' }),
 }));
 jest.mock('@/lib/home-startup', () => ({
   startHomeStartup: (ready: (value: boolean) => void) => {
