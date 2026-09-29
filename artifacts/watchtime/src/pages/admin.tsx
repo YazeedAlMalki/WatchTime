@@ -49,6 +49,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -90,7 +91,7 @@ import { useToast } from "@/hooks/use-toast";
 export default function AdminPage() {
   const [, setLocation] = useLocation();
   const search = useSearch();
-  const { tab, region, q, ownership, aliasId } = readAdminContentUrl(search);
+  const { tab, region, q, ownership, malformedRefreshTimestamp, aliasId } = readAdminContentUrl(search);
   const selectTab = (nextTab: string) => {
     setLocation(adminContentUrl(search, nextTab as AdminTab, region));
   };
@@ -102,6 +103,9 @@ export default function AdminPage() {
   };
   const selectAliasOwnership = (nextOwnership: AliasOwnershipFilter) => {
     setLocation(adminContentUrl(search, "content", region, undefined, nextOwnership));
+  };
+  const selectMalformedRefreshTimestamp = (enabled: boolean) => {
+    setLocation(adminContentUrl(search, "content", region, undefined, undefined, undefined, enabled));
   };
   const { data: me, isLoading: meLoading } = useGetMe();
   const { data: dashboard } = useGetAdminDashboard({
@@ -265,7 +269,9 @@ export default function AdminPage() {
             onSearchChange={selectContentSearch}
             aliasOwnership={ownership}
             onAliasOwnershipChange={selectAliasOwnership}
-            reviewUrl={adminContentUrl(search, "content", region, q, ownership)}
+            malformedRefreshTimestamp={malformedRefreshTimestamp}
+            onMalformedRefreshTimestampChange={selectMalformedRefreshTimestamp}
+            reviewUrl={adminContentUrl(search, "content", region, q, ownership, undefined, malformedRefreshTimestamp)}
             aliasId={aliasId}
           />
         </TabsContent>
@@ -966,6 +972,8 @@ function ContentTab({
   onSearchChange,
   aliasOwnership,
   onAliasOwnershipChange,
+  malformedRefreshTimestamp,
+  onMalformedRefreshTimestampChange,
   reviewUrl,
   aliasId,
 }: {
@@ -975,6 +983,8 @@ function ContentTab({
   onSearchChange: (term: string) => void;
   aliasOwnership: AliasOwnershipFilter;
   onAliasOwnershipChange: (ownership: AliasOwnershipFilter) => void;
+  malformedRefreshTimestamp: boolean;
+  onMalformedRefreshTimestampChange: (enabled: boolean) => void;
   reviewUrl: string;
   aliasId: number | null;
 }) {
@@ -1022,6 +1032,7 @@ function ContentTab({
     {
       region: ratingRegion,
       ...(debouncedQ ? { q: debouncedQ } : {}),
+      ...(malformedRefreshTimestamp ? { malformedRefreshTimestamp: true } : {}),
     },
   );
   const {
@@ -1610,6 +1621,14 @@ function ContentTab({
         <span className="text-xs text-muted-foreground">
           Titles below use the selected official classification.
         </span>
+        <label className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
+          <Checkbox
+            checked={malformedRefreshTimestamp}
+            onCheckedChange={(checked) => onMalformedRefreshTimestampChange(checked === true)}
+            aria-label="Only ratings with malformed refresh timestamps"
+          />
+          Only ratings with malformed refresh timestamps
+        </label>
         <Button
           type="button"
           variant="outline"

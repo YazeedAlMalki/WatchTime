@@ -54,7 +54,7 @@ it("copies a link with the current Content filters and reports clipboard failure
   const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
   const originalFetch = window.fetch;
   const writeText = vi.fn().mockResolvedValue(undefined);
-  window.history.replaceState({}, "", "/admin?tab=content&region=FR&q=Star+Wars+%26+Friends&ownership=editorial");
+  window.history.replaceState({}, "", "/admin?tab=content&region=FR&q=Star+Wars+%26+Friends&ownership=editorial&malformedRefreshTimestamp=true");
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   window.fetch = vi.fn(async () =>
     new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } }));
@@ -68,13 +68,20 @@ it("copies a link with the current Content filters and reports clipboard failure
     await expect.element(page.getByPlaceholder("Search titles…")).toHaveValue("Star Wars & Friends");
     await expect.element(page.getByRole("combobox", { name: "Review Wikidata region" })).toHaveTextContent(/FR ·/);
     await expect.element(page.getByRole("combobox", { name: "Alias ownership" })).toHaveTextContent("Editorial");
+    await expect.element(page.getByRole("checkbox", {
+      name: "Only ratings with malformed refresh timestamps",
+    })).toBeChecked();
 
     await userEvent.click(page.getByRole("button", { name: "Copy review link" }));
     expect(writeText).toHaveBeenCalledOnce();
     const copied = new URL(writeText.mock.calls[0][0]);
     expect(copied.origin).toBe(location.origin);
     expect(readAdminContentUrl(copied.search)).toMatchObject({
-      tab: "content", region: "FR", q: "Star Wars & Friends", ownership: "editorial",
+      tab: "content",
+      region: "FR",
+      q: "Star Wars & Friends",
+      ownership: "editorial",
+      malformedRefreshTimestamp: true,
     });
     expect(toast).toHaveBeenCalledWith({ title: "Review link copied" });
 
@@ -83,6 +90,91 @@ it("copies a link with the current Content filters and reports clipboard failure
     await vi.waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({
       title: "Could not copy review link", variant: "destructive",
     })));
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+    if (previousClipboard) Object.defineProperty(navigator, "clipboard", previousClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  }
+});
+
+it("filters matching titles by the selected region's malformed timestamp and shares the filter", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  const originalFetch = window.fetch;
+  const requests: URL[] = [];
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const region = url.searchParams.get("region") ?? "US";
+    const filtered = url.searchParams.get("malformedRefreshTimestamp") === "true";
+    const rows = filtered
+      ? [region === "GB"
+        ? { id: 3, name: "GB malformed title", type: "movie", mappings: [], selectedRating: {
+            region: "GB", label: "12A", refreshTimestampMalformed: true,
+          } }
+        : { id: 1, name: "US malformed title", type: "movie", mappings: [], selectedRating: {
+            region: "US", label: "PG-13", refreshTimestampMalformed: true,
+          } }]
+      : [
+          { id: 1, name: "US malformed title", type: "movie", mappings: [], selectedRating: {
+              region: "US", label: "PG-13", refreshTimestampMalformed: true,
+            } },
+          { id: 2, name: "US healthy title", type: "movie", mappings: [], selectedRating: {
+              region: "US", label: "PG", refreshTimestampMalformed: false,
+            } },
+          { id: 3, name: "GB malformed title", type: "movie", mappings: [], selectedRating: {
+              region: "GB", label: "12A", refreshTimestampMalformed: true,
+            } },
+        ];
+    return new Response(JSON.stringify(rows), { headers: { "Content-Type": "application/json" } });
+  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await userEvent.click(page.getByRole("tab", { name: "Content" }));
+    await expect.element(page.getByText("US malformed title")).toBeVisible();
+    await expect.element(page.getByText("US healthy title")).toBeVisible();
+    const filter = page.getByRole("checkbox", {
+      name: "Only ratings with malformed refresh timestamps",
+    });
+    await userEvent.click(filter);
+    await expect.element(page.getByText("US malformed title")).toBeVisible();
+    await expect.element(page.getByText("US healthy title")).not.toBeInTheDocument();
+    await vi.waitFor(() => expect(requests.some((url) =>
+      url.searchParams.get("malformedRefreshTimestamp") === "true" &&
+      url.searchParams.get("region") === "US",
+    )).toBe(true));
+
+    const regionSelector = page.getByRole("combobox", { name: "Review Wikidata region" });
+    await userEvent.click(regionSelector);
+    await userEvent.click(page.getByRole("option", { name: /^GB ·/ }));
+    await expect.element(page.getByText("GB malformed title")).toBeVisible();
+    await expect.element(page.getByText("US malformed title")).not.toBeInTheDocument();
+    await vi.waitFor(() => expect(requests.some((url) =>
+      url.searchParams.get("malformedRefreshTimestamp") === "true" &&
+      url.searchParams.get("region") === "GB",
+    )).toBe(true));
+
+    await userEvent.click(page.getByRole("button", { name: "Copy review link" }));
+    const copied = new URL(writeText.mock.calls[0][0]);
+    expect(readAdminContentUrl(copied.search)).toMatchObject({
+      tab: "content",
+      region: "GB",
+      malformedRefreshTimestamp: true,
+    });
   } finally {
     root.unmount();
     container.remove();

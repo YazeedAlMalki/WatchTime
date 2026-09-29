@@ -13,4 +13,8 @@ q?: string;
  * Rating region used to select the official Wikidata record
  */
 region?: RatingRegion;
+/**
+ * Return only titles whose selected regional rating has a malformed refresh timestamp
+ */
+malformedRefreshTimestamp?: boolean;
 };

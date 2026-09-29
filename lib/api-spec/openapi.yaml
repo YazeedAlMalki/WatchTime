@@ -922,6 +922,10 @@ paths:
             allOf:
               - $ref: "#/components/schemas/RatingRegion"
             default: US
+        - name: malformedRefreshTimestamp
+          in: query
+          description: Return only titles whose selected regional rating has a malformed refresh timestamp
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: Content mappings

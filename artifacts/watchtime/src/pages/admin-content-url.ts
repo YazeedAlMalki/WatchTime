@@ -21,6 +21,7 @@ export function readAdminContentUrl(search: string): {
   region: RatingRegion;
   q: string;
   ownership: AliasOwnershipFilter;
+  malformedRefreshTimestamp: boolean;
   aliasId: number | null;
 } {
   const params = new URLSearchParams(search);
@@ -29,7 +30,7 @@ export function readAdminContentUrl(search: string): {
     RATING_REGIONS.find(({ code }) => code === rawRegion)?.code ?? "US";
   const rawTab = params.get("tab");
   const tab = ADMIN_TABS.find((value) => value === rawTab)
-    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("aliasId") ? "content" : "dashboard");
+    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("malformedRefreshTimestamp") || params.has("aliasId") ? "content" : "dashboard");
   const rawOwnership = params.get("ownership");
   const ownership = tab === "content" && (rawOwnership === "provider" || rawOwnership === "editorial")
     ? rawOwnership
@@ -38,7 +39,15 @@ export function readAdminContentUrl(search: string): {
   const aliasId = rawAliasId !== null && /^[1-9]\d*$/.test(rawAliasId) && Number.isSafeInteger(Number(rawAliasId))
     ? Number(rawAliasId)
     : null;
-  return { tab, region, q: tab === "content" ? (params.get("q") ?? "") : "", ownership, aliasId: tab === "content" ? aliasId : null };
+  const malformedRefreshTimestamp = tab === "content" && params.get("malformedRefreshTimestamp") === "true";
+  return {
+    tab,
+    region,
+    q: tab === "content" ? (params.get("q") ?? "") : "",
+    ownership,
+    malformedRefreshTimestamp,
+    aliasId: tab === "content" ? aliasId : null,
+  };
 }
 
 export function adminContentUrl(
@@ -48,6 +57,7 @@ export function adminContentUrl(
   q?: string,
   ownership?: AliasOwnershipFilter,
   aliasId?: number,
+  malformedRefreshTimestamp?: boolean,
 ): string {
   const params = new URLSearchParams(search);
   params.set("tab", tab);
@@ -61,9 +71,14 @@ export function adminContentUrl(
     if (selectedOwnership !== "all") params.set("ownership", selectedOwnership);
     else params.delete("ownership");
     if (aliasId !== undefined) params.set("aliasId", String(aliasId));
+    const selectedMalformedRefreshTimestamp =
+      malformedRefreshTimestamp ?? readAdminContentUrl(search).malformedRefreshTimestamp;
+    if (selectedMalformedRefreshTimestamp) params.set("malformedRefreshTimestamp", "true");
+    else params.delete("malformedRefreshTimestamp");
   } else {
     params.delete("q");
     params.delete("ownership");
+    params.delete("malformedRefreshTimestamp");
   }
   return `/admin?${params.toString()}`;
 }

@@ -42,6 +42,13 @@ export function mockMalformedSafetyTimestamp(
   recordId: number,
   timestamp: Date | string,
 ): () => void {
+  return mockMalformedSafetyTimestamps(database, new Map([[recordId, timestamp]]));
+}
+
+export function mockMalformedSafetyTimestamps(
+  database: object,
+  timestamps: ReadonlyMap<number, Date | string>,
+): () => void {
   const db = database as any;
   const originalSelect = db.select.bind(db);
   const selectSpy = vi.spyOn(db, "select").mockImplementation((...args: any[]) => {
@@ -51,8 +58,8 @@ export function mockMalformedSafetyTimestamp(
     }
 
     return mapQueryRows(query, (rows) => rows.map((row) =>
-      row.id === recordId
-        ? { ...row, updatedAt: timestamp, rawUpdatedAt: timestamp }
+      timestamps.has(row.id)
+        ? { ...row, updatedAt: timestamps.get(row.id), rawUpdatedAt: timestamps.get(row.id) }
         : row,
     ));
   });

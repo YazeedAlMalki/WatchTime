@@ -551,6 +551,7 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
 router.get("/content", async (req, res) => {
   const q = String(req.query.q ?? "").trim();
   const regionParam = req.query.region;
+  const malformedRefreshTimestampParam = req.query.malformedRefreshTimestamp;
   if (
     regionParam !== undefined &&
     (typeof regionParam !== "string" ||
@@ -558,13 +559,23 @@ router.get("/content", async (req, res) => {
   ) {
     return res.status(400).json({ error: "Invalid rating region" });
   }
+  if (
+    malformedRefreshTimestampParam !== undefined &&
+    (typeof malformedRefreshTimestampParam !== "string" ||
+      !["true", "false"].includes(malformedRefreshTimestampParam))
+  ) {
+    return res.status(400).json({ error: "Invalid malformed refresh timestamp filter" });
+  }
   const region = (regionParam as RatingRegion | undefined) ?? "US";
-  const titles = await db
+  const malformedRefreshTimestamp = malformedRefreshTimestampParam === "true";
+  const titleQuery = db
     .select()
     .from(titlesTable)
     .where(q ? ilike(titlesTable.name, `%${q}%`) : undefined)
-    .orderBy(desc(titlesTable.popularity))
-    .limit(50);
+    .orderBy(desc(titlesTable.popularity));
+  const titles = malformedRefreshTimestamp
+    ? await titleQuery
+    : await titleQuery.limit(50);
   const ids = titles.map((t) => t.id);
   const mappings = ids.length
     ? await db
@@ -594,8 +605,21 @@ router.get("/content", async (req, res) => {
         ))
     : [];
 
-  return res.json(titles.map((t) => {
-    const titleSafetyRecords = safetyRecords.filter((record) => record.titleId === t.id);
+  const mappingsByTitle = new Map<number, (typeof mappings)[number][]>();
+  for (const mapping of mappings) {
+    const titleMappings = mappingsByTitle.get(mapping.titleId);
+    if (titleMappings) titleMappings.push(mapping);
+    else mappingsByTitle.set(mapping.titleId, [mapping]);
+  }
+  const safetyRecordsByTitle = new Map<number, (typeof safetyRecords)[number][]>();
+  for (const record of safetyRecords) {
+    const titleRecords = safetyRecordsByTitle.get(record.titleId);
+    if (titleRecords) titleRecords.push(record);
+    else safetyRecordsByTitle.set(record.titleId, [record]);
+  }
+
+  const content = titles.map((t) => {
+    const titleSafetyRecords = safetyRecordsByTitle.get(t.id) ?? [];
     const ratingRecords = titleSafetyRecords.map((record) => ({
       ...record,
       updatedAt: hasMalformedTimestamp(record.rawUpdatedAt)
@@ -610,7 +634,7 @@ router.get("/content", async (req, res) => {
       type: t.type,
       tmdbId: t.tmdbId,
       imdbId: t.imdbId,
-      mappings: mappings.filter((m) => m.titleId === t.id).map((m) => ({
+      mappings: (mappingsByTitle.get(t.id) ?? []).map((m) => ({
         provider: m.provider,
         externalId: m.externalId,
         status: m.status,
@@ -620,7 +644,10 @@ router.get("/content", async (req, res) => {
         ? { ...selectedRating, refreshTimestampMalformed: hasMalformedTimestamp(selectedRecord?.rawUpdatedAt) }
         : null,
     };
-  }));
+  });
+  return res.json(malformedRefreshTimestamp
+    ? content.filter((item) => item.selectedRating?.refreshTimestampMalformed).slice(0, 50)
+    : content);
 });
 
 const normalizeAlias = (value: string) =>

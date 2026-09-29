@@ -11,6 +11,7 @@ describe("admin content URL", () => {
       region: code,
       q: "",
       ownership: "all",
+      malformedRefreshTimestamp: false,
       aliasId: null,
     });
   });
@@ -71,6 +72,42 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl(new URL(cleared, "https://example.test").search).ownership).toBe("all");
   });
 
+  it("shares the malformed timestamp filter with the selected region and search", () => {
+    const filtered = adminContentUrl(
+      "?tab=content&region=GB&q=Alien&ownership=provider",
+      "content",
+      "GB",
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(filtered).toBe(
+      "/admin?tab=content&region=GB&q=Alien&ownership=provider&malformedRefreshTimestamp=true",
+    );
+    expect(readAdminContentUrl(new URL(filtered, "https://example.test").search)).toMatchObject({
+      tab: "content",
+      region: "GB",
+      q: "Alien",
+      ownership: "provider",
+      malformedRefreshTimestamp: true,
+    });
+
+    const changedRegion = adminContentUrl(
+      new URL(filtered, "https://example.test").search,
+      "content",
+      "FR",
+    );
+    expect(readAdminContentUrl(new URL(changedRegion, "https://example.test").search)).toMatchObject({
+      region: "FR",
+      malformedRefreshTimestamp: true,
+    });
+    expect(adminContentUrl(new URL(filtered, "https://example.test").search, "reports", "GB"))
+      .not.toContain("malformedRefreshTimestamp");
+    expect(adminContentUrl(new URL(filtered, "https://example.test").search, "content", "GB", undefined, undefined, undefined, false))
+      .not.toContain("malformedRefreshTimestamp");
+  });
+
   it("opens ownership-only links in Content but ignores invalid ownership and removes it on other tabs", () => {
     expect(readAdminContentUrl("?ownership=editorial")).toMatchObject({
       tab: "content", region: "US", q: "", ownership: "editorial",
@@ -86,7 +123,12 @@ describe("admin content URL", () => {
   it("links to one alias without carrying it into another tab or changed filters", () => {
     const link = adminContentUrl("?review=42", "content", "FR", "Alien", "editorial", 217);
     expect(readAdminContentUrl(new URL(link, "https://example.test").search)).toEqual({
-      tab: "content", region: "FR", q: "Alien", ownership: "editorial", aliasId: 217,
+      tab: "content",
+      region: "FR",
+      q: "Alien",
+      ownership: "editorial",
+      malformedRefreshTimestamp: false,
+      aliasId: 217,
     });
     expect(readAdminContentUrl("?aliasId=217").aliasId).toBe(217);
     expect(readAdminContentUrl("?aliasId=-1").aliasId).toBeNull();
