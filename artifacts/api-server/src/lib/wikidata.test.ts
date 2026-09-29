@@ -712,6 +712,67 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
+  it("retains every outcome when successful and failed title refreshes overlap", async () => {
+    const previousRows = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    await db.delete(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+
+    const successfulRefreshes = 8;
+    const failedRefreshes = 8;
+    const totalRefreshes = successfulRefreshes + failedRefreshes;
+    let startedQueries = 0;
+    let releaseQueries!: () => void;
+    const allQueriesStarted = new Promise<void>((resolve) => {
+      releaseQueries = resolve;
+    });
+    const makeClient = (succeeds: boolean) => ({
+      queryByImdbId: async () => {
+        startedQueries += 1;
+        if (startedQueries === totalRefreshes) releaseQueries();
+        await allQueriesStarted;
+        if (!succeeds) {
+          throw new WikidataError("Concurrent Wikidata failure", "unavailable");
+        }
+        return matchedItem;
+      },
+    });
+
+    try {
+      const settled = await Promise.allSettled([
+        ...Array.from({ length: successfulRefreshes }, () =>
+          refreshWikidataTitle(titleId, makeClient(true))),
+        ...Array.from({ length: failedRefreshes }, () =>
+          refreshWikidataTitle(titleId, makeClient(false))),
+      ]);
+      const results = settled.map((outcome) => {
+        if (outcome.status === "rejected") throw outcome.reason;
+        return outcome.value;
+      });
+
+      expect(results.filter((result) => result.ok)).toHaveLength(successfulRefreshes);
+      expect(results.filter((result) => !result.ok)).toHaveLength(failedRefreshes);
+
+      const healthRows = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(healthRows).toHaveLength(1);
+      const [health] = healthRows;
+      expect(health).toMatchObject({
+        refreshAttempts: totalRefreshes,
+        successfulRefreshes,
+      });
+      expect(health.successRatePercent).toBeCloseTo(
+        (successfulRefreshes / totalRefreshes) * 100,
+      );
+    } finally {
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousRows.length > 0) {
+        await db.insert(integrationHealthTable).values(previousRows);
+      }
+    }
+  });
+
   it("continues counting from persisted nullable-counter health rows", async () => {
     const previousRows = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
