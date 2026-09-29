@@ -738,38 +738,91 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).toContain("2 titles");
   });
 
-  it("keeps the edited alias visible and offers a retry when refresh fails", async () => {
-    mocks.queryClient.invalidateQueries.mockRejectedValueOnce(
-      new Error("Alias refresh unavailable"),
-    );
-    render();
-
-    act(() => button(container, "Edit").click());
-    act(() => {
-      setInput(
-        container,
-        "Alternate title for The Lighthouse",
-        "Corrected Local Title",
+  it.each([
+    {
+      scenario: "alias-only",
+      failedQueryKeys: ["/api/admin/content-aliases"],
+      expectedFailure: "alternate-title list (alias records)",
+      unaffectedData: "catalog search (collision results)",
+    },
+    {
+      scenario: "catalog-only",
+      failedQueryKeys: ["/api/admin/content"],
+      expectedFailure: "catalog search (collision results)",
+      unaffectedData: "alternate-title list (alias records)",
+    },
+    {
+      scenario: "simultaneous",
+      failedQueryKeys: ["/api/admin/content-aliases", "/api/admin/content"],
+      expectedFailure:
+        "alternate-title list (alias records) and catalog search (collision results)",
+      unaffectedData: null,
+    },
+  ])(
+    "identifies $scenario refresh failures and retries the current review",
+    async ({ failedQueryKeys, expectedFailure, unaffectedData }) => {
+      const failedQueries = new Set(failedQueryKeys);
+      const rejectedQueries = new Set<string>();
+      mocks.queryClient.invalidateQueries.mockImplementation(
+        ({ queryKey }: { queryKey: string[] }) => {
+          const requestKey = queryKey[0];
+          if (
+            failedQueries.has(requestKey) &&
+            !rejectedQueries.has(requestKey)
+          ) {
+            rejectedQueries.add(requestKey);
+            return Promise.reject(new Error("Review data unavailable"));
+          }
+          return Promise.resolve();
+        },
       );
-      button(container, "Save").click();
-    });
-    await flushEffects();
+      render();
 
-    expect(container.textContent).toContain("Alternate-title refresh failed");
-    expect(container.textContent).toContain("Retry refresh");
-    expect(container.textContent).toContain("2 titles");
-    expect(mocks.toast).toHaveBeenCalledWith({
-      title: "Alternate title updated, but refresh failed",
-      description:
-        "The saved change may not be reflected in the review table yet. Retry the refresh below.",
-      variant: "destructive",
-    });
+      act(() => button(container, "Edit").click());
+      act(() => {
+        setInput(
+          container,
+          "Alternate title for The Lighthouse",
+          "Corrected Local Title",
+        );
+        button(container, "Save").click();
+      });
+      await flushEffects();
 
-    act(() => button(container, "Retry refresh").click());
-    await flushEffects();
-    expect(container.textContent).not.toContain("Alternate-title refresh failed");
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(4);
-  });
+      expect(container.textContent).toContain("Alternate-title refresh failed");
+      expect(container.textContent).toContain("Retry refresh");
+      expect(container.textContent).toContain(expectedFailure);
+      if (unaffectedData) {
+        expect(container.textContent).not.toContain(unaffectedData);
+      }
+      expect(container.textContent).toContain("2 titles");
+      expect(mocks.toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Alternate title updated, but refresh failed",
+          description: expect.stringContaining(expectedFailure),
+          variant: "destructive",
+        }),
+      );
+
+      const currentPath = window.location.pathname;
+      act(() => button(container, "Retry refresh").click());
+      await flushEffects();
+      expect(container.textContent).not.toContain(
+        "Alternate-title refresh failed",
+      );
+      expect(window.location.pathname).toBe(currentPath);
+      expect(
+        mocks.queryClient.invalidateQueries.mock.calls.map(
+          ([filter]: [{ queryKey: string[] }]) => filter.queryKey[0],
+        ),
+      ).toEqual([
+        "/api/admin/content-aliases",
+        "/api/admin/content",
+        "/api/admin/content-aliases",
+        "/api/admin/content",
+      ]);
+    },
+  );
 
   it("keeps the removed alias visible and offers a retry when refresh fails", async () => {
     mocks.queryClient.invalidateQueries.mockRejectedValueOnce(
@@ -787,7 +840,7 @@ describe("admin alternate-title review", () => {
     expect(mocks.toast).toHaveBeenCalledWith({
       title: "Alternate title removed, but refresh failed",
       description:
-        "The removal succeeded, but the review table may still be stale. Retry the refresh below.",
+        "The removal succeeded, but the review table may still be stale. Failed refresh request: alternate-title list (alias records). Retry the refresh below.",
       variant: "destructive",
     });
 

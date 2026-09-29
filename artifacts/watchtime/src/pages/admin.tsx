@@ -1851,27 +1851,46 @@ export function AliasReview({
   const [conflictAlias, setConflictAlias] = useState<AdminContentAlias | null>(
     null,
   );
-  const [refreshError, setRefreshError] = useState(false);
+  type ReviewRefreshRequest = "aliases" | "catalog";
+  const [refreshError, setRefreshError] = useState<
+    ReviewRefreshRequest[] | null
+  >(null);
   const [isRefreshingAliasViews, setIsRefreshingAliasViews] = useState(false);
 
+  const formatRefreshFailures = (failedRequests: ReviewRefreshRequest[]) => {
+    const requestNames = failedRequests.map((request) =>
+      request === "aliases"
+        ? "alternate-title list (alias records)"
+        : "catalog search (collision results)",
+    );
+    return `Failed refresh ${
+      requestNames.length === 1 ? "request" : "requests"
+    }: ${requestNames.join(" and ")}.`;
+  };
+
   const refreshAliasViews = async () => {
-    setRefreshError(false);
+    setRefreshError(null);
     setIsRefreshingAliasViews(true);
     try {
-      await Promise.all([
-        qc.invalidateQueries(
-          { queryKey: getListAdminContentAliasesQueryKey() },
-          { throwOnError: true },
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() =>
+          qc.invalidateQueries(
+            { queryKey: getListAdminContentAliasesQueryKey() },
+            { throwOnError: true },
+          ),
         ),
-        qc.invalidateQueries(
-          { queryKey: getSearchAdminContentQueryKey() },
-          { throwOnError: true },
+        Promise.resolve().then(() =>
+          qc.invalidateQueries(
+            { queryKey: getSearchAdminContentQueryKey() },
+            { throwOnError: true },
+          ),
         ),
       ]);
-      return true;
-    } catch {
-      setRefreshError(true);
-      return false;
+      const failedRequests: ReviewRefreshRequest[] = [];
+      if (results[0].status === "rejected") failedRequests.push("aliases");
+      if (results[1].status === "rejected") failedRequests.push("catalog");
+      setRefreshError(failedRequests.length > 0 ? failedRequests : null);
+      return failedRequests;
     } finally {
       setIsRefreshingAliasViews(false);
     }
@@ -1935,14 +1954,13 @@ export function AliasReview({
         onSuccess: async () => {
           setEditingId(null);
           setConflictAlias(null);
-          const refreshed = await refreshAliasViews();
+          const failedRequests = await refreshAliasViews();
           toast(
-            refreshed
+            failedRequests.length === 0
               ? { title: "Alternate title updated" }
               : {
                   title: "Alternate title updated, but refresh failed",
-                  description:
-                    "The saved change may not be reflected in the review table yet. Retry the refresh below.",
+                  description: `The saved change may not be reflected in the review table yet. ${formatRefreshFailures(failedRequests)} Retry the refresh below.`,
                   variant: "destructive",
                 },
           );
@@ -1996,14 +2014,13 @@ export function AliasReview({
       {
         onSuccess: async () => {
           if (editingId === alias.id) setEditingId(null);
-          const refreshed = await refreshAliasViews();
+          const failedRequests = await refreshAliasViews();
           toast(
-            refreshed
+            failedRequests.length === 0
               ? { title: "Alternate title removed" }
               : {
                   title: "Alternate title removed, but refresh failed",
-                  description:
-                    "The removal succeeded, but the review table may still be stale. Retry the refresh below.",
+                  description: `The removal succeeded, but the review table may still be stale. ${formatRefreshFailures(failedRequests)} Retry the refresh below.`,
                   variant: "destructive",
                 },
           );
@@ -2079,8 +2096,9 @@ export function AliasReview({
           <div>
             <p className="font-semibold">Alternate-title refresh failed</p>
             <p>
-              The review data may be stale. Retry the refresh to check the
-              latest correction and collision information.
+              The review data may be stale. {formatRefreshFailures(refreshError)}{" "}
+              Retry the refresh to check the latest correction and collision
+              information.
             </p>
           </div>
           <Button
