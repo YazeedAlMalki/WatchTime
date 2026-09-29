@@ -207,7 +207,7 @@ describe("private, idempotent watch-history imports", () => {
     });
   });
 
-  it("matches a regional alias added by a catalog refresh while leaving a shared alias for manual review", async () => {
+  it("keeps a reviewed regional match after a refresh moves its alias to another title", async () => {
     const fixtures: SourceItem[] = [
       {
         key: "test:import-refresh-primary",
@@ -320,9 +320,34 @@ describe("private, idempotent watch-history imports", () => {
         selected: true,
       });
 
+      // The source now assigns the import's original regional name to a different
+      // title. Confirmation must honor the title IDs selected at preview time.
+      const changedFixtures: SourceItem[] = [
+        { ...fixtures[0], aliases: [
+          { alias: "地域限定タイトル改訂", language: "ja", sourceName: "JA Wikipedia", sourceUrl: "https://ja.wikipedia.org/wiki/地域限定タイトル改訂" },
+          fixtures[0].aliases![1],
+        ] },
+        { ...fixtures[1], aliases: [
+          ...fixtures[1].aliases!,
+          { alias: "地域限定タイトル", language: "ja", sourceName: "JA Wikipedia", sourceUrl: "https://ja.wikipedia.org/wiki/地域限定タイトル" },
+        ] },
+      ];
+      const changed = await runCatalogSync({ dryRun: false, allowPartial: true }, changedFixtures);
+      expect(changed?.succeeded).toBe(2);
+      expect(changed?.failures).toEqual([]);
+      const movedAlias = await db.select().from(titleAliasesTable).where(eq(titleAliasesTable.alias, "地域限定タイトル"));
+      expect(movedAlias.filter((alias) => [primaryId, secondaryId].includes(alias.titleId)).map((alias) => alias.titleId))
+        .toEqual([secondaryId]);
+      const persistedPreview = await supertest(app).get(`/api/imports/${importId}`).set("x-test-user", USER_A);
+      expect(persistedPreview.status).toBe(200);
+      expect(persistedPreview.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId, selected: true });
+      expect(persistedPreview.body.items[2]).toMatchObject({ classification: "matched", titleId: primaryId, episodeId: regionalEpisode.id, selected: true });
+
       const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
       expect(confirmed.status).toBe(200);
-      expect(confirmed.body.summary.applied).toBe(2);
+      expect(confirmed.body.summary).toMatchObject({ selected: 2, applied: 2 });
+      expect(confirmed.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId });
+      expect(confirmed.body.items[2]).toMatchObject({ classification: "matched", titleId: primaryId, episodeId: regionalEpisode.id });
       const tracked = await db.select().from(watchlistTable).where(and(
         eq(watchlistTable.userId, USER_A),
         inArray(watchlistTable.titleId, [primaryId, secondaryId]),
