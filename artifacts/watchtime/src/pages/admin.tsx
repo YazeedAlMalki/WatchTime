@@ -1006,7 +1006,22 @@ function ContentTab({
   };
   const [debouncedQ, setDebouncedQ] = useState(q);
   const aliasPageSize = 50;
-  const [aliasOffset, setAliasOffset] = useState(0);
+  const aliasFilterKey = JSON.stringify([debouncedQ, aliasOwnership]);
+  const [aliasPagination, setAliasPagination] = useState<{
+    filterKey: string;
+    offset: number;
+    cursors: Record<number, number | undefined>;
+  }>(() => ({
+    filterKey: aliasFilterKey,
+    offset: 0,
+    cursors: { 0: undefined },
+  }));
+  const aliasOffset = aliasPagination.filterKey === aliasFilterKey
+    ? aliasPagination.offset
+    : 0;
+  const aliasAfterId = aliasPagination.filterKey === aliasFilterKey
+    ? aliasPagination.cursors[aliasOffset]
+    : undefined;
   const [batchProvider, setBatchProvider] = useState<
     "does_the_dog_die" | "wikidata"
   >("does_the_dog_die");
@@ -1020,8 +1035,10 @@ function ContentTab({
   }, [q]);
 
   React.useEffect(() => {
-    setAliasOffset(0);
-  }, [debouncedQ, aliasOwnership]);
+    setAliasPagination((current) => current.filterKey === aliasFilterKey
+      ? current
+      : { filterKey: aliasFilterKey, offset: 0, cursors: { 0: undefined } });
+  }, [aliasFilterKey]);
 
   const {
     data: content,
@@ -1046,15 +1063,25 @@ function ContentTab({
       ...(debouncedQ ? { q: debouncedQ } : {}),
       ...(aliasOwnership !== "all" ? { ownership: aliasOwnership } : {}),
       limit: aliasPageSize,
-      offset: aliasOffset,
+      ...(aliasAfterId !== undefined ? { afterId: aliasAfterId } : {}),
     });
-  React.useEffect(() => {
-    if (!aliasesPage) return;
-    const lastPageOffset = aliasesPage.total === 0
-      ? 0
-      : Math.floor((aliasesPage.total - 1) / aliasPageSize) * aliasPageSize;
-    if (aliasOffset > lastPageOffset) setAliasOffset(lastPageOffset);
-  }, [aliasesPage?.total, aliasOffset]);
+  const changeAliasPage = (offset: number) => {
+    setAliasPagination((current) => {
+      const base = current.filterKey === aliasFilterKey
+        ? current
+        : { filterKey: aliasFilterKey, offset: 0, cursors: { 0: undefined } };
+      if (offset > aliasOffset) {
+        const nextAfterId = aliasesPage?.nextAfterId;
+        if (nextAfterId == null) return base;
+        return {
+          ...base,
+          offset,
+          cursors: { ...base.cursors, [offset]: nextAfterId },
+        };
+      }
+      return { ...base, offset };
+    });
+  };
   const linkedAliasQuery = useListAdminContentAliases(
     { id: aliasId ?? undefined },
     {
@@ -1775,7 +1802,8 @@ function ContentTab({
         aliasTotal={aliasesPage?.total}
         aliasPageSize={aliasPageSize}
         aliasOffset={aliasOffset}
-        onAliasPageChange={setAliasOffset}
+        nextAliasCursor={aliasesPage?.nextAfterId}
+        onAliasPageChange={changeAliasPage}
         isLoading={aliasesLoading}
         isError={aliasesError}
         isFetching={aliasesFetching}
@@ -1798,6 +1826,7 @@ export function AliasReview({
   aliasTotal = aliases?.length ?? 0,
   aliasPageSize = 50,
   aliasOffset = 0,
+  nextAliasCursor,
   onAliasPageChange = () => {},
   isLoading,
   isError,
@@ -1816,6 +1845,7 @@ export function AliasReview({
   aliasTotal?: number;
   aliasPageSize?: number;
   aliasOffset?: number;
+  nextAliasCursor?: number | null;
   onAliasPageChange?: (offset: number) => void;
   isLoading: boolean;
   isError: boolean;
@@ -1859,8 +1889,7 @@ export function AliasReview({
     linkedAlias && !reviewAliases?.some((alias) => alias.id === linkedAlias.id)
       ? [linkedAlias, ...(reviewAliases ?? [])]
       : reviewAliases;
-  const firstAliasNumber = aliasTotal === 0 ? 0 : aliasOffset + 1;
-  const lastAliasNumber = Math.min(aliasOffset + aliasPageSize, aliasTotal);
+  const aliasPageNumber = Math.floor(aliasOffset / aliasPageSize) + 1;
   const copyAliasLink = async (alias: AdminContentAlias) => {
     if (!reviewUrl) return;
     try {
@@ -2531,13 +2560,13 @@ export function AliasReview({
           </table>
         </div>
       )}
-      {aliasTotal > aliasPageSize && (
+      {(aliasOffset > 0 || nextAliasCursor != null) && (
         <nav
           aria-label="Alternate title pages"
           className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
         >
           <p role="status" className="text-sm text-muted-foreground">
-            Showing {firstAliasNumber}–{lastAliasNumber} of {aliasTotal} aliases
+            Page {aliasPageNumber} · {aliasTotal} matching aliases
           </p>
           <div className="flex items-center gap-2">
             <Button
@@ -2554,7 +2583,7 @@ export function AliasReview({
               variant="outline"
               size="sm"
               onClick={() => onAliasPageChange(aliasOffset + aliasPageSize)}
-              disabled={aliasOffset + aliasPageSize >= aliasTotal || isFetching}
+              disabled={nextAliasCursor == null || isFetching}
             >
               Next aliases
             </Button>

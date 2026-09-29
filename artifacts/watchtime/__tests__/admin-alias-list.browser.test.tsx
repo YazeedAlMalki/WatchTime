@@ -122,35 +122,55 @@ it("restores a shared alias ownership filter and clears it without losing search
   }
 });
 
-it("pages through a filtered alias review without dropping its search or ownership filter", async () => {
+it("keeps filtered alias continuation stable when matching records change between pages", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial");
   const requests: URL[] = [];
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  let liveAliases = Array.from({ length: 51 }, (_, index) =>
+    makeAlias(100 + index, `Lighthouse alias ${index + 1}`),
+  );
+  let changedDuringReview = false;
   const originalFetch = window.fetch;
   window.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
     if (url.pathname !== "/api/admin/content-aliases") throw new Error(`Unexpected request: ${url}`);
     requests.push(url);
-    const offset = Number(url.searchParams.get("offset") ?? 0);
+    if (url.searchParams.get("afterId") === "149" && !changedDuringReview) {
+      changedDuringReview = true;
+      liveAliases = [
+        makeAlias(50, "Lighthouse inserted before this cursor"),
+        ...liveAliases.filter((alias) => alias.id !== 100 && alias.id !== 150),
+        makeAlias(150, "Lighthouse alias renamed ahead of the current page"),
+        makeAlias(151, "Lighthouse inserted after this cursor"),
+      ];
+    }
+    const afterId = Number(url.searchParams.get("afterId") ?? 0);
+    const matching = liveAliases.filter((alias) => alias.id > afterId);
+    const items = matching.slice(0, 50).map((alias) => ({
+      ...alias,
+      isEditorial: url.searchParams.get("ownership") !== "provider",
+    }));
     return new Response(JSON.stringify({
-      items: [{
-        id: offset + 1,
-        titleId: 101,
-        titleName: "The Lighthouse",
-        titleType: "movie",
-        titleYear: 2019,
-        alias: `Lighthouse alias ${offset + 1}`,
-        language: "fr",
-        sourceName: "Editorial",
-        sourceUrl: null,
-        isEditorial: true,
-        collision: false,
-        collisionTitleCount: 1,
-        updatedAt: "2026-09-16T00:00:00.000Z",
-      }],
-      total: 120,
+      items,
+      total: liveAliases.length,
       limit: 50,
-      offset,
+      offset: 0,
+      nextAfterId: matching.length > items.length ? items.at(-1)?.id ?? null : null,
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
 
@@ -160,19 +180,37 @@ it("pages through a filtered alias review without dropping its search or ownersh
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByRole("status")).toHaveTextContent("Showing 1–50 of 120 aliases");
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 51 matching aliases");
+    expect(requests.at(-1)?.searchParams.get("afterId")).toBeNull();
+    expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
-    await expect.element(page.getByRole("status")).toHaveTextContent("Showing 51–100 of 120 aliases");
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 52 matching aliases");
+    await expect.element(page.getByText("Lighthouse alias renamed ahead of the current page")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse inserted after this cursor")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
     expect(requests.at(-1)?.searchParams.get("limit")).toBe("50");
-    expect(requests.at(-1)?.searchParams.get("offset")).toBe("50");
+    expect(requests.at(-1)?.searchParams.get("afterId")).toBe("149");
+    expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
 
     await userEvent.click(page.getByRole("button", { name: "Previous aliases" }));
-    await expect.element(page.getByRole("status")).toHaveTextContent("Showing 1–50 of 120 aliases");
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 52 matching aliases");
+    await expect.element(page.getByText("Lighthouse inserted before this cursor")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
-    expect(requests.at(-1)?.searchParams.get("offset")).toBe("0");
+    expect(requests.at(-1)?.searchParams.get("afterId")).toBeNull();
+    expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
+
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 52 matching aliases");
+    const ownership = page.getByRole("combobox", { name: "Alias ownership" });
+    await userEvent.click(ownership);
+    await userEvent.click(page.getByRole("option", { name: "Provider-owned" }));
+    await expect.element(ownership).toHaveTextContent("Provider-owned");
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 52 matching aliases");
+    expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests.at(-1)?.searchParams.get("ownership")).toBe("provider");
+    expect(requests.at(-1)?.searchParams.get("afterId")).toBeNull();
   } finally {
     root.unmount();
     container.remove();

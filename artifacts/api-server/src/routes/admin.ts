@@ -19,7 +19,7 @@ import {
   safetySyncRunsTable,
   type SafetySyncRunResult,
 } from "@workspace/db";
-import { and, asc, eq, sql, desc, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, sql, desc, gte, gt, lte, ilike, inArray, isNull, or } from "drizzle-orm";
 import {
   UpdateAdminContributionBody,
   UpdateAdminReportBody,
@@ -933,24 +933,37 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Invalid alias list parameters" });
     return;
   }
-  const { q: rawQ, ownership, id: requestedId } = parsedParams.data;
+  const { q: rawQ, ownership, id: requestedId, afterId } = parsedParams.data;
   const q = rawQ?.trim() ?? "";
-  const requestedLimit = parsedParams.data.limit ?? 50;
-  const requestedOffset = parsedParams.data.offset ?? 0;
-  const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
-  const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
+  const limit = requestedId === undefined ? parsedParams.data.limit : 1;
+  const offset = requestedId === undefined ? parsedParams.data.offset : 0;
   const ownershipFilter =
     ownership === "provider"
       ? eq(titleAliasesTable.isEditorial, false)
       : ownership === "editorial"
         ? eq(titleAliasesTable.isEditorial, true)
         : undefined;
-  const where = buildAuditLogWhere(req.query as Record<string, string>);
+  const normalizedQ = normalizeAlias(q);
+  const searchFilter = q
+    ? or(
+        ilike(titleAliasesTable.alias, `%${q}%`),
+        normalizedQ ? ilike(titleAliasesTable.normalizedAlias, `%${normalizedQ}%`) : undefined,
+        ilike(titlesTable.name, `%${q}%`),
+      )
+    : undefined;
+  const baseWhere = requestedId !== undefined
+    ? eq(titleAliasesTable.id, requestedId)
+    : and(searchFilter, ownershipFilter);
+  const pageWhere = requestedId === undefined && afterId !== undefined
+    ? and(baseWhere, gt(titleAliasesTable.id, afterId))
+    : baseWhere;
+  const usesCursorPagination = requestedId === undefined
+    && (afterId !== undefined || req.query.offset === undefined);
   const [[{ total }], rows] = await Promise.all([
     db.select({ total: sql<number>`count(*)::int` })
       .from(titleAliasesTable)
       .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
-      .where(where),
+      .where(baseWhere),
     db
       .select({
         alias: titleAliasesTable,
@@ -960,12 +973,17 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       })
       .from(titleAliasesTable)
       .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
-      .where(where)
-      .orderBy(titleAliasesTable.normalizedAlias, titlesTable.name, titleAliasesTable.id)
-      .limit(limit)
-      .offset(offset),
+      .where(pageWhere)
+      .orderBy(
+        ...(usesCursorPagination
+          ? [asc(titleAliasesTable.id)]
+          : [asc(titleAliasesTable.normalizedAlias), asc(titlesTable.name), asc(titleAliasesTable.id)]),
+      )
+      .limit(limit + 1)
+      .offset(usesCursorPagination ? 0 : offset),
   ]);
-  const normalized = [...new Set(rows.map((row) => row.alias.normalizedAlias))];
+  const pageRows = rows.slice(0, limit);
+  const normalized = [...new Set(pageRows.map((row) => row.alias.normalizedAlias))];
   const collisions = normalized.length
     ? await db.select({
         normalizedAlias: titleAliasesTable.normalizedAlias,
@@ -975,8 +993,11 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
         .groupBy(titleAliasesTable.normalizedAlias)
     : [];
   const collisionCount = new Map(collisions.map((row) => [row.normalizedAlias, row.titleCount]));
+  const nextAfterId = rows.length > limit && pageRows.length
+    ? pageRows[pageRows.length - 1].alias.id
+    : null;
   res.json(ListAdminContentAliasesResponse.parse({
-    items: rows.map(({ alias, titleName, titleType, titleYear }) => ({
+    items: pageRows.map(({ alias, titleName, titleType, titleYear }) => ({
       id: alias.id,
       titleId: alias.titleId,
       titleName,
@@ -994,6 +1015,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
     total,
     limit,
     offset,
+    nextAfterId,
   }));
 });
 

@@ -293,12 +293,71 @@ describe("admin title aliases", () => {
     expect(new Set(pageIds).size).toBe(103);
   });
 
+  it("continues by stable alias ID when matching aliases are added, removed, or renamed", async () => {
+    const rows = await db.insert(titleAliasesTable).values(
+      Array.from({ length: 4 }, (_, index) => ({
+        titleId: createdTitleIds[0],
+        alias: `Cursor Review ${String(index + 1).padStart(2, "0")}`,
+        normalizedAlias: `cursorreview${String(index + 1).padStart(2, "0")}`,
+        sourceName: "Cursor test",
+        isEditorial: true,
+      })),
+    ).returning({ id: titleAliasesTable.id });
+
+    const firstPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Cursor Review", ownership: "editorial", limit: 2 })
+      .expect(200);
+
+    expect(firstPage.body.items.map((alias: { id: number }) => alias.id))
+      .toEqual(rows.slice(0, 2).map((row) => row.id));
+    expect(firstPage.body.nextAfterId).toBe(rows[1].id);
+
+    await db.update(titleAliasesTable).set({
+      alias: "Cursor Review Z first renamed",
+      normalizedAlias: "cursorreviewzfirstrenamed",
+    }).where(eq(titleAliasesTable.id, rows[0].id));
+    await db.update(titleAliasesTable).set({
+      alias: "Cursor Review A fourth renamed",
+      normalizedAlias: "cursorreviewafourthrenamed",
+    }).where(eq(titleAliasesTable.id, rows[3].id));
+    await db.delete(titleAliasesTable).where(eq(titleAliasesTable.id, rows[2].id));
+    const [inserted] = await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: "Cursor Review 00 inserted during review",
+      normalizedAlias: "cursorreview00insertedduringreview",
+      sourceName: "Cursor test",
+      isEditorial: true,
+    }).returning({ id: titleAliasesTable.id });
+
+    const secondPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Cursor Review",
+        ownership: "editorial",
+        limit: 2,
+        afterId: firstPage.body.nextAfterId,
+      })
+      .expect(200);
+
+    expect(secondPage.body.total).toBe(4);
+    expect(secondPage.body.items.map((alias: { id: number }) => alias.id))
+      .toEqual([rows[3].id, inserted.id]);
+    expect(secondPage.body.items[0].alias).toBe("Cursor Review A fourth renamed");
+    expect(secondPage.body.nextAfterId).toBeNull();
+    expect([
+      ...firstPage.body.items.map((alias: { id: number }) => alias.id),
+      ...secondPage.body.items.map((alias: { id: number }) => alias.id),
+    ]).toEqual([rows[0].id, rows[1].id, rows[3].id, inserted.id]);
+  });
+
   it("rejects an unknown alias ownership filter", async () => {
     const response = await request(app).get("/api/admin/content-aliases?ownership=unknown");
     expect(response.status).toBe(400);
     expect((await request(app).get("/api/admin/content-aliases?limit=0")).status).toBe(400);
     expect((await request(app).get("/api/admin/content-aliases?limit=101")).status).toBe(400);
     expect((await request(app).get("/api/admin/content-aliases?offset=-1")).status).toBe(400);
+    expect((await request(app).get("/api/admin/content-aliases?afterId=0")).status).toBe(400);
   });
 
   it("locates an exact alias ID even if the shared filters do not match", async () => {

@@ -715,6 +715,11 @@ export interface AdminContentAliasPage {
   limit: number;
   /** @minimum 0 */
   offset: number;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  nextAfterId: number | null;
 }
 
 export interface AdminContentAliasUpdate {
@@ -1233,7 +1238,12 @@ id?: number;
  */
 limit?: number;
 /**
- * Number of matching aliases to skip
+ * Return aliases with a greater record ID, preserving continuation when alias text changes
+ * @minimum 1
+ */
+afterId?: number;
+/**
+ * Legacy page offset; cursor-based clients should use afterId
  * @minimum 0
  */
 offset?: number;

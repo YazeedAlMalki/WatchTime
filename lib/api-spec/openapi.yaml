@@ -958,9 +958,13 @@ paths:
           in: query
           description: Maximum number of aliases to return
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: afterId
+          in: query
+          description: Return aliases with a greater record ID, preserving continuation when alias text changes
+          schema: { type: integer, minimum: 1 }
         - name: offset
           in: query
-          description: Number of matching aliases to skip
+          description: Legacy page offset; cursor-based clients should use afterId
           schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
@@ -1664,7 +1668,7 @@ components:
         updatedAt: { type: string, format: date-time }
     AdminContentAliasPage:
       type: object
-      required: [items, total, limit, offset]
+      required: [items, total, limit, offset, nextAfterId]
       properties:
         items:
           type: array
@@ -1673,6 +1677,7 @@ components:
         total: { type: integer, minimum: 0 }
         limit: { type: integer, minimum: 1, maximum: 100 }
         offset: { type: integer, minimum: 0 }
+        nextAfterId: { type: ["integer", "null"], minimum: 1 }
     AdminContentAliasUpdate:
       type: object
       required: [alias, expectedUpdatedAt]
