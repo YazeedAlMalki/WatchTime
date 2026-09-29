@@ -994,6 +994,8 @@ function ContentTab({
     }
   };
   const [debouncedQ, setDebouncedQ] = useState(q);
+  const aliasPageSize = 50;
+  const [aliasOffset, setAliasOffset] = useState(0);
   const [batchProvider, setBatchProvider] = useState<
     "does_the_dog_die" | "wikidata"
   >("does_the_dog_die");
@@ -1005,6 +1007,10 @@ function ContentTab({
     const t = setTimeout(() => setDebouncedQ(q), 400);
     return () => clearTimeout(t);
   }, [q]);
+
+  React.useEffect(() => {
+    setAliasOffset(0);
+  }, [debouncedQ, aliasOwnership]);
 
   const {
     data: content,
@@ -1019,7 +1025,7 @@ function ContentTab({
     },
   );
   const {
-    data: aliases,
+    data: aliasesPage,
     isLoading: aliasesLoading,
     isError: aliasesError,
     isFetching: aliasesFetching,
@@ -1027,7 +1033,16 @@ function ContentTab({
   } = useListAdminContentAliases({
       ...(debouncedQ ? { q: debouncedQ } : {}),
       ...(aliasOwnership !== "all" ? { ownership: aliasOwnership } : {}),
+      limit: aliasPageSize,
+      offset: aliasOffset,
     });
+  React.useEffect(() => {
+    if (!aliasesPage) return;
+    const lastPageOffset = aliasesPage.total === 0
+      ? 0
+      : Math.floor((aliasesPage.total - 1) / aliasPageSize) * aliasPageSize;
+    if (aliasOffset > lastPageOffset) setAliasOffset(lastPageOffset);
+  }, [aliasesPage?.total, aliasOffset]);
   const linkedAliasQuery = useListAdminContentAliases(
     { id: aliasId ?? undefined },
     {
@@ -1037,7 +1052,7 @@ function ContentTab({
       },
     },
   );
-  const linkedAlias = aliasId === null ? undefined : linkedAliasQuery.data?.[0];
+  const linkedAlias = aliasId === null ? undefined : linkedAliasQuery.data?.items?.[0];
   const refresh = useRefreshAdminContent();
   const batchRefresh = useRefreshAdminContentBatch();
   const { data: batchStatus } = useGetAdminContentRefreshBatch();
@@ -1736,7 +1751,11 @@ function ContentTab({
         </div>
       )}
       <AliasReview
-        aliases={aliases}
+        aliases={aliasesPage?.items}
+        aliasTotal={aliasesPage?.total}
+        aliasPageSize={aliasPageSize}
+        aliasOffset={aliasOffset}
+        onAliasPageChange={setAliasOffset}
         isLoading={aliasesLoading}
         isError={aliasesError}
         isFetching={aliasesFetching}
@@ -1756,6 +1775,10 @@ function ContentTab({
 
 export function AliasReview({
   aliases,
+  aliasTotal = aliases?.length ?? 0,
+  aliasPageSize = 50,
+  aliasOffset = 0,
+  onAliasPageChange = () => {},
   isLoading,
   isError,
   isFetching,
@@ -1770,6 +1793,10 @@ export function AliasReview({
   onRetryLinkedAlias,
 }: {
   aliases: AdminContentAlias[] | undefined;
+  aliasTotal?: number;
+  aliasPageSize?: number;
+  aliasOffset?: number;
+  onAliasPageChange?: (offset: number) => void;
   isLoading: boolean;
   isError: boolean;
   isFetching: boolean;
@@ -1794,6 +1821,8 @@ export function AliasReview({
   const visibleAliases = linkedAlias && !aliases?.some((alias) => alias.id === linkedAlias.id)
     ? [linkedAlias, ...(aliases ?? [])]
     : aliases;
+  const firstAliasNumber = aliasTotal === 0 ? 0 : aliasOffset + 1;
+  const lastAliasNumber = Math.min(aliasOffset + aliasPageSize, aliasTotal);
   const copyAliasLink = async (alias: AdminContentAlias) => {
     if (!reviewUrl) return;
     try {
@@ -2021,7 +2050,7 @@ export function AliasReview({
             </SelectContent>
           </Select>
           <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-            {isError ? "Aliases unavailable" : `${aliases?.length ?? 0} aliases`}
+            {isError ? "Aliases unavailable" : `${aliasTotal} aliases`}
           </span>
         </div>
       </div>
@@ -2411,6 +2440,36 @@ export function AliasReview({
             </tbody>
           </table>
         </div>
+      )}
+      {aliasTotal > aliasPageSize && (
+        <nav
+          aria-label="Alternate title pages"
+          className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p role="status" className="text-sm text-muted-foreground">
+            Showing {firstAliasNumber}–{lastAliasNumber} of {aliasTotal} aliases
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onAliasPageChange(Math.max(0, aliasOffset - aliasPageSize))}
+              disabled={aliasOffset === 0 || isFetching}
+            >
+              Previous aliases
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onAliasPageChange(aliasOffset + aliasPageSize)}
+              disabled={aliasOffset + aliasPageSize >= aliasTotal || isFetching}
+            >
+              Next aliases
+            </Button>
+          </div>
+        </nav>
       )}
     </div>
   );

@@ -20,8 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
-  AdminContentAlias,
   AdminContentAliasDelete,
+  AdminContentAliasPage,
   AdminContentAliasRecord,
   AdminContentAliasUpdate,
   AdminContentRefreshBatchHistoryEntry,
@@ -3492,9 +3492,9 @@ export const getListAdminContentAliasesUrl = (params?: ListAdminContentAliasesPa
 /**
  * @summary Review alternate-title provenance and collisions
  */
-export const listAdminContentAliases = async (params?: ListAdminContentAliasesParams, options?: Parameters<typeof customFetch>[1]): Promise<AdminContentAlias[]> => {
+export const listAdminContentAliases = async (params?: ListAdminContentAliasesParams, options?: Parameters<typeof customFetch>[1]): Promise<AdminContentAliasPage> => {
 
-  return customFetch<AdminContentAlias[]>(getListAdminContentAliasesUrl(params),
+  return customFetch<AdminContentAliasPage>(getListAdminContentAliasesUrl(params),
   {
     ...options,
     method: 'GET'

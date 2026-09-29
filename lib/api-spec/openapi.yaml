@@ -950,15 +950,21 @@ paths:
           in: query
           description: Find one alias by record ID regardless of search or ownership filters
           schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          description: Maximum number of aliases to return
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          description: Number of matching aliases to skip
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
-          description: Alternate titles with provenance and collision counts
+          description: Page of alternate titles with provenance and total matching count
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/AdminContentAlias"
+                $ref: "#/components/schemas/AdminContentAliasPage"
         "403":
           description: Forbidden
   /admin/content-aliases/{id}:
@@ -1652,6 +1658,17 @@ components:
         collision: { type: boolean }
         collisionTitleCount: { type: integer }
         updatedAt: { type: string, format: date-time }
+    AdminContentAliasPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminContentAlias"
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        offset: { type: integer, minimum: 0 }
     AdminContentAliasUpdate:
       type: object
       required: [alias, expectedUpdatedAt]

@@ -63,7 +63,7 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
       isFetching: false,
     }),
     useListAdminContentAliases: () => ({
-      data: [],
+      data: { items: [], total: 0, limit: 50, offset: 0 },
       isLoading: false,
       isError: false,
       isFetching: false,

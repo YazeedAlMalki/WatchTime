@@ -1191,15 +1191,32 @@ export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseIt
  * @summary Review alternate-title provenance and collisions
  */
 
+export const listAdminContentAliasesQueryLimitDefault = 50;
+export const listAdminContentAliasesQueryLimitMax = 100;
+
+export const listAdminContentAliasesQueryOffsetDefault = 0;
+export const listAdminContentAliasesQueryOffsetMin = 0;
+
 
 
 export const ListAdminContentAliasesQueryParams = zod.object({
   "q": zod.coerce.string().optional(),
   "ownership": zod.enum(['provider', 'editorial']).optional().describe('Filter aliases by their source ownership'),
-  "id": zod.coerce.number().int().min(1).optional().describe('Find one alias by record ID regardless of search or ownership filters')
+  "id": zod.coerce.number().int().min(1).optional().describe('Find one alias by record ID regardless of search or ownership filters'),
+  "limit": zod.coerce.number().int().min(1).max(listAdminContentAliasesQueryLimitMax).default(listAdminContentAliasesQueryLimitDefault).describe('Maximum number of aliases to return'),
+  "offset": zod.coerce.number().int().min(listAdminContentAliasesQueryOffsetMin).default(listAdminContentAliasesQueryOffsetDefault).describe('Number of matching aliases to skip')
 })
 
-export const ListAdminContentAliasesResponseItem = zod.object({
+export const listAdminContentAliasesResponseTotalMin = 0;
+
+export const listAdminContentAliasesResponseLimitMax = 100;
+
+export const listAdminContentAliasesResponseOffsetMin = 0;
+
+
+
+export const ListAdminContentAliasesResponse = zod.object({
+  "items": zod.array(zod.object({
   "id": zod.int(),
   "titleId": zod.int(),
   "titleName": zod.string(),
@@ -1213,8 +1230,11 @@ export const ListAdminContentAliasesResponseItem = zod.object({
   "collision": zod.boolean(),
   "collisionTitleCount": zod.int(),
   "updatedAt": zod.coerce.date()
+})),
+  "total": zod.int().min(listAdminContentAliasesResponseTotalMin),
+  "limit": zod.int().min(1).max(listAdminContentAliasesResponseLimitMax),
+  "offset": zod.int().min(listAdminContentAliasesResponseOffsetMin)
 })
-export const ListAdminContentAliasesResponse = zod.array(ListAdminContentAliasesResponseItem)
 
 
 /**

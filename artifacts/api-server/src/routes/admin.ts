@@ -25,6 +25,8 @@ import {
   UpdateAdminReportBody,
   UpdateAdminFeedbackBody,
   DeleteAdminContentAliasBody,
+  ListAdminContentAliasesQueryParams,
+  ListAdminContentAliasesResponse,
   ListAdminContentRefreshBatchHistoryResponse,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middlewares/auth";
@@ -632,37 +634,47 @@ async function refreshTitleAliasSearchList(tx: any, titleId: number) {
     .where(eq(titlesTable.id, titleId));
 }
 
-router.get("/content-aliases", async (req, res) => {
-  const q = String(req.query.q ?? "").trim();
-  const ownership = String(req.query.ownership ?? "").trim();
-  const rawId = req.query.id;
-  const id = rawId === undefined ? null : Number(rawId);
-  if (id !== null && (!Number.isSafeInteger(id) || id < 1)) {
-    return res.status(400).json({ error: "Invalid alias ID" });
+router.get("/content-aliases", async (req, res): Promise<void> => {
+  const parsedParams = ListAdminContentAliasesQueryParams.safeParse(req.query);
+  if (!parsedParams.success) {
+    res.status(400).json({ error: "Invalid alias list parameters" });
+    return;
   }
-  if (ownership && ownership !== "provider" && ownership !== "editorial") {
-    return res.status(400).json({ error: "Invalid alias ownership filter" });
-  }
+  const { q: rawQ, ownership, id: requestedId } = parsedParams.data;
+  const q = rawQ?.trim() ?? "";
+  const id = requestedId ?? null;
+  const requestedLimit = parsedParams.data.limit ?? 50;
+  const requestedOffset = parsedParams.data.offset ?? 0;
+  const limit = id === null ? requestedLimit : 1;
+  const offset = id === null ? requestedOffset : 0;
   const ownershipFilter =
     ownership === "provider"
       ? eq(titleAliasesTable.isEditorial, false)
       : ownership === "editorial"
         ? eq(titleAliasesTable.isEditorial, true)
         : undefined;
-  const rows = await db
-    .select({
-      alias: titleAliasesTable,
-      titleName: titlesTable.name,
-      titleType: titlesTable.type,
-      titleYear: titlesTable.year,
-    })
-    .from(titleAliasesTable)
-    .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
-    .where(id !== null
-      ? eq(titleAliasesTable.id, id)
-      : and(ownershipFilter, q ? ilike(titleAliasesTable.alias, `%${q}%`) : undefined))
-    .orderBy(titleAliasesTable.normalizedAlias, titlesTable.name)
-    .limit(id !== null ? 1 : 200);
+  const where = id !== null
+    ? eq(titleAliasesTable.id, id)
+    : and(ownershipFilter, q ? ilike(titleAliasesTable.alias, `%${q}%`) : undefined);
+  const [[{ total }], rows] = await Promise.all([
+    db.select({ total: sql<number>`count(*)::int` })
+      .from(titleAliasesTable)
+      .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+      .where(where),
+    db
+      .select({
+        alias: titleAliasesTable,
+        titleName: titlesTable.name,
+        titleType: titlesTable.type,
+        titleYear: titlesTable.year,
+      })
+      .from(titleAliasesTable)
+      .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+      .where(where)
+      .orderBy(titleAliasesTable.normalizedAlias, titlesTable.name, titleAliasesTable.id)
+      .limit(limit)
+      .offset(offset),
+  ]);
   const normalized = [...new Set(rows.map((row) => row.alias.normalizedAlias))];
   const collisions = normalized.length
     ? await db.select({
@@ -673,21 +685,26 @@ router.get("/content-aliases", async (req, res) => {
         .groupBy(titleAliasesTable.normalizedAlias)
     : [];
   const collisionCount = new Map(collisions.map((row) => [row.normalizedAlias, row.titleCount]));
-  return res.json(rows.map(({ alias, titleName, titleType, titleYear }) => ({
-    id: alias.id,
-    titleId: alias.titleId,
-    titleName,
-    titleType,
-    titleYear,
-    alias: alias.alias,
-    language: alias.language,
-    sourceName: alias.sourceName,
-    sourceUrl: alias.sourceUrl,
-    isEditorial: Boolean(alias.isEditorial),
-    collision: (collisionCount.get(alias.normalizedAlias) ?? 0) > 1,
-    collisionTitleCount: collisionCount.get(alias.normalizedAlias) ?? 1,
-    updatedAt: alias.updatedAt.toISOString(),
-  })));
+  res.json(ListAdminContentAliasesResponse.parse({
+    items: rows.map(({ alias, titleName, titleType, titleYear }) => ({
+      id: alias.id,
+      titleId: alias.titleId,
+      titleName,
+      titleType,
+      titleYear,
+      alias: alias.alias,
+      language: alias.language,
+      sourceName: alias.sourceName,
+      sourceUrl: alias.sourceUrl,
+      isEditorial: Boolean(alias.isEditorial),
+      collision: (collisionCount.get(alias.normalizedAlias) ?? 0) > 1,
+      collisionTitleCount: collisionCount.get(alias.normalizedAlias) ?? 1,
+      updatedAt: alias.updatedAt.toISOString(),
+    })),
+    total,
+    limit,
+    offset,
+  }));
 });
 
 router.patch("/content-aliases/:id", async (req, res) => {

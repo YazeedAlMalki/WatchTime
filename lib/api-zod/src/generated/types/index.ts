@@ -10,6 +10,7 @@ export * from './adminContentAlias';
 export * from './adminContentAliasConflict';
 export * from './adminContentAliasConflictCode';
 export * from './adminContentAliasDelete';
+export * from './adminContentAliasPage';
 export * from './adminContentAliasRecord';
 export * from './adminContentAliasTitleType';
 export * from './adminContentAliasUpdate';

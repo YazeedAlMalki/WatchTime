@@ -18,4 +18,15 @@ ownership?: ListAdminContentAliasesOwnership;
  * @minimum 1
  */
 id?: number;
+/**
+ * Maximum number of aliases to return
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Number of matching aliases to skip
+ * @minimum 0
+ */
+offset?: number;
 };

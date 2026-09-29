@@ -17,12 +17,15 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     useGetMe: () => ({ data: { isAdmin: true }, isLoading: false }),
     useGetAdminDashboard: () => ({ data: undefined }),
     useListAdminContentAliases: (params?: { id?: number }) => ({
-      data: params?.id === 217 ? [{
-        id: 217, titleId: 101, titleName: "The Lighthouse", titleType: "movie",
-        titleYear: 2019, alias: "Le Phare", language: "fr", sourceName: "Editorial",
-        sourceUrl: null, isEditorial: true, collision: false, collisionTitleCount: 1,
-        updatedAt: "2026-09-16T00:00:00.000Z",
-      }] : [],
+      data: params?.id === 217 ? {
+        items: [{
+          id: 217, titleId: 101, titleName: "The Lighthouse", titleType: "movie",
+          titleYear: 2019, alias: "Le Phare", language: "fr", sourceName: "Editorial",
+          sourceUrl: null, isEditorial: true, collision: false, collisionTitleCount: 1,
+          updatedAt: "2026-09-16T00:00:00.000Z",
+        }],
+        total: 1, limit: 1, offset: 0,
+      } : { items: [], total: 0, limit: 50, offset: 0 },
       isLoading: false,
     }),
     useRefreshAdminContent: () => ({ isPending: false, mutate: vi.fn() }),

@@ -155,8 +155,9 @@ describe("admin title aliases", () => {
       .get("/api/admin/content-aliases?ownership=provider");
     expect(providerResponse.status).toBe(200);
     expect(response.status).toBe(200);
-    expect(response.body).toHaveLength(2);
-    expect(response.body[0]).toMatchObject({
+    expect(response.body).toMatchObject({ total: 2, limit: 50, offset: 0 });
+    expect(response.body.items).toHaveLength(2);
+    expect(response.body.items[0]).toMatchObject({
       alias: "Shared Local Title",
       sourceName: "Editorial test",
       language: "en",
@@ -164,12 +165,12 @@ describe("admin title aliases", () => {
       collision: true,
       collisionTitleCount: 2,
     });
-    expect(providerResponse.body.every((alias: { isEditorial: boolean }) => !alias.isEditorial)).toBe(true);
+    expect(providerResponse.body.items.every((alias: { isEditorial: boolean }) => !alias.isEditorial)).toBe(true);
 
     const editorialResponse = await request(app)
       .get("/api/admin/content-aliases?ownership=editorial");
     expect(editorialResponse.status).toBe(200);
-    expect(editorialResponse.body).toEqual(
+    expect(editorialResponse.body.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           alias: "Shared Local Title",
@@ -178,12 +179,43 @@ describe("admin title aliases", () => {
         }),
       ]),
     );
-    expect(editorialResponse.body.every((alias: { isEditorial: boolean }) => alias.isEditorial)).toBe(true);
+    expect(editorialResponse.body.items.every((alias: { isEditorial: boolean }) => alias.isEditorial)).toBe(true);
+  });
+
+  it("pages through every alias matching the active search and ownership filters", async () => {
+    const aliases = Array.from({ length: 205 }, (_, index) => ({
+      titleId: createdTitleIds[0],
+      alias: `Pagination marker ${String(index).padStart(3, "0")}`,
+      normalizedAlias: `paginationmarker${String(index).padStart(3, "0")}`,
+      sourceName: "Pagination test",
+      isEditorial: index % 2 !== 0,
+    }));
+    await db.insert(titleAliasesTable).values(aliases);
+
+    const pages = await Promise.all([0, 40, 80].map((offset) =>
+      request(app).get("/api/admin/content-aliases")
+        .query({ q: "Pagination marker", ownership: "provider", limit: 40, offset }),
+    ));
+
+    expect(pages.map((page) => page.status)).toEqual([200, 200, 200]);
+    expect(pages.map((page) => page.body.total)).toEqual([103, 103, 103]);
+    expect(pages.map((page) => page.body.offset)).toEqual([0, 40, 80]);
+    expect(pages.map((page) => page.body.limit)).toEqual([40, 40, 40]);
+    expect(pages.map((page) => page.body.items.length)).toEqual([40, 40, 23]);
+    expect(pages.every((page) => page.body.items.every(
+      (alias: { isEditorial: boolean; alias: string }) =>
+        !alias.isEditorial && alias.alias.includes("Pagination marker"),
+    ))).toBe(true);
+    const pageIds = pages.flatMap((page) => page.body.items.map((alias: { id: number }) => alias.id));
+    expect(new Set(pageIds).size).toBe(103);
   });
 
   it("rejects an unknown alias ownership filter", async () => {
     const response = await request(app).get("/api/admin/content-aliases?ownership=unknown");
     expect(response.status).toBe(400);
+    expect((await request(app).get("/api/admin/content-aliases?limit=0")).status).toBe(400);
+    expect((await request(app).get("/api/admin/content-aliases?limit=101")).status).toBe(400);
+    expect((await request(app).get("/api/admin/content-aliases?offset=-1")).status).toBe(400);
   });
 
   it("locates an exact alias ID even if the shared filters do not match", async () => {
@@ -192,12 +224,14 @@ describe("admin title aliases", () => {
     const response = await request(app).get("/api/admin/content-aliases")
       .query({ id: row.id, q: "not this alias", ownership: "provider" });
     expect(response.status).toBe(200);
-    expect(response.body).toEqual([expect.objectContaining({
+    expect(response.body).toMatchObject({ total: 1, limit: 1, offset: 0 });
+    expect(response.body.items).toEqual([expect.objectContaining({
       id: row.id, alias: "Shared Local Title", isEditorial: true,
     })]);
     expect((await request(app).get("/api/admin/content-aliases?id=0")).status).toBe(400);
     expect((await request(app).get("/api/admin/content-aliases?id=1.5")).status).toBe(400);
-    expect((await request(app).get("/api/admin/content-aliases?id=999999999")).body).toEqual([]);
+    expect((await request(app).get("/api/admin/content-aliases?id=999999999")).body)
+      .toMatchObject({ items: [], total: 0, limit: 1, offset: 0 });
   });
 
   it("edits an alias without changing either catalog identity", async () => {
@@ -276,7 +310,7 @@ describe("admin title aliases", () => {
 
     const collisionReport = await request(app).get("/api/admin/content-aliases?q=Newer");
     expect(collisionReport.status).toBe(200);
-    expect(collisionReport.body).toEqual([
+    expect(collisionReport.body.items).toEqual([
       expect.objectContaining({
         id: row.id,
         titleId: createdTitleIds[0],
@@ -425,7 +459,7 @@ describe("admin title aliases", () => {
       .get("/api/admin/content-aliases")
       .query({ q: "Newer Admin Correction" });
     expect(correctionReport.status).toBe(200);
-    expect(correctionReport.body).toEqual([
+    expect(correctionReport.body.items).toEqual([
       expect.objectContaining({
         id: row.id,
         titleId: createdTitleIds[0],
@@ -440,8 +474,9 @@ describe("admin title aliases", () => {
       .get("/api/admin/content-aliases")
       .query({ q: "Shared Local Title" });
     expect(collisionReport.status).toBe(200);
-    expect(collisionReport.body).toHaveLength(2);
-    expect(collisionReport.body).toEqual(expect.arrayContaining([
+    expect(collisionReport.body.total).toBe(2);
+    expect(collisionReport.body.items).toHaveLength(2);
+    expect(collisionReport.body.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         titleId: createdTitleIds[0],
         isEditorial: false,
@@ -523,10 +558,10 @@ describe("admin title aliases", () => {
 
     const withdrawnReport = await request(app).get("/api/admin/content-aliases?q=Withdrawn");
     expect(withdrawnReport.status).toBe(200);
-    expect(withdrawnReport.body).toEqual([]);
+    expect(withdrawnReport.body.items).toEqual([]);
     const correctionReport = await request(app).get("/api/admin/content-aliases?q=Corrected");
     expect(correctionReport.status).toBe(200);
-    expect(correctionReport.body).toEqual([
+    expect(correctionReport.body.items).toEqual([
       expect.objectContaining({
         titleId: createdTitleIds[0],
         alias: "Corrected Provider Title",

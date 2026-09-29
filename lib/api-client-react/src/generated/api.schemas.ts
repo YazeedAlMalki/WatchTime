@@ -704,6 +704,19 @@ export interface AdminContentAlias {
   updatedAt: string;
 }
 
+export interface AdminContentAliasPage {
+  items: AdminContentAlias[];
+  /** @minimum 0 */
+  total: number;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  limit: number;
+  /** @minimum 0 */
+  offset: number;
+}
+
 export interface AdminContentAliasUpdate {
   /**
      * @minLength 1
@@ -1204,6 +1217,17 @@ ownership?: ListAdminContentAliasesOwnership;
  * @minimum 1
  */
 id?: number;
+/**
+ * Maximum number of aliases to return
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Number of matching aliases to skip
+ * @minimum 0
+ */
+offset?: number;
 };
 
 export type ListAdminContentAliasesOwnership = typeof ListAdminContentAliasesOwnership[keyof typeof ListAdminContentAliasesOwnership];

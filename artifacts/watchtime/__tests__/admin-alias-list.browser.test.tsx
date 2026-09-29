@@ -36,7 +36,9 @@ it("distinguishes an alias-list failure from an empty result and retries the cur
     requests.push(url);
     const failed = url.searchParams.get("ownership") === "provider"
       && requests.filter((request) => request.search === url.search).length === 1;
-    return new Response(JSON.stringify(failed ? { error: "Unavailable" } : []), {
+    return new Response(JSON.stringify(failed
+      ? { error: "Unavailable" }
+      : { items: [], total: 0, limit: 50, offset: Number(url.searchParams.get("offset") ?? 0) }), {
       status: failed ? 503 : 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -89,7 +91,9 @@ it("restores a shared alias ownership filter and clears it without losing search
     const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
     if (url.pathname !== "/api/admin/content-aliases") throw new Error(`Unexpected request: ${url}`);
     requests.push(url);
-    return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({
+      items: [], total: 0, limit: 50, offset: Number(url.searchParams.get("offset") ?? 0),
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
 
   const container = document.createElement("div");
@@ -108,6 +112,66 @@ it("restores a shared alias ownership filter and clears it without losing search
     expect(new URLSearchParams(location.search).get("ownership")).toBeNull();
     expect(new URLSearchParams(location.search).get("region")).toBe("FR");
     expect(new URLSearchParams(location.search).get("q")).toBe("Lighthouse");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("pages through a filtered alias review without dropping its search or ownership filter", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial");
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") throw new Error(`Unexpected request: ${url}`);
+    requests.push(url);
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    return new Response(JSON.stringify({
+      items: [{
+        id: offset + 1,
+        titleId: 101,
+        titleName: "The Lighthouse",
+        titleType: "movie",
+        titleYear: 2019,
+        alias: `Lighthouse alias ${offset + 1}`,
+        language: "fr",
+        sourceName: "Editorial",
+        sourceUrl: null,
+        isEditorial: true,
+        collision: false,
+        collisionTitleCount: 1,
+        updatedAt: "2026-09-16T00:00:00.000Z",
+      }],
+      total: 120,
+      limit: 50,
+      offset,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByRole("status")).toHaveTextContent("Showing 1–50 of 120 aliases");
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await expect.element(page.getByRole("status")).toHaveTextContent("Showing 51–100 of 120 aliases");
+    expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
+    expect(requests.at(-1)?.searchParams.get("limit")).toBe("50");
+    expect(requests.at(-1)?.searchParams.get("offset")).toBe("50");
+
+    await userEvent.click(page.getByRole("button", { name: "Previous aliases" }));
+    await expect.element(page.getByRole("status")).toHaveTextContent("Showing 1–50 of 120 aliases");
+    expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
+    expect(requests.at(-1)?.searchParams.get("offset")).toBe("0");
   } finally {
     root.unmount();
     container.remove();
