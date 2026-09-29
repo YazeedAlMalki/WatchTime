@@ -38,9 +38,9 @@ export async function startCatalogRefresh(
 }
 
 async function executeRun(runId: number, items: SourceItem[]) {
-  await db.update(catalogSyncRunsTable).set({ status: "running", startedAt: new Date() })
-    .where(eq(catalogSyncRunsTable.id, runId));
   try {
+    await db.update(catalogSyncRunsTable).set({ status: "running", startedAt: new Date() })
+      .where(eq(catalogSyncRunsTable.id, runId));
     const result = await runCatalogSync(
       { dryRun: false, allowPartial: true },
       items,
@@ -80,9 +80,13 @@ async function executeRun(runId: number, items: SourceItem[]) {
     await logSustainedProviderFailures();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await db.update(catalogSyncRunsTable).set({ status: "failed", error: message, finishedAt: new Date() })
-      .where(eq(catalogSyncRunsTable.id, runId));
     logger.error({ err: error, runId }, "catalog refresh failed");
+    try {
+      await db.update(catalogSyncRunsTable).set({ status: "failed", error: message, finishedAt: new Date() })
+        .where(eq(catalogSyncRunsTable.id, runId));
+    } catch (recordError) {
+      logger.error({ err: recordError, runId }, "unable to record catalog refresh failure");
+    }
   } finally {
     void pruneCatalogRefreshHistory().catch((error) => {
       logger.warn({ err: error }, "unable to prune catalog refresh history");

@@ -66,6 +66,74 @@ describe("pruneCatalogRefreshHistory", () => {
   });
 });
 
+describe("catalog refresh startup failure", () => {
+  it("records and logs a failed startup write without running the sync or rejecting the detached task", async () => {
+    const startupError = new Error("unable to mark refresh running");
+    const updateSpy = vi.spyOn(db, "update").mockReturnValueOnce({
+      set: () => ({ where: () => Promise.reject(startupError) }),
+    } as unknown as ReturnType<typeof db.update>);
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      const runId = await startCatalogRefresh("manual", []);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+        { err: startupError, runId }, "catalog refresh failed",
+      ));
+      await vi.waitFor(async () => {
+        const [run] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, runId));
+        expect(run.status).toBe("failed");
+        expect(run.error).toBe(startupError.message);
+        expect(run.finishedAt).toBeInstanceOf(Date);
+      });
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      updateSpy.mockRestore();
+      errorSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+    }
+  });
+
+  it("logs both errors if recording the startup failure also fails", async () => {
+    const startupError = new Error("unable to mark refresh running");
+    const recordError = new Error("unable to mark refresh failed");
+    const updateSpy = vi.spyOn(db, "update");
+    for (const error of [startupError, recordError]) {
+      updateSpy.mockReturnValueOnce({
+        set: () => ({ where: () => Promise.reject(error) }),
+      } as unknown as ReturnType<typeof db.update>);
+    }
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      const runId = await startCatalogRefresh("manual", []);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+        { err: recordError, runId }, "unable to record catalog refresh failure",
+      ));
+      expect(errorSpy).toHaveBeenCalledWith({ err: startupError, runId }, "catalog refresh failed");
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      updateSpy.mockRestore();
+      errorSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+    }
+  });
+});
+
 
 describe("catalog refresh history cleanup failure", () => {
   it("leaves a successful refresh successful and logs the cleanup rejection", async () => {
