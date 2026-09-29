@@ -15,7 +15,12 @@ const limitReports = rateLimit({
   store: new DrizzleRateLimitStore("startup_diagnostics"),
 });
 
-const events = new Set(["font-error", "splash-hide-error", "splash-prevent-error"]);
+const events = new Set([
+  "font-error",
+  "splash-hide-error",
+  "splash-hide-timeout",
+  "splash-prevent-error",
+]);
 
 router.post("/diagnostics/startup", limitReports, (req, res) => {
   const body = req.body;

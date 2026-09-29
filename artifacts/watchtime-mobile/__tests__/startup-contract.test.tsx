@@ -103,6 +103,7 @@ jest.mock('@expo-google-fonts/inter', () => ({
 }));
 
 jest.mock('expo-splash-screen', () => ({
+  hide: jest.fn(),
   hideAsync: jest.fn(() => Promise.resolve()),
   preventAutoHideAsync: jest.fn(() => Promise.resolve()),
 }));
@@ -260,6 +261,7 @@ describe('mobile startup contracts', () => {
   afterEach(() => {
     cleanup();
     jest.restoreAllMocks();
+    jest.useRealTimers();
     pendingFrames = [];
     mockQueryEnabled.shows.length = 0;
     mockQueryEnabled.watchlist.length = 0;
@@ -388,6 +390,28 @@ describe('mobile startup contracts', () => {
       error: 'splash cleanup failed',
     });
     expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-error');
+  });
+
+  it('falls back to synchronous splash hiding and reports when hideAsync never settles', async () => {
+    jest.useFakeTimers();
+    jest.mocked(SplashScreen.hideAsync).mockImplementationOnce(
+      () => new Promise<void>(() => {}),
+    );
+
+    const { getByTestId } = await render(<RootLayout />);
+
+    expect(getByTestId('root-navigation')).toBeTruthy();
+    expect(SplashScreen.hide).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(5_000);
+    });
+
+    expect(SplashScreen.hide).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('splash-hide-timeout', {
+      timeoutMs: 5_000,
+    });
+    expect(mockReportStartupFailure).toHaveBeenCalledWith('splash-hide-timeout');
   });
 
   it('keeps root navigation mounted when splash setup fails', async () => {

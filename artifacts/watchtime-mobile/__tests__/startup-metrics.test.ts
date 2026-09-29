@@ -20,8 +20,8 @@ describe('startup failure reporting', () => {
 
   it('sends only the fixed failure code, without an error message', async () => {
     mockReport.mockResolvedValue(undefined);
-    reportStartupFailure('splash-hide-error');
-    expect(mockReport).toHaveBeenCalledWith({ event: 'splash-hide-error' });
+    reportStartupFailure('splash-hide-timeout');
+    expect(mockReport).toHaveBeenCalledWith({ event: 'splash-hide-timeout' });
     await Promise.resolve();
   });
 

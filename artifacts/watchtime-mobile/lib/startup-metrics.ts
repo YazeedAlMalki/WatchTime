@@ -3,7 +3,11 @@ import { reportStartupDiagnostic } from '@workspace/api-client-react';
 const startupStartedAt = Date.now();
 
 type StartupDiagnosticDetails = Readonly<Record<string, unknown>>;
-export type StartupFailure = 'font-error' | 'splash-hide-error' | 'splash-prevent-error';
+export type StartupFailure =
+  | 'font-error'
+  | 'splash-hide-error'
+  | 'splash-hide-timeout'
+  | 'splash-prevent-error';
 
 /**
  * Logs startup checkpoints in development builds so cold starts can be

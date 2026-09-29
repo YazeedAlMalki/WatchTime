@@ -31,6 +31,8 @@ import { markStartup, reportStartupFailure } from '@/lib/startup-metrics';
 const domain = process.env.EXPO_PUBLIC_DOMAIN;
 if (domain) setBaseUrl(`https://${domain}`);
 
+const SPLASH_HIDE_TIMEOUT_MS = 5_000;
+
 // Defer storage access one microtask so preventAutoHideAsync starts first.
 const devSplashFailure = Promise.resolve().then(consumeDevSplashFailure);
 
@@ -41,6 +43,55 @@ function describeError(error: unknown) {
 function reportSplashSetupFailure(error: unknown) {
   markStartup('splash-setup-error', { error: describeError(error) });
   reportStartupFailure('splash-prevent-error');
+}
+
+function reportSplashHideFailure(error: unknown) {
+  markStartup('splash-recovery-error', {
+    error: describeError(error),
+  });
+  reportStartupFailure('splash-hide-error');
+}
+
+function hideSplashWithTimeout() {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const hidePromise = SplashScreen.hideAsync();
+    timeout = setTimeout(() => {
+      timeout = undefined;
+      markStartup('splash-hide-timeout', {
+        timeoutMs: SPLASH_HIDE_TIMEOUT_MS,
+      });
+      reportStartupFailure('splash-hide-timeout');
+
+      try {
+        // hide() is synchronous, so a stuck hideAsync promise cannot block this
+        // second attempt to uncover the app.
+        SplashScreen.hide();
+      } catch (error) {
+        reportSplashHideFailure(error);
+      }
+    }, SPLASH_HIDE_TIMEOUT_MS);
+
+    void Promise.resolve(hidePromise).then(
+      () => {
+        if (timeout !== undefined) {
+          clearTimeout(timeout);
+          timeout = undefined;
+        }
+      },
+      (error: unknown) => {
+        if (timeout !== undefined) {
+          clearTimeout(timeout);
+          timeout = undefined;
+        }
+        reportSplashHideFailure(error);
+      },
+    );
+  } catch (error) {
+    if (timeout !== undefined) clearTimeout(timeout);
+    reportSplashHideFailure(error);
+  }
 }
 
 // Start this immediately so reading the one-shot development switch never lets
@@ -184,18 +235,12 @@ export default function RootLayout() {
           if (failure === 'cleanup') {
             throw new Error('Development-only forced splash cleanup failure');
           }
-          return SplashScreen.hideAsync();
+          hideSplashWithTimeout();
         }).catch((error: unknown) => {
-          markStartup('splash-recovery-error', {
-            error: describeError(error),
-          });
-          reportStartupFailure('splash-hide-error');
+          reportSplashHideFailure(error);
         });
       } catch (error) {
-        markStartup('splash-recovery-error', {
-          error: describeError(error),
-        });
-        reportStartupFailure('splash-hide-error');
+        reportSplashHideFailure(error);
       }
     }
   }, [fontsLoaded, fontError]);

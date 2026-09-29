@@ -12,5 +12,6 @@ export type ReportStartupDiagnosticBodyEvent = typeof ReportStartupDiagnosticBod
 export const ReportStartupDiagnosticBodyEvent = {
   'font-error': 'font-error',
   'splash-hide-error': 'splash-hide-error',
+  'splash-hide-timeout': 'splash-hide-timeout',
   'splash-prevent-error': 'splash-prevent-error',
 } as const;

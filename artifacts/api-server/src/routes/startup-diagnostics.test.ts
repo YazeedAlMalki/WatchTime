@@ -40,6 +40,19 @@ describe("startup diagnostics", () => {
     );
   });
 
+  it("accepts the fixed splash-hide timeout event", async () => {
+    const res = await supertest(app)
+      .post("/api/diagnostics/startup")
+      .set("X-Forwarded-For", testIps[1])
+      .send({ event: "splash-hide-timeout" });
+
+    expect(res.status).toBe(204);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { event: "splash-hide-timeout" },
+      "mobile startup recovery failure",
+    );
+  });
+
   it("rejects arbitrary text and extra fields without logging them", async () => {
     for (const body of [
       { event: "custom error: private content" },
