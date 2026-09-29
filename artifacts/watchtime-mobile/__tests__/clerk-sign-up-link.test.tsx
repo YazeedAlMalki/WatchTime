@@ -189,4 +189,36 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(finalize).not.toHaveBeenCalled();
     expect(mockRouterReplace).not.toHaveBeenCalled();
   });
+
+  it('reports a failed resend and lets the user retry without leaving verification', async () => {
+    mockUseLocalSearchParams.mockReturnValue({});
+    const sendEmailCode = jest.fn()
+      .mockResolvedValueOnce({ error: { message: 'Please wait before requesting another code.' } })
+      .mockResolvedValueOnce({ error: null });
+    mockUseSignUp.mockReturnValue({
+      signUp: {
+        status: 'missing_requirements',
+        unverifiedFields: ['email_address'],
+        missingFields: [],
+        verifications: { sendEmailCode },
+      },
+      errors: { fields: {} },
+      fetchStatus: 'idle',
+    });
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.press(screen.getByTestId('resend-code-button'));
+    await waitFor(() => expect(screen.getByTestId('resend-code-status').props.children)
+      .toBe('Could not send a new code. Please wait before requesting another code.'));
+    expect(screen.getByText('Check your email')).toBeTruthy();
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+
+    await fireEvent.press(screen.getByTestId('resend-code-button'));
+    await waitFor(() => expect(screen.getByTestId('resend-code-status').props.children)
+      .toBe('A new code is on its way. Check your email.'));
+    expect(sendEmailCode).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+  });
 });

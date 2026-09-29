@@ -37,8 +37,26 @@ function ClerkSignUpScreen() {
   const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
+  const [resendStatus, setResendStatus] = useState<{ message: string; failed: boolean } | null>(null);
+  const [resending, setResending] = useState(false);
 
   const busy = fetchStatus === 'fetching';
+
+  const handleResend = async () => {
+    if (busy || resending) return;
+    setResending(true);
+    setResendStatus(null);
+    try {
+      const { error } = await signUp.verifications.sendEmailCode();
+      setResendStatus(error
+        ? { message: `Could not send a new code. ${error.message || 'Please try again.'}`, failed: true }
+        : { message: 'A new code is on its way. Check your email.', failed: false });
+    } catch {
+      setResendStatus({ message: 'Could not send a new code. Please try again.', failed: true });
+    } finally {
+      setResending(false);
+    }
+  };
 
   const handleSubmit = async () => {
     const { error } = await signUp.password({ emailAddress, password });
@@ -147,13 +165,23 @@ function ClerkSignUpScreen() {
             </Pressable>
             <Pressable
               testID="resend-code-button"
-              onPress={() => signUp.verifications.sendEmailCode()}
-              style={({ pressed }) => [{ alignItems: 'center', marginTop: 16, opacity: pressed ? 0.6 : 1 }]}
+              onPress={handleResend}
+              disabled={busy || resending}
+              style={({ pressed }) => [{ alignItems: 'center', marginTop: 16, opacity: busy || resending ? 0.5 : pressed ? 0.6 : 1 }]}
             >
               <Text style={{ color: c.primary, fontFamily: 'Inter_500Medium' }}>
-                I need a new code
+                {resending ? 'Sending…' : 'I need a new code'}
               </Text>
             </Pressable>
+            {resendStatus ? (
+              <Text
+                testID="resend-code-status"
+                accessibilityLiveRegion="polite"
+                style={{ color: resendStatus.failed ? c.destructive : c.mutedForeground, fontSize: 13, textAlign: 'center', marginTop: 8 }}
+              >
+                {resendStatus.message}
+              </Text>
+            ) : null}
           </>
         ) : (
           <>
