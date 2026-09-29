@@ -1906,29 +1906,37 @@ export function AliasReview({
     }: ${requestNames.join(" and ")}.`;
   };
 
-  const refreshAliasViews = async () => {
+  const refreshAliasViews = async (
+    requests: ReviewRefreshRequest[] = ["aliases", "catalog"],
+  ) => {
     setRefreshError(null);
     setIsRefreshingAliasViews(true);
     try {
-      const results = await Promise.allSettled([
-        Promise.resolve().then(() =>
-          qc.invalidateQueries(
-            { queryKey: getListAdminContentAliasesQueryKey() },
-            { throwOnError: true },
+      const results = await Promise.allSettled(
+        requests.map((request) =>
+          Promise.resolve().then(() =>
+            qc.invalidateQueries(
+              {
+                queryKey:
+                  request === "aliases"
+                    ? getListAdminContentAliasesQueryKey()
+                    : getSearchAdminContentQueryKey(),
+              },
+              { throwOnError: true },
+            ),
           ),
         ),
-        Promise.resolve().then(() =>
-          qc.invalidateQueries(
-            { queryKey: getSearchAdminContentQueryKey() },
-            { throwOnError: true },
-          ),
-        ),
-      ]);
-      const failedRequests: ReviewRefreshRequest[] = [];
-      if (results[0].status === "rejected") failedRequests.push("aliases");
-      if (results[1].status === "rejected") failedRequests.push("catalog");
+      );
+      const failedRequests = requests.filter(
+        (_request, index) => results[index].status === "rejected",
+      );
       setRefreshError(failedRequests.length > 0 ? failedRequests : null);
-      if (!failedRequests.includes("aliases")) setSavedAliasPreview(null);
+      if (
+        requests.includes("aliases") &&
+        !failedRequests.includes("aliases")
+      ) {
+        setSavedAliasPreview(null);
+      }
       return failedRequests;
     } finally {
       setIsRefreshingAliasViews(false);
@@ -2165,7 +2173,11 @@ export function AliasReview({
             size="sm"
             variant="outline"
             className="shrink-0 gap-1.5"
-            onClick={() => void refreshAliasViews()}
+            onClick={() =>
+              void refreshAliasViews(
+                refreshError ?? ["aliases", "catalog"],
+              )
+            }
             disabled={isRefreshingAliasViews}
           >
             <RefreshCw

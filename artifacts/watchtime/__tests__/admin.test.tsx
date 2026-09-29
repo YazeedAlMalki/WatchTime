@@ -145,6 +145,52 @@ describe("admin alternate-title review", () => {
     });
   }
 
+  type RefreshRequest = "aliases" | "catalog";
+
+  function setRefreshFailures(failedRequests: RefreshRequest[]) {
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) => {
+        const request =
+          queryKey[0] === "/api/admin/content-aliases"
+            ? "aliases"
+            : "catalog";
+        return failedRequests.includes(request)
+          ? Promise.reject(new Error(`${request} refresh unavailable`))
+          : Promise.resolve();
+      },
+    );
+  }
+
+  function expectRefreshCalls(requests: RefreshRequest[]) {
+    expect(
+      mocks.queryClient.invalidateQueries.mock.calls.map(
+        ([filters]) => filters.queryKey[0],
+      ),
+    ).toEqual(
+      requests.map((request) =>
+        request === "aliases"
+          ? "/api/admin/content-aliases"
+          : "/api/admin/content",
+      ),
+    );
+  }
+
+  async function saveAliasToTriggerRefresh(failedRequests: RefreshRequest[]) {
+    setRefreshFailures(failedRequests);
+    render();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+  }
+
   it("pins and highlights a linked alias outside the current result set and copies its record link", async () => {
     const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -407,7 +453,85 @@ describe("admin alternate-title review", () => {
       "Alternate-title refresh failed",
     );
     expect(container.textContent).toContain(currentAlias.alias);
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(4);
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries only the alias request and updates its failure state", async () => {
+    await saveAliasToTriggerRefresh(["aliases"]);
+    expectRefreshCalls(["aliases", "catalog"]);
+    expect(container.textContent).toContain(
+      "Failed refresh request: alternate-title list (alias records).",
+    );
+
+    mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures(["aliases"]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+    expectRefreshCalls(["aliases"]);
+    expect(container.textContent).toContain(
+      "Failed refresh request: alternate-title list (alias records).",
+    );
+
+    mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures([]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+    expectRefreshCalls(["aliases"]);
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+  });
+
+  it("retries only the catalog request and updates its failure state", async () => {
+    await saveAliasToTriggerRefresh(["catalog"]);
+    expectRefreshCalls(["aliases", "catalog"]);
+    expect(container.textContent).toContain(
+      "Failed refresh request: catalog search (collision results).",
+    );
+
+    mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures(["catalog"]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+    expectRefreshCalls(["catalog"]);
+    expect(container.textContent).toContain(
+      "Failed refresh request: catalog search (collision results).",
+    );
+
+    mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures([]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+    expectRefreshCalls(["catalog"]);
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+  });
+
+  it("narrows simultaneous failures to only the request still failing", async () => {
+    await saveAliasToTriggerRefresh(["aliases", "catalog"]);
+    expectRefreshCalls(["aliases", "catalog"]);
+    expect(container.textContent).toContain(
+      "Failed refresh requests: alternate-title list (alias records) and catalog search (collision results).",
+    );
+
+    mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures(["catalog"]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+    expectRefreshCalls(["aliases", "catalog"]);
+    expect(container.textContent).toContain(
+      "Failed refresh request: catalog search (collision results).",
+    );
+
+    mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures([]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+    expectRefreshCalls(["catalog"]);
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
   });
 
   it("keeps a saved conflict correction visible when the alias refresh fails", async () => {
@@ -1047,8 +1171,7 @@ describe("admin alternate-title review", () => {
       ).toEqual([
         "/api/admin/content-aliases",
         "/api/admin/content",
-        "/api/admin/content-aliases",
-        "/api/admin/content",
+        ...failedQueryKeys,
       ]);
     },
   );
@@ -1076,6 +1199,6 @@ describe("admin alternate-title review", () => {
     act(() => button(container, "Retry refresh").click());
     await flushEffects();
     expect(container.textContent).not.toContain("Alternate-title refresh failed");
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(4);
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(3);
   });
 });
