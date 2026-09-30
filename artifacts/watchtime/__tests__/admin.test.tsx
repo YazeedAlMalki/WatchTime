@@ -960,6 +960,63 @@ describe("admin alternate-title review", () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("clears a removed stale-edit warning when the review refresh fails", async () => {
+    const currentCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer Admin Correction",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: currentCorrection,
+          },
+        });
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale draft correction",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+    expect(container.textContent).toContain("A newer correction is already saved");
+    expect(container.textContent).toContain(currentCorrection.alias);
+
+    render([currentCorrection]);
+    setRefreshFailures(["aliases"]);
+    confirmSpy.mockReturnValue(true);
+    act(() => button(container, "Remove").click());
+    await flushEffects();
+
+    expect(mocks.deleteMutation.mutate).toHaveBeenCalledWith(
+      {
+        id: currentCorrection.id,
+        data: { expectedUpdatedAt: currentCorrection.updatedAt },
+      },
+      expect.any(Object),
+    );
+    expect(container.textContent).not.toContain(
+      "A newer correction is already saved",
+    );
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain(
+      "Failed refresh request: alternate-title list (alias records).",
+    );
+    expect(button(container, "Retry refresh")).toBeTruthy();
+  });
+
   it("keeps a stale-edit warning when a different alias is removed", async () => {
     const currentCorrection: AdminContentAlias = {
       ...initialAlias,
