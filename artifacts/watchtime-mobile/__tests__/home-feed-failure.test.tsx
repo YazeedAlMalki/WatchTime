@@ -31,6 +31,7 @@ jest.mock('@/lib/app-auth', () => {
     useAppAuth: () => ({
       isLoaded: true,
       isSignedIn: useSyncExternalStore(mockSubscribeAuth, () => mockSignedIn),
+      userId: mockSignedIn ? 'home-test-user' : null,
     }),
   };
 });
@@ -78,8 +79,9 @@ jest.mock('@workspace/api-client-react', () => {
     refetch: mockRecommendationsRefetch,
   }),
   useMarkEpisodeWatched: () => ({ isPending: false, mutate: jest.fn() }),
-  getGetMyShowsQueryKey: jest.fn(),
-  getGetMyRecommendationsQueryKey: jest.fn(),
+  getGetMyShowsQueryKey: () => ['/api/me/shows'],
+  getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
+  getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
   getGetTitleQueryKey: jest.fn(),
   });
 });
@@ -176,7 +178,7 @@ describe('mobile signed-in Home partial feed failures', () => {
     return screen;
   }
 
-  it('keeps successful sections visible and retries only each failed feed', async () => {
+  it('shows full errors on first load while leaving other sections available', async () => {
     mockSignedIn = false;
     mockTrendingQueryState.current = {
       data: undefined, dataUpdatedAt: 0, isError: false, isLoading: true, isRefetching: false,
@@ -213,6 +215,11 @@ describe('mobile signed-in Home partial feed failures', () => {
       state.current = failed;
       await notify();
       expect(screen.getByText(message)).toBeTruthy();
+      expect(screen.getByTestId(sectionId)).toBeTruthy();
+      expect(screen.queryByTestId(sectionId.replace('-error', '-refresh-warning'))).toBeNull();
+      if (sectionId === 'up-next-error') expect(screen.queryByText('Up Next Show')).toBeNull();
+      if (sectionId === 'watchlist-error') expect(screen.queryByText('Saved Show')).toBeNull();
+      if (sectionId === 'recommendations-error') expect(screen.queryByText('Suggested Show')).toBeNull();
       if (sectionId !== 'up-next-error') expect(screen.getByText('Up Next Show')).toBeTruthy();
       if (sectionId !== 'watchlist-error') expect(screen.getByText('Saved Show')).toBeTruthy();
       if (sectionId !== 'recommendations-error') expect(screen.getByText('Suggested Show')).toBeTruthy();
@@ -248,5 +255,60 @@ describe('mobile signed-in Home partial feed failures', () => {
     expect(mockWatchlistRefetch).toHaveBeenCalledTimes(1);
     expect(mockShowsRefetch).not.toHaveBeenCalled();
     expect(mockRecommendationsRefetch).not.toHaveBeenCalled();
+    mockShowsState.current = ready([trackedShow]);
+    mockWatchlistState.current = ready([{ id: 8, name: 'Saved Show' }]);
+    await notify();
+    mockShowsRefetch.mockClear();
+    mockWatchlistRefetch.mockClear();
+    mockRecommendationsRefetch.mockClear();
+
+    // Unlike the first-load failures above, these errors retain React Query data.
+    const feeds = [
+      {
+        state: mockShowsState, data: [trackedShow], card: 'Up Next Show',
+        warning: 'up-next-refresh-warning', section: 'Up Next', retry: mockShowsRefetch,
+        fullError: 'up-next-error',
+      },
+      {
+        state: mockWatchlistState, data: [{ id: 8, name: 'Saved Show' }], card: 'Saved Show',
+        warning: 'watchlist-refresh-warning', section: 'your watchlist', retry: mockWatchlistRefetch,
+        fullError: 'watchlist-error',
+      },
+      {
+        state: mockRecommendationsState,
+        data: [{ reason: 'Because you watch drama', titles: [{ id: 9, name: 'Suggested Show' }] }],
+        card: 'Suggested Show', warning: 'recommendations-refresh-warning',
+        section: 'recommendations', retry: mockRecommendationsRefetch,
+        fullError: 'recommendations-error',
+      },
+    ];
+
+    for (const feed of feeds) {
+      feed.state.current = { ...ready(feed.data), isError: true };
+      await act(async () => mockNotifyFeeds());
+      expect(screen.getByText(feed.card)).toBeTruthy();
+      expect(screen.queryByTestId(feed.fullError)).toBeNull();
+      const warning = screen.getByTestId(feed.warning);
+      expect(within(warning).getByText(`Couldn't refresh ${feed.section}. Results may be out of date.`)).toBeTruthy();
+      fireEvent.press(within(warning).getByTestId('retry-button'));
+      expect(feed.retry).toHaveBeenCalledTimes(1);
+      for (const other of feeds) {
+        if (other !== feed) expect(other.retry).not.toHaveBeenCalled();
+      }
+      feed.state.current = ready(feed.data);
+      await act(async () => mockNotifyFeeds());
+      expect(screen.queryByTestId(feed.warning)).toBeNull();
+      expect(screen.getByText(feed.card)).toBeTruthy();
+      feed.retry.mockClear();
+    }
+
+    mockWatchlistState.current = { ...ready([]), isError: true };
+    mockRecommendationsState.current = { ...ready([]), isError: true };
+    await act(async () => mockNotifyFeeds());
+    expect(screen.getByTestId('watchlist-refresh-warning')).toBeTruthy();
+    expect(screen.getByText('Watchlist is empty')).toBeTruthy();
+    expect(screen.getByTestId('recommendations-refresh-warning')).toBeTruthy();
+    expect(screen.getByText('No recommendations yet')).toBeTruthy();
+    expect(screen.getByText('Up Next Show')).toBeTruthy();
   });
 });

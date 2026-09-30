@@ -140,6 +140,29 @@ function UpNextCard({ show }: { show: TrackedShow }) {
   );
 }
 
+function RefreshWarning({
+  section,
+  testID,
+  onRetry,
+}: {
+  section: string;
+  testID: string;
+  onRetry: () => void;
+}) {
+  const c = useColors();
+  return (
+    <View testID={testID} style={[styles.refreshWarning, { backgroundColor: c.muted }]}>
+      <Feather name="alert-circle" size={16} color={c.mutedForeground} />
+      <Text style={[styles.refreshWarningText, { color: c.mutedForeground }]}>
+        Couldn't refresh {section}. Results may be out of date.
+      </Text>
+      <Pressable testID="retry-button" onPress={onRetry} hitSlop={8}>
+        <Text style={[styles.refreshRetry, { color: c.primary }]}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function SignedInHome({ startupReady, userId }: { startupReady: boolean; userId: string }) {
   const c = useColors();
   const shows = useGetMyShows(undefined, {
@@ -206,79 +229,103 @@ function SignedInHome({ startupReady, userId }: { startupReady: boolean; userId:
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
     >
       <SectionHeader title="Up Next" />
-      {shows.isError ? (
+      {shows.isError && shows.data === undefined ? (
         <View testID="up-next-error">
           <ErrorState message="Couldn't load Up Next" onRetry={() => void shows.refetch()} />
         </View>
-      ) : shows.isLoading ? (
+      ) : shows.isLoading && shows.data === undefined ? (
         <Loading />
-      ) : upNext.length === 0 ? (
-        <EmptyState
-          icon="tv"
-          title="Nothing to watch yet"
-          subtitle="Track a show from Browse and your next episodes will appear here."
-        />
       ) : (
-        <FlatList
-          horizontal
-          data={upNext}
-          scrollEnabled={upNext.length > 0}
-          keyExtractor={(s) => String(s.title.id)}
-          renderItem={({ item }) => <UpNextCard show={item} />}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-          showsHorizontalScrollIndicator={false}
-        />
+        <>
+          {shows.isError && (
+            <RefreshWarning section="Up Next" testID="up-next-refresh-warning" onRetry={() => void shows.refetch()} />
+          )}
+          {upNext.length === 0 ? (
+            <EmptyState
+              icon="tv"
+              title="Nothing to watch yet"
+              subtitle="Track a show from Browse and your next episodes will appear here."
+            />
+          ) : (
+            <FlatList
+              horizontal
+              data={upNext}
+              scrollEnabled={upNext.length > 0}
+              keyExtractor={(s) => String(s.title.id)}
+              renderItem={({ item }) => <UpNextCard show={item} />}
+              contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+              showsHorizontalScrollIndicator={false}
+            />
+          )}
+        </>
       )}
 
       <SectionHeader title="Your Watchlist" />
-      {watchlist.isError ? (
+      {watchlist.isError && watchlist.data === undefined ? (
         <View testID="watchlist-error">
           <ErrorState message="Couldn't load your watchlist" onRetry={() => void watchlist.refetch()} />
         </View>
-      ) : watchlist.isLoading ? (
+      ) : watchlist.isLoading && watchlist.data === undefined ? (
         <Loading />
-      ) : (watchlist.data ?? []).length === 0 ? (
-        <EmptyState icon="bookmark" title="Watchlist is empty" subtitle="Save titles you want to watch later." />
       ) : (
-        <FlatList
-          horizontal
-          data={watchlist.data ?? []}
-          scrollEnabled={(watchlist.data ?? []).length > 0}
-          keyExtractor={(t) => String(t.id)}
-          renderItem={({ item }) => <PosterCard title={item} />}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-          showsHorizontalScrollIndicator={false}
-        />
-      )}
-
-      {recs.isError || recs.isLoading || (recs.data ?? []).length === 0 ? (
         <>
-          <SectionHeader title="Recommendations" />
-          {recs.isError ? (
-            <View testID="recommendations-error">
-              <ErrorState message="Couldn't load recommendations" onRetry={() => void recs.refetch()} />
-            </View>
-          ) : recs.isLoading ? (
-            <Loading />
-          ) : (
-            <EmptyState icon="star" title="No recommendations yet" subtitle="Track shows to get suggestions." />
+          {watchlist.isError && (
+            <RefreshWarning section="your watchlist" testID="watchlist-refresh-warning" onRetry={() => void watchlist.refetch()} />
           )}
-        </>
-      ) : (
-        recs.data?.map((group) => (
-          <View key={group.reason}>
-            <SectionHeader title={group.reason} />
+          {(watchlist.data ?? []).length === 0 ? (
+            <EmptyState icon="bookmark" title="Watchlist is empty" subtitle="Save titles you want to watch later." />
+          ) : (
             <FlatList
               horizontal
-              data={group.titles}
-              scrollEnabled={group.titles.length > 0}
+              data={watchlist.data ?? []}
+              scrollEnabled={(watchlist.data ?? []).length > 0}
               keyExtractor={(t) => String(t.id)}
               renderItem={({ item }) => <PosterCard title={item} />}
               contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
               showsHorizontalScrollIndicator={false}
             />
-          </View>
-        ))
+          )}
+        </>
+      )}
+
+      {((recs.isError || recs.isLoading) && recs.data === undefined) || (recs.data ?? []).length === 0 ? (
+        <>
+          <SectionHeader title="Recommendations" />
+          {recs.isError && recs.data === undefined ? (
+            <View testID="recommendations-error">
+              <ErrorState message="Couldn't load recommendations" onRetry={() => void recs.refetch()} />
+            </View>
+          ) : recs.isLoading && recs.data === undefined ? (
+            <Loading />
+          ) : (
+            <>
+              {recs.isError && (
+                <RefreshWarning section="recommendations" testID="recommendations-refresh-warning" onRetry={() => void recs.refetch()} />
+              )}
+              <EmptyState icon="star" title="No recommendations yet" subtitle="Track shows to get suggestions." />
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          {recs.isError && (
+            <RefreshWarning section="recommendations" testID="recommendations-refresh-warning" onRetry={() => void recs.refetch()} />
+          )}
+          {recs.data?.map((group) => (
+            <View key={group.reason}>
+              <SectionHeader title={group.reason} />
+              <FlatList
+                horizontal
+                data={group.titles}
+                scrollEnabled={group.titles.length > 0}
+                keyExtractor={(t) => String(t.id)}
+                renderItem={({ item }) => <PosterCard title={item} />}
+                contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+                showsHorizontalScrollIndicator={false}
+              />
+            </View>
+          ))}
+        </>
       )}
     </ScrollView>
   );
@@ -409,6 +456,25 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  refreshWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: colors.radius,
+  },
+  refreshWarningText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+  },
+  refreshRetry: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+  },
   upNextCard: {
     width: 280,
     borderRadius: colors.radius,
