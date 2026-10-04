@@ -23,6 +23,11 @@ const mockClerkAuthState: { current: ClerkAccountState } = {
 const mockFeedResponses: Record<string, Record<string, unknown>> = {};
 const mockFetchFeed = jest.fn();
 const mockFeedRequests: Array<{ feed: string; token: string }> = [];
+const mockRequestFeed = async (feed: string) => {
+  const token = await mockGetSessionToken();
+  mockFeedRequests.push({ feed, token });
+  return mockFetchFeed(feed, token);
+};
 
 jest.mock('@clerk/expo', () => ({
   useAuth: () => mockClerkAuthState.current,
@@ -71,11 +76,20 @@ jest.mock('@workspace/api-client-react', () => {
 
   return {
     getGetMyShowsQueryKey: () => ['/api/me/shows'],
+    getGetMyInProgressShowsQueryKey: () => ['/api/me/in-progress'],
+    getGetMyMoviesQueryKey: () => ['/api/me/movies'],
+    getGetMyRecentActivityQueryKey: () => ['/api/me/activity'],
     getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
     getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
     getGetTitleQueryKey: (id: number) => [`/api/titles/${id}`],
+    getMyShows: () => mockRequestFeed('shows'),
+    getMyInProgressShows: () => mockRequestFeed('inProgress'),
+    getMyMovies: () => mockRequestFeed('movies'),
+    getMyWatchlist: () => mockRequestFeed('watchlist'),
+    mergeTrackedShows: (shows: any[], inProgress: any[]) => [...inProgress, ...shows],
     useGetMyShows: (_params: unknown, options: any) => feedQuery('shows', options),
     useGetMyWatchlist: (_params: unknown, options: any) => feedQuery('watchlist', options),
+    useGetMyRecentActivity: (options: any) => feedQuery('history', options),
     useGetMyRecommendations: (options: any) => feedQuery('recommendations', options),
     useGetTrendingTitles: () => ({
       data: [],
@@ -86,6 +100,7 @@ jest.mock('@workspace/api-client-react', () => {
       refetch: jest.fn(),
     }),
     useMarkEpisodeWatched: () => ({ isPending: false, mutate: jest.fn() }),
+    useRemoveFromWatchlist: () => ({ isPending: false, mutate: jest.fn() }),
   };
 });
 
@@ -124,6 +139,8 @@ jest.mock('@/lib/startup-metrics', () => ({
 }));
 
 import HomeScreen from '../app/(tabs)/index';
+import MyShowsScreen from '../app/(tabs)/my-shows';
+import WatchlistScreen from '../app/(tabs)/watchlist';
 import { AppAuthProvider } from '../lib/app-auth';
 
 function deferred<T>() {
@@ -150,6 +167,9 @@ describe('Home feed account switching', () => {
     mockActiveSession.token = 'clerk-session-account-a';
     mockFeedResponses['clerk-session-account-a'] = {
       shows: [],
+      inProgress: [],
+      movies: [],
+      history: [],
       watchlist: [{ id: 1, name: 'Account A private watchlist title' }],
       recommendations: [],
     };
@@ -250,6 +270,143 @@ describe('Home feed account switching', () => {
       watchlist: [{ id: 2, name: 'Account B private watchlist title' }],
       recommendations: [],
     });
+
+    await waitFor(() => {
+      expect(screen.getByText('Account B private watchlist title')).toBeTruthy();
+    });
+    expect(screen.queryByText('Account A private watchlist title')).toBeNull();
+  });
+
+  it('clears My Shows immediately and fetches every personal feed for the new account', async () => {
+    mockFeedResponses['clerk-session-account-a'].shows = [{
+      title: {
+        id: 41,
+        name: 'Account A private show',
+        type: 'series',
+        year: 2024,
+        genres: [],
+        altTitles: [],
+        providers: [],
+        posterUrl: null,
+      },
+      watchedEpisodes: 1,
+      totalEpisodes: 4,
+      nextEpisode: null,
+    }];
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <AppAuthProvider>
+          <MyShowsScreen />
+        </AppAuthProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Account A private show')).toBeTruthy();
+    });
+
+    const accountBShows = deferred<any[]>();
+    mockFeedResponses['clerk-session-account-b'] = {
+      shows: accountBShows.promise,
+      inProgress: [],
+      movies: [],
+      history: [],
+    };
+    mockActiveSession.token = 'clerk-session-account-b';
+    mockClerkAuthState.current = {
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'account-b',
+      getToken: mockGetSessionToken,
+    };
+
+    await act(async () => {
+      screen.rerender(
+        <QueryClientProvider client={queryClient}>
+          <AppAuthProvider>
+            <MyShowsScreen />
+          </AppAuthProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(screen.queryByText('Account A private show')).toBeNull();
+    await waitFor(() => {
+      expect(mockFeedRequests).toEqual(expect.arrayContaining([
+        { feed: 'shows', token: 'clerk-session-account-b' },
+        { feed: 'inProgress', token: 'clerk-session-account-b' },
+        { feed: 'movies', token: 'clerk-session-account-b' },
+        { feed: 'history', token: 'clerk-session-account-b' },
+      ]));
+    });
+
+    accountBShows.resolve([{
+      title: {
+        id: 42,
+        name: 'Account B private show',
+        type: 'series',
+        year: 2025,
+        genres: [],
+        altTitles: [],
+        providers: [],
+        posterUrl: null,
+      },
+      watchedEpisodes: 0,
+      totalEpisodes: 8,
+      nextEpisode: null,
+    }]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Account B private show')).toBeTruthy();
+    });
+    expect(screen.queryByText('Account A private show')).toBeNull();
+  });
+
+  it('clears the Watchlist immediately and fetches it with the new account session', async () => {
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <AppAuthProvider>
+          <WatchlistScreen />
+        </AppAuthProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Account A private watchlist title')).toBeTruthy();
+    });
+
+    const accountBWatchlist = deferred<any[]>();
+    mockFeedResponses['clerk-session-account-b'] = {
+      watchlist: accountBWatchlist.promise,
+    };
+    mockActiveSession.token = 'clerk-session-account-b';
+    mockClerkAuthState.current = {
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'account-b',
+      getToken: mockGetSessionToken,
+    };
+
+    await act(async () => {
+      screen.rerender(
+        <QueryClientProvider client={queryClient}>
+          <AppAuthProvider>
+            <WatchlistScreen />
+          </AppAuthProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(screen.queryByText('Account A private watchlist title')).toBeNull();
+    await waitFor(() => {
+      expect(mockFeedRequests).toContainEqual({
+        feed: 'watchlist',
+        token: 'clerk-session-account-b',
+      });
+    });
+
+    accountBWatchlist.resolve([{ id: 2, name: 'Account B private watchlist title' }]);
 
     await waitFor(() => {
       expect(screen.getByText('Account B private watchlist title')).toBeTruthy();

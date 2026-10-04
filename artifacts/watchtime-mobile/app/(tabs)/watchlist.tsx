@@ -33,12 +33,12 @@ export default function WatchlistScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isSignedIn, isAuthAvailable } = useAppAuth();
+  const { isSignedIn, isAuthAvailable, userId } = useAppAuth();
   const queryClient = useQueryClient();
   const watchlist = useInfiniteQuery({
-    queryKey: [...getGetMyWatchlistQueryKey(), 'infinite'],
+    queryKey: [...getGetMyWatchlistQueryKey(), 'account', userId, 'infinite'],
     initialPageParam: undefined as string | undefined,
-    enabled: !!isSignedIn,
+    enabled: !!isSignedIn && !!userId,
     queryFn: ({ pageParam, signal }) =>
       getMyWatchlist({ limit: PAGE_SIZE, before: pageParam }, { signal }),
     getNextPageParam: (lastPage) =>
@@ -50,6 +50,8 @@ export default function WatchlistScreen() {
         queryClient.invalidateQueries({ queryKey: getGetMyWatchlistQueryKey() }),
     },
   });
+
+  if (isSignedIn && !userId) return <Loading />;
 
   if (!isSignedIn) {
     return (

@@ -307,39 +307,44 @@ export default function MyShowsScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isSignedIn, isAuthAvailable } = useAppAuth();
+  const { isSignedIn, isAuthAvailable, userId } = useAppAuth();
   const [activeTab, setActiveTab] = useState<Tab>('shows');
   const [showSearch, setShowSearch] = useState('');
   const [showFilter, setShowFilter] = useState<ShowFilter>('all');
 
   const shows = useInfiniteQuery({
-    queryKey: [...getGetMyShowsQueryKey(), 'infinite'],
+    queryKey: [...getGetMyShowsQueryKey(), 'account', userId, 'infinite'],
     initialPageParam: undefined as number | undefined,
-    enabled: !!isSignedIn,
+    enabled: !!isSignedIn && !!userId,
     queryFn: ({ pageParam, signal }) =>
       getMyShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.title.id : undefined,
   });
   const inProgress = useInfiniteQuery({
-    queryKey: [...getGetMyInProgressShowsQueryKey(), 'infinite'],
+    queryKey: [...getGetMyInProgressShowsQueryKey(), 'account', userId, 'infinite'],
     initialPageParam: undefined as number | undefined,
-    enabled: !!isSignedIn,
+    enabled: !!isSignedIn && !!userId,
     queryFn: ({ pageParam, signal }) =>
       getMyInProgressShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.title.id : undefined,
   });
   const movies = useInfiniteQuery({
-    queryKey: [...getGetMyMoviesQueryKey(), 'infinite'],
+    queryKey: [...getGetMyMoviesQueryKey(), 'account', userId, 'infinite'],
     initialPageParam: undefined as string | undefined,
-    enabled: !!isSignedIn,
+    enabled: !!isSignedIn && !!userId,
     queryFn: ({ pageParam, signal }) =>
       getMyMovies({ limit: PAGE_SIZE, before: pageParam }, { signal }),
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.collectionCursor : undefined,
   });
-  const history = useGetMyRecentActivity({ query: { enabled: !!isSignedIn } as any });
+  const history = useGetMyRecentActivity({
+    query: {
+      enabled: !!isSignedIn && !!userId,
+      queryKey: [...getGetMyRecentActivityQueryKey(), 'account', userId],
+    } as any,
+  });
 
   // Client-side filter for the TV Shows tab
   const allShows = mergeTrackedShows(shows.data?.pages.flat() ?? [], inProgress.data?.pages.flat() ?? []);
@@ -416,6 +421,8 @@ export default function MyShowsScreen() {
       </View>
     );
   }
+
+  if (!userId) return <Loading />;
 
   const SHOW_FILTER_CHIPS: { key: ShowFilter; label: string }[] = [
     { key: 'all', label: 'All' },
