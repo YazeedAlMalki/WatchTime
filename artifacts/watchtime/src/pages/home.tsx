@@ -12,7 +12,7 @@ import {
 import { PosterCard } from "@/components/ui/poster-card";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { Play, Clock, Sparkles, ChevronRight, Check } from "lucide-react";
+import { Play, Clock, Sparkles, ChevronRight, Check, Film, ArrowUpRight } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { OptimizedImage } from "@/components/ui/optimized-image";
 
@@ -33,6 +33,29 @@ export default function HomePage() {
         <h1 className="text-3xl font-display font-bold text-foreground">Welcome back</h1>
         <p className="text-muted-foreground mt-1">Here's what you're watching.</p>
       </header>
+
+      <Link
+        href="/discover-mood"
+        data-testid="link-discover-by-mood"
+        className="group relative overflow-hidden rounded-3xl border border-primary/20 bg-[radial-gradient(ellipse_at_top_right,hsl(var(--primary)/0.17),transparent_50%),linear-gradient(120deg,hsl(var(--card)),hsl(var(--background)))] p-6 sm:p-8 transition-all hover:border-primary/40 hover:shadow-[0_18px_60px_-35px_hsl(var(--primary)/0.5)]"
+      >
+        <div className="relative z-10 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="max-w-2xl">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-semibold tracking-wide text-primary">
+              <Film className="h-3.5 w-3.5" />
+              A better pick for tonight
+            </div>
+            <h2 className="font-display text-2xl font-bold text-foreground sm:text-3xl">What do you feel like watching?</h2>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
+              Find a movie for your mood, your time, and what you want to avoid.
+            </p>
+          </div>
+          <span className="inline-flex w-fit items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition-transform group-hover:translate-x-1">
+            Discover by mood <ArrowUpRight className="h-4 w-4" />
+          </span>
+        </div>
+        <Sparkles aria-hidden="true" className="absolute -bottom-7 right-8 h-36 w-36 rotate-12 text-primary/5" />
+      </Link>
 
       {/* Up Next */}
       {upNext.length > 0 && (

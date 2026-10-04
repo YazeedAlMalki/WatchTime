@@ -5,7 +5,7 @@ import {
   useRemoveFromWatchlist,
 } from "@workspace/api-client-react";
 import { PosterCard } from "@/components/ui/poster-card";
-import { Bookmark, Search } from "lucide-react";
+import { Bookmark, Search, Sparkles } from "lucide-react";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -53,9 +53,16 @@ export default function WatchlistPage() {
           <Bookmark className="w-12 h-12 mb-4 opacity-20" />
           <h3 className="text-xl font-display font-medium text-foreground mb-2">Your watchlist is empty</h3>
           <p className="mb-6">Save shows and movies you want to keep track of.</p>
-          <Link href="/browse">
-            <Button className="rounded-full shadow-sm">Explore Catalog</Button>
-          </Link>
+          <div className="flex flex-col items-center gap-3 sm:flex-row">
+            <Link href="/discover-mood">
+              <Button className="rounded-full shadow-sm" data-testid="button-watchlist-discover-mood">
+                <Sparkles className="mr-2 h-4 w-4" /> Don’t know what to watch? Discover by mood
+              </Button>
+            </Link>
+            <Link href="/browse">
+              <Button variant="outline" className="rounded-full">Explore Catalog</Button>
+            </Link>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-8">

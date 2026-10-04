@@ -16,6 +16,8 @@ const HomePage = lazy(() => import("@/pages/home"));
 const BrowsePage = lazy(() => import("@/pages/browse"));
 const TitleDetailPage = lazy(() => import("@/pages/title-detail"));
 const WatchlistPage = lazy(() => import("@/pages/watchlist"));
+const DiscoverByMoodPage = lazy(() => import("@/pages/discover-mood"));
+const MovieIdeasPage = lazy(() => import("@/pages/movie-ideas"));
 const MyShowsPage = lazy(() => import("@/pages/my-shows"));
 const StatsPage = lazy(() => import("@/pages/stats"));
 const ProfilePage = lazy(() => import("@/pages/profile"));
@@ -170,6 +172,9 @@ function Router() {
               <Route path="/" component={HomeRedirect} />
               <Route path="/home" component={HomePage} />
               <Route path="/browse" component={BrowsePage} />
+              <Route path="/trending" component={BrowsePage} />
+              <Route path="/discover-mood" component={DiscoverByMoodPage} />
+              <Route path="/movie-ideas" component={MovieIdeasPage} />
               <Route path="/title/:id" component={TitleDetailPage} />
               <Route path="/watchlist" component={WatchlistPage} />
               <Route path="/my-shows" component={MyShowsPage} />

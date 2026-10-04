@@ -1,7 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
 import { Show, useClerk, useUser } from "@clerk/react";
-import { Popcorn, Search, LogOut, User, Menu, ChartBar, Bookmark, PlaySquare, LayoutDashboard } from "lucide-react";
+import { Popcorn, Search, LogOut, User, Menu, ChartBar, Bookmark, PlaySquare, LayoutDashboard, Sparkles, Film, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,7 +24,10 @@ export function Navbar() {
   };
 
   const navLinks = [
-    { href: "/browse", label: "Browse" },
+    { href: "/browse", label: "Browse", icon: Search },
+    { href: "/trending", label: "Trending", icon: TrendingUp },
+    { href: "/discover-mood", label: "Discover by Mood", icon: Sparkles },
+    { href: "/movie-ideas", label: "Movie Ideas", icon: Film },
     { href: "/stats", label: "Stats" },
   ];
 
