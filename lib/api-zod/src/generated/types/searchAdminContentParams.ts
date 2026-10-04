@@ -17,4 +17,9 @@ region?: RatingRegion;
  * Return only titles whose selected regional rating has a malformed refresh timestamp
  */
 malformedRefreshTimestamp?: boolean;
+/**
+ * Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
+ * @minimum 0
+ */
+offset?: number;
 };

@@ -926,6 +926,10 @@ paths:
           in: query
           description: Return only titles whose selected regional rating has a malformed refresh timestamp
           schema: { type: boolean, default: false }
+        - name: offset
+          in: query
+          description: Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Content mappings

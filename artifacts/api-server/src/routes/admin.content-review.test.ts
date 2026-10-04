@@ -113,9 +113,61 @@ describe("admin Content review timestamp filter", () => {
     )).toBe(false);
   });
 
+  it("continues through malformed-timestamp matches beyond the first 50 results", async () => {
+    const fixturePrefix = "timestamp-pagination-fixture-20261004";
+    const titles = await db.insert(titlesTable).values(
+      Array.from({ length: 52 }, (_, index) => ({
+        name: `${fixturePrefix}-${String(index + 1).padStart(2, "0")}`,
+        type: "movie" as const,
+        popularity: 100 - index,
+      })),
+    ).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    const records = await db.insert(safetyRecordsTable).values(
+      titles.map(({ id }) => ({
+        titleId: id,
+        sourceName: "Wikidata",
+        status: "available" as const,
+        isCommunity: false,
+        url: `https://www.wikidata.org/wiki/Q${id}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
+      })),
+    ).returning({ id: safetyRecordsTable.id });
+    restoreTimestampMocks.push(mockMalformedSafetyTimestamps(
+      db,
+      new Map(records.map(({ id }) => [id, "not-a-timestamp"])),
+    ));
+
+    const firstPage = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&offset=0`)
+      .expect(200);
+    expect(firstPage.body).toHaveLength(51);
+    expect(firstPage.body.slice(0, 50).map((item: any) => item.name)).toEqual(
+      titles.slice(0, 50).map((_, index) => `${fixturePrefix}-${String(index + 1).padStart(2, "0")}`),
+    );
+    expect(firstPage.body[50].name).toBe(`${fixturePrefix}-51`);
+
+    const secondPage = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&offset=50`)
+      .expect(200);
+    expect(secondPage.body.map((item: any) => item.name)).toEqual([
+      `${fixturePrefix}-51`,
+      `${fixturePrefix}-52`,
+    ]);
+    expect(secondPage.body.every((item: any) =>
+      item.selectedRating.region === "US" &&
+      item.selectedRating.refreshTimestampMalformed,
+    )).toBe(true);
+  });
+
   it("rejects invalid filter query values", async () => {
     await request(app)
       .get("/api/admin/content?malformedRefreshTimestamp=sometimes")
+      .expect(400);
+    await request(app)
+      .get("/api/admin/content?malformedRefreshTimestamp=true&offset=-1")
       .expect(400);
   });
 });

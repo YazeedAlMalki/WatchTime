@@ -12,6 +12,7 @@ describe("admin content URL", () => {
       q: "",
       ownership: "all",
       malformedRefreshTimestamp: false,
+      contentOffset: 0,
       aliasId: null,
     });
   });
@@ -108,6 +109,47 @@ describe("admin content URL", () => {
       .not.toContain("malformedRefreshTimestamp");
   });
 
+  it("shares the current malformed-timestamp page and resets it when filters change", () => {
+    const pageTwo = adminContentUrl(
+      "?tab=content&region=GB&q=Alien&malformedRefreshTimestamp=true",
+      "content",
+      "GB",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      50,
+    );
+    expect(pageTwo).toBe(
+      "/admin?tab=content&region=GB&q=Alien&malformedRefreshTimestamp=true&offset=50",
+    );
+    expect(readAdminContentUrl(new URL(pageTwo, "https://example.test").search)).toMatchObject({
+      region: "GB",
+      q: "Alien",
+      malformedRefreshTimestamp: true,
+      contentOffset: 50,
+    });
+    expect(readAdminContentUrl("?tab=content&region=GB&malformedRefreshTimestamp=true&offset=-1").contentOffset).toBe(0);
+    expect(readAdminContentUrl("?tab=content&region=GB&malformedRefreshTimestamp=true&offset=1.5").contentOffset).toBe(0);
+
+    const changedSearch = adminContentUrl(
+      new URL(pageTwo, "https://example.test").search,
+      "content",
+      "GB",
+      "Arrival",
+      undefined,
+      undefined,
+      undefined,
+      0,
+    );
+    expect(changedSearch).not.toContain("offset");
+    expect(readAdminContentUrl(new URL(changedSearch, "https://example.test").search)).toMatchObject({
+      q: "Arrival",
+      malformedRefreshTimestamp: true,
+      contentOffset: 0,
+    });
+  });
+
   it("opens ownership-only links in Content but ignores invalid ownership and removes it on other tabs", () => {
     expect(readAdminContentUrl("?ownership=editorial")).toMatchObject({
       tab: "content", region: "US", q: "", ownership: "editorial",
@@ -128,6 +170,7 @@ describe("admin content URL", () => {
       q: "Alien",
       ownership: "editorial",
       malformedRefreshTimestamp: false,
+      contentOffset: 0,
       aliasId: 217,
     });
     expect(readAdminContentUrl("?aliasId=217").aliasId).toBe(217);

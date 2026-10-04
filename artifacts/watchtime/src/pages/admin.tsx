@@ -92,21 +92,24 @@ import { useToast } from "@/hooks/use-toast";
 export default function AdminPage() {
   const [, setLocation] = useLocation();
   const search = useSearch();
-  const { tab, region, q, ownership, malformedRefreshTimestamp, aliasId } = readAdminContentUrl(search);
+  const { tab, region, q, ownership, malformedRefreshTimestamp, contentOffset, aliasId } = readAdminContentUrl(search);
   const selectTab = (nextTab: string) => {
     setLocation(adminContentUrl(search, nextTab as AdminTab, region));
   };
   const selectRegion = (nextRegion: RatingRegion) => {
-    setLocation(adminContentUrl(search, "content", nextRegion));
+    setLocation(adminContentUrl(search, "content", nextRegion, undefined, undefined, undefined, undefined, 0));
   };
   const selectContentSearch = (term: string) => {
-    setLocation(adminContentUrl(search, "content", region, term), { replace: true });
+    setLocation(adminContentUrl(search, "content", region, term, undefined, undefined, undefined, 0), { replace: true });
   };
   const selectAliasOwnership = (nextOwnership: AliasOwnershipFilter) => {
     setLocation(adminContentUrl(search, "content", region, undefined, nextOwnership));
   };
   const selectMalformedRefreshTimestamp = (enabled: boolean) => {
-    setLocation(adminContentUrl(search, "content", region, undefined, undefined, undefined, enabled));
+    setLocation(adminContentUrl(search, "content", region, undefined, undefined, undefined, enabled, 0));
+  };
+  const selectContentPage = (offset: number) => {
+    setLocation(adminContentUrl(search, "content", region, undefined, undefined, undefined, undefined, offset));
   };
   const { data: me, isLoading: meLoading } = useGetMe();
   const { data: dashboard } = useGetAdminDashboard({
@@ -272,7 +275,9 @@ export default function AdminPage() {
             onAliasOwnershipChange={selectAliasOwnership}
             malformedRefreshTimestamp={malformedRefreshTimestamp}
             onMalformedRefreshTimestampChange={selectMalformedRefreshTimestamp}
-            reviewUrl={adminContentUrl(search, "content", region, q, ownership, undefined, malformedRefreshTimestamp)}
+            contentOffset={contentOffset}
+            onContentOffsetChange={selectContentPage}
+            reviewUrl={adminContentUrl(search, "content", region, q, ownership, undefined, malformedRefreshTimestamp, contentOffset)}
             aliasId={aliasId}
           />
         </TabsContent>
@@ -975,6 +980,8 @@ function ContentTab({
   onAliasOwnershipChange,
   malformedRefreshTimestamp,
   onMalformedRefreshTimestampChange,
+  contentOffset,
+  onContentOffsetChange,
   reviewUrl,
   aliasId,
 }: {
@@ -986,6 +993,8 @@ function ContentTab({
   onAliasOwnershipChange: (ownership: AliasOwnershipFilter) => void;
   malformedRefreshTimestamp: boolean;
   onMalformedRefreshTimestampChange: (enabled: boolean) => void;
+  contentOffset: number;
+  onContentOffsetChange: (offset: number) => void;
   reviewUrl: string;
   aliasId: number | null;
 }) {
@@ -1006,6 +1015,7 @@ function ContentTab({
     }
   };
   const [debouncedQ, setDebouncedQ] = useState(q);
+  const contentPageSize = 50;
   const aliasPageSize = 50;
   const aliasFilterKey = JSON.stringify([debouncedQ, aliasOwnership]);
   const [aliasPagination, setAliasPagination] = useState<{
@@ -1052,8 +1062,12 @@ function ContentTab({
       region: ratingRegion,
       ...(debouncedQ ? { q: debouncedQ } : {}),
       ...(malformedRefreshTimestamp ? { malformedRefreshTimestamp: true } : {}),
+      ...(malformedRefreshTimestamp ? { offset: contentOffset } : {}),
     },
   );
+  const visibleContent = content?.slice(0, contentPageSize) ?? [];
+  const hasNextContentPage = malformedRefreshTimestamp &&
+    (content?.length ?? 0) > contentPageSize;
   const {
     data: aliasesPage,
     isLoading: aliasesLoading,
@@ -1697,7 +1711,7 @@ function ContentTab({
         />
       ) : (
         <div className="flex flex-col gap-3">
-          {content.map((item) => (
+          {visibleContent.map((item) => (
             <div
               key={item.id}
               className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center gap-4"
@@ -1796,6 +1810,36 @@ function ContentTab({
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {malformedRefreshTimestamp && (
+        <div
+          className="mt-4 flex items-center justify-center gap-3"
+          aria-label="Malformed timestamp results pagination"
+        >
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="rounded-xl gap-1.5"
+            onClick={() => onContentOffsetChange(Math.max(0, contentOffset - contentPageSize))}
+            disabled={contentOffset === 0 || contentFetching}
+          >
+            <ChevronLeft className="w-4 h-4" /> Previous page
+          </Button>
+          <span className="text-sm text-muted-foreground" aria-live="polite">
+            Page {Math.floor(contentOffset / contentPageSize) + 1}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="rounded-xl gap-1.5"
+            onClick={() => onContentOffsetChange(contentOffset + contentPageSize)}
+            disabled={!hasNextContentPage || contentFetching}
+          >
+            Next page <ChevronRight className="w-4 h-4" />
+          </Button>
         </div>
       )}
       <AliasReview

@@ -22,6 +22,7 @@ export function readAdminContentUrl(search: string): {
   q: string;
   ownership: AliasOwnershipFilter;
   malformedRefreshTimestamp: boolean;
+  contentOffset: number;
   aliasId: number | null;
 } {
   const params = new URLSearchParams(search);
@@ -30,7 +31,7 @@ export function readAdminContentUrl(search: string): {
     RATING_REGIONS.find(({ code }) => code === rawRegion)?.code ?? "US";
   const rawTab = params.get("tab");
   const tab = ADMIN_TABS.find((value) => value === rawTab)
-    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("malformedRefreshTimestamp") || params.has("aliasId") ? "content" : "dashboard");
+    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("malformedRefreshTimestamp") || params.has("offset") || params.has("aliasId") ? "content" : "dashboard");
   const rawOwnership = params.get("ownership");
   const ownership = tab === "content" && (rawOwnership === "provider" || rawOwnership === "editorial")
     ? rawOwnership
@@ -40,12 +41,18 @@ export function readAdminContentUrl(search: string): {
     ? Number(rawAliasId)
     : null;
   const malformedRefreshTimestamp = tab === "content" && params.get("malformedRefreshTimestamp") === "true";
+  const rawOffset = params.get("offset");
+  const parsedOffset = rawOffset !== null && /^(0|[1-9]\d*)$/.test(rawOffset) &&
+      Number.isSafeInteger(Number(rawOffset))
+    ? Number(rawOffset)
+    : 0;
   return {
     tab,
     region,
     q: tab === "content" ? (params.get("q") ?? "") : "",
     ownership,
     malformedRefreshTimestamp,
+    contentOffset: malformedRefreshTimestamp ? parsedOffset : 0,
     aliasId: tab === "content" ? aliasId : null,
   };
 }
@@ -58,6 +65,7 @@ export function adminContentUrl(
   ownership?: AliasOwnershipFilter,
   aliasId?: number,
   malformedRefreshTimestamp?: boolean,
+  contentOffset?: number,
 ): string {
   const params = new URLSearchParams(search);
   params.set("tab", tab);
@@ -75,10 +83,17 @@ export function adminContentUrl(
       malformedRefreshTimestamp ?? readAdminContentUrl(search).malformedRefreshTimestamp;
     if (selectedMalformedRefreshTimestamp) params.set("malformedRefreshTimestamp", "true");
     else params.delete("malformedRefreshTimestamp");
+    const selectedContentOffset = contentOffset ?? readAdminContentUrl(search).contentOffset;
+    if (selectedMalformedRefreshTimestamp && selectedContentOffset > 0) {
+      params.set("offset", String(selectedContentOffset));
+    } else {
+      params.delete("offset");
+    }
   } else {
     params.delete("q");
     params.delete("ownership");
     params.delete("malformedRefreshTimestamp");
+    params.delete("offset");
   }
   return `/admin?${params.toString()}`;
 }

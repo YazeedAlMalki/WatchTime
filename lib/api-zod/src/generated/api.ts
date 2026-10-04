@@ -1156,11 +1156,16 @@ export const RetryCatalogRefreshResponse = zod.object({
  */
 export const searchAdminContentQueryRegionDefault = `US`;
 export const searchAdminContentQueryMalformedRefreshTimestampDefault = false;
+export const searchAdminContentQueryOffsetDefault = 0;
+export const searchAdminContentQueryOffsetMin = 0;
+
+
 
 export const SearchAdminContentQueryParams = zod.object({
   "q": zod.coerce.string().optional(),
   "region": zod.enum(['US', 'GB', 'DE', 'FR', 'AU', 'BR']).default(searchAdminContentQueryRegionDefault).describe('Rating region used to select the official Wikidata record'),
-  "malformedRefreshTimestamp": zod.coerce.boolean().default(searchAdminContentQueryMalformedRefreshTimestampDefault).describe('Return only titles whose selected regional rating has a malformed refresh timestamp')
+  "malformedRefreshTimestamp": zod.coerce.boolean().default(searchAdminContentQueryMalformedRefreshTimestampDefault).describe('Return only titles whose selected regional rating has a malformed refresh timestamp'),
+  "offset": zod.coerce.number().int().min(searchAdminContentQueryOffsetMin).default(searchAdminContentQueryOffsetDefault).describe('Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled')
 })
 
 export const SearchAdminContentResponseItem = zod.object({

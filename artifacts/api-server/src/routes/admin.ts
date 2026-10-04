@@ -29,6 +29,7 @@ import {
   ListAdminContentAliasesResponse,
   ExportAdminContentAliasesQueryParams,
   ListAdminContentRefreshBatchHistoryResponse,
+  SearchAdminContentQueryParams,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middlewares/auth";
 import {
@@ -50,6 +51,7 @@ import { retryFailedCatalogTitles, startCatalogRefresh } from "../lib/catalog-re
 const router: IRouter = Router();
 
 const WIKIDATA_LOW_SUCCESS_RATE_THRESHOLD_PERCENT = 50;
+const CONTENT_REVIEW_PAGE_SIZE = 50;
 const activeSafetySyncRunIds = new Set<number>();
 const activeSafetySyncUniqueIndex =
   "safety_sync_runs_active_provider_offset_unique_idx";
@@ -790,9 +792,7 @@ router.get("/catalog-refreshes", async (_req, res) => {
 });
 
 router.post("/catalog-refreshes", async (req, res) => {
-  const runId = await retryFailedCatalogTitles(id);
-
-  const rawQ = typeof req.query.q === "string" ? req.query.q : "";
+  const runId = await startCatalogRefresh("manual");
   await db.insert(adminAuditLogTable).values({
     adminId: req.userId!,
     action: "start_catalog_refresh",
@@ -806,9 +806,18 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid run id" });
   const runId = await retryFailedCatalogTitles(id);
+  if (!runId) return res.status(409).json({ error: "This run has no failed titles to retry" });
+  await db.insert(adminAuditLogTable).values({
+    adminId: req.userId!,
+    action: "retry_catalog_refresh",
+    entityType: "catalog_sync",
+    entityId: runId,
+    details: { sourceRunId: id },
+  });
+  return res.status(202).json({ runId });
+});
 
-  const rawQ = typeof req.query.q === "string" ? req.query.q : "";
-  const q = parsedParams.data.q?.trim() ?? "";
+router.get("/content", async (req, res) => {
   const regionParam = req.query.region;
   const malformedRefreshTimestampParam = req.query.malformedRefreshTimestamp;
   if (
@@ -825,13 +834,19 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
   ) {
     return res.status(400).json({ error: "Invalid malformed refresh timestamp filter" });
   }
-  const region = (regionParam as RatingRegion | undefined) ?? "US";
-  const malformedRefreshTimestamp = malformedRefreshTimestampParam === "true";
+  const parsedParams = SearchAdminContentQueryParams.safeParse(req.query);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "Invalid content search parameters" });
+  }
+  const q = parsedParams.data.q?.trim() ?? "";
+  const region = parsedParams.data.region as RatingRegion;
+  const malformedRefreshTimestamp = parsedParams.data.malformedRefreshTimestamp;
+  const offset = parsedParams.data.offset;
   const titleQuery = db
     .select()
     .from(titlesTable)
     .where(q ? ilike(titlesTable.name, `%${q}%`) : undefined)
-    .orderBy(desc(titlesTable.popularity));
+    .orderBy(desc(titlesTable.popularity), asc(titlesTable.id));
   const titles = malformedRefreshTimestamp
     ? await titleQuery
     : await titleQuery.limit(50);
@@ -904,9 +919,12 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
         : null,
     };
   });
+  const filteredContent = malformedRefreshTimestamp
+    ? content.filter((item) => item.selectedRating?.refreshTimestampMalformed)
+    : content;
   return res.json(malformedRefreshTimestamp
-    ? content.filter((item) => item.selectedRating?.refreshTimestampMalformed).slice(0, 50)
-    : content);
+    ? filteredContent.slice(offset, offset + CONTENT_REVIEW_PAGE_SIZE + 1)
+    : filteredContent);
 });
 
 const normalizeAlias = (value: string) =>

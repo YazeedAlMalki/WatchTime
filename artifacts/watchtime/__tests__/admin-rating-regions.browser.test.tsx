@@ -186,6 +186,93 @@ it("filters matching titles by the selected region's malformed timestamp and sha
   }
 });
 
+it("pages through later malformed-timestamp matches without dropping the region or title search", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const originalFetch = window.fetch;
+  const requests: URL[] = [];
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=GB&q=Broken+title&malformedRefreshTimestamp=true&offset=50",
+  );
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const offset = Number(url.searchParams.get("offset") ?? "0");
+    const firstTitleNumber = offset === 0 ? 1 : 51;
+    const resultCount = offset === 0 ? 51 : 1;
+    const rows = Array.from({ length: resultCount }, (_, index) => ({
+      id: firstTitleNumber + index,
+      name: `Broken title ${firstTitleNumber + index}`,
+      type: "movie",
+      mappings: [],
+      selectedRating: {
+        region: "GB",
+        label: "12A",
+        countryName: "United Kingdom",
+        system: "BBFC",
+        sourceName: "Wikidata",
+        recordId: 1000 + firstTitleNumber + index,
+        lastRefreshedAt: null,
+        refreshTimestampMalformed: true,
+        sourceUrl: null,
+      },
+    }));
+    return new Response(JSON.stringify(rows), { headers: { "Content-Type": "application/json" } });
+  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Broken title 51", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Page 2")).toBeVisible();
+    await vi.waitFor(() => expect(requests.some((url) =>
+      url.searchParams.get("region") === "GB" &&
+      url.searchParams.get("q") === "Broken title" &&
+      url.searchParams.get("malformedRefreshTimestamp") === "true" &&
+      url.searchParams.get("offset") === "50",
+    )).toBe(true));
+    expect(readAdminContentUrl(location.search)).toMatchObject({
+      region: "GB",
+      q: "Broken title",
+      malformedRefreshTimestamp: true,
+      contentOffset: 50,
+    });
+
+    await userEvent.click(page.getByRole("button", { name: /Previous page/ }));
+    await expect.element(page.getByText("Broken title 1", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Broken title 51", { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByText("Page 1")).toBeVisible();
+    await vi.waitFor(() => expect(requests.some((url) =>
+      url.searchParams.get("region") === "GB" &&
+      url.searchParams.get("q") === "Broken title" &&
+      url.searchParams.get("malformedRefreshTimestamp") === "true" &&
+      url.searchParams.get("offset") === "0",
+    )).toBe(true));
+
+    await userEvent.click(page.getByRole("button", { name: /Next page/ }));
+    await expect.element(page.getByText("Broken title 51", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Page 2")).toBeVisible();
+    expect(readAdminContentUrl(location.search)).toMatchObject({
+      region: "GB",
+      q: "Broken title",
+      malformedRefreshTimestamp: true,
+      contentOffset: 50,
+    });
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("opens a direct alias link with saved filters and highlights the linked row outside the results", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const originalFetch = window.fetch;
