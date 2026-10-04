@@ -39,6 +39,7 @@ import type {
   DevAuthLogin200,
   DevAuthLoginBody,
   EpisodeWatchInput,
+  ExportAdminAuditLogParams,
   ExportAdminContentAliasesParams,
   FeedbackInput,
   FeedbackItem,
@@ -4240,6 +4241,90 @@ export function useGetAdminAuditLog<TData = Awaited<ReturnType<typeof getAdminAu
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetAdminAuditLogQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExportAdminAuditLogUrl = (params?: ExportAdminAuditLogParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/audit-log/export?${stringifiedParams}` : `/api/admin/audit-log/export`
+}
+
+/**
+ * @summary Download every audit log entry matching the active filters as CSV
+ */
+export const exportAdminAuditLog = async (params?: ExportAdminAuditLogParams, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+
+  return customFetch<Blob>(getExportAdminAuditLogUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportAdminAuditLogQueryKey = (params?: ExportAdminAuditLogParams,) => {
+    return [
+    `/api/admin/audit-log/export`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportAdminAuditLogQueryOptions = <TData = Awaited<ReturnType<typeof exportAdminAuditLog>>, TError = ErrorType<void>>(params?: ExportAdminAuditLogParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportAdminAuditLog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportAdminAuditLogQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportAdminAuditLog>>> = ({ signal }) => exportAdminAuditLog(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportAdminAuditLog>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportAdminAuditLogQueryResult = NonNullable<Awaited<ReturnType<typeof exportAdminAuditLog>>>
+export type ExportAdminAuditLogQueryError = ErrorType<void>
+
+
+/**
+ * @summary Download every audit log entry matching the active filters as CSV
+ */
+
+export function useExportAdminAuditLog<TData = Awaited<ReturnType<typeof exportAdminAuditLog>>, TError = ErrorType<void>>(
+ params?: ExportAdminAuditLogParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportAdminAuditLog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportAdminAuditLogQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

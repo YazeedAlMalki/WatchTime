@@ -1549,3 +1549,17 @@ export const GetAdminAuditLogResponse = zod.object({
 })
 
 
+/**
+ * @summary Download every audit log entry matching the active filters as CSV
+ */
+export const ExportAdminAuditLogQueryParams = zod.object({
+  "action": zod.coerce.string().optional(),
+  "entityType": zod.enum(['contribution', 'report', 'feedback', 'content']).optional(),
+  "adminEmail": zod.coerce.string().optional(),
+  "dateFrom": zod.date().optional(),
+  "dateTo": zod.date().optional()
+})
+
+export const ExportAdminAuditLogResponse = zod.unknown()
+
+

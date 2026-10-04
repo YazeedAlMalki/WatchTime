@@ -1324,3 +1324,21 @@ export const GetAdminAuditLogEntityType = {
   content: 'content',
 } as const;
 
+export type ExportAdminAuditLogParams = {
+action?: string;
+entityType?: ExportAdminAuditLogEntityType;
+adminEmail?: string;
+dateFrom?: string;
+dateTo?: string;
+};
+
+export type ExportAdminAuditLogEntityType = typeof ExportAdminAuditLogEntityType[keyof typeof ExportAdminAuditLogEntityType];
+
+
+export const ExportAdminAuditLogEntityType = {
+  contribution: 'contribution',
+  report: 'report',
+  feedback: 'feedback',
+  content: 'content',
+} as const;
+

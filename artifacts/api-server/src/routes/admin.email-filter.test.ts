@@ -68,8 +68,15 @@ const sharedEvents = [
   { action: "resolve_report", entityType: "report", entityId: 72001 },
   { action: "dismiss_report", entityType: "report", entityId: 72002 },
 ] as const;
+const EXPORT_ACTION = "audit_export_batch";
+const EXPORT_DAY = "2026-08-16";
+const EXPORT_DAY_START = new Date(`${EXPORT_DAY}T00:00:00.000Z`);
+const EXPORT_DAY_END = new Date(`${EXPORT_DAY}T23:59:59.999Z`);
+const EXPORT_MATCH_ENTITY_BASE = 81000;
+const EXPORT_MATCH_COUNT = 31;
 let adminARowIds: number[] = [];
 let adminBRowIds: number[] = [];
+let exportMatchRowIds: number[] = [];
 
 beforeAll(async () => {
   // Clear leftovers from an interrupted prior run for these test-only identities.
@@ -98,8 +105,78 @@ beforeAll(async () => {
       details: { testMarker: "admin-b" },
     }))).returning({ id: adminAuditLogTable.id }),
   ]);
-  adminARowIds = adminA.map((row) => row.id);
-  adminBRowIds = adminB.map((row) => row.id);
+
+  const matchingExportRows = Array.from({ length: EXPORT_MATCH_COUNT }, (_, index) => ({
+    adminId: ADMIN_A_ID,
+    action: EXPORT_ACTION,
+    entityType: "content",
+    entityId: EXPORT_MATCH_ENTITY_BASE + index,
+    details: { testBatch: "matching", index },
+    createdAt: new Date(`${EXPORT_DAY}T12:00:00.000Z`),
+  }));
+  const exportDecoys = [
+    {
+      adminId: ADMIN_B_ID,
+      action: EXPORT_ACTION,
+      entityType: "content",
+      entityId: 82001,
+      details: { testBatch: "different-admin" },
+      createdAt: new Date(`${EXPORT_DAY}T12:00:00.000Z`),
+    },
+    {
+      adminId: ADMIN_A_ID,
+      action: "different_audit_action",
+      entityType: "content",
+      entityId: 82002,
+      details: { testBatch: "different-action" },
+      createdAt: new Date(`${EXPORT_DAY}T12:00:00.000Z`),
+    },
+    {
+      adminId: ADMIN_A_ID,
+      action: EXPORT_ACTION,
+      entityType: "report",
+      entityId: 82003,
+      details: { testBatch: "different-entity-type" },
+      createdAt: new Date(`${EXPORT_DAY}T12:00:00.000Z`),
+    },
+    {
+      adminId: ADMIN_A_ID,
+      action: EXPORT_ACTION,
+      entityType: "content",
+      entityId: 82004,
+      details: { testBatch: "before-date-range" },
+      createdAt: new Date(EXPORT_DAY_START.getTime() - 1),
+    },
+    {
+      adminId: ADMIN_A_ID,
+      action: EXPORT_ACTION,
+      entityType: "content",
+      entityId: 82005,
+      details: { testBatch: "after-date-range" },
+      createdAt: new Date(EXPORT_DAY_END.getTime() + 1),
+    },
+  ];
+  const additionalRows = await db.insert(adminAuditLogTable)
+    .values([...matchingExportRows, ...exportDecoys])
+    .returning({
+      id: adminAuditLogTable.id,
+      adminId: adminAuditLogTable.adminId,
+      entityId: adminAuditLogTable.entityId,
+    });
+  const exportMatchEntityIds = new Set(
+    matchingExportRows.map((row) => row.entityId),
+  );
+  exportMatchRowIds = additionalRows
+    .filter((row) => row.entityId !== null && exportMatchEntityIds.has(row.entityId))
+    .map((row) => row.id);
+  adminARowIds = [
+    ...adminA.map((row) => row.id),
+    ...additionalRows.filter((row) => row.adminId === ADMIN_A_ID).map((row) => row.id),
+  ];
+  adminBRowIds = [
+    ...adminB.map((row) => row.id),
+    ...additionalRows.filter((row) => row.adminId === ADMIN_B_ID).map((row) => row.id),
+  ];
 });
 
 afterAll(async () => {
@@ -161,7 +238,9 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
     expect(res.headers["content-disposition"]).toMatch(/attachment/);
-    expect(res.headers["content-disposition"]).toContain(ADMIN_A_EMAIL);
+    expect(res.headers["content-disposition"]).toContain(
+      `audit-log-${ADMIN_A_EMAIL}-${new Date().toISOString().slice(0, 10)}.csv`,
+    );
 
     const lines = res.text.trim().split("\n");
     // First line is the header.
@@ -169,9 +248,40 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
     expect(lines[0]).toContain("Action");
     // Remaining lines must all reference admin A's email.
     const dataLines = lines.slice(1);
-    expect(dataLines.length).toBeGreaterThanOrEqual(3);
+    expect(dataLines).toHaveLength(adminARowIds.length);
     expect(dataLines.every(line => line.includes(ADMIN_A_EMAIL))).toBe(true);
     expect(dataLines.some(line => line.includes(ADMIN_B_EMAIL))).toBe(false);
+  });
+
+  it("exports every row matching all active filters, beyond the 25-row screen page", async () => {
+    const filters = new URLSearchParams({
+      action: EXPORT_ACTION,
+      adminEmail: ADMIN_A_EMAIL,
+      entityType: "content",
+      dateFrom: EXPORT_DAY_START.toISOString(),
+      dateTo: EXPORT_DAY_END.toISOString(),
+    });
+    const res = await supertest(app)
+      .get(`/api/admin/audit-log/export?${filters.toString()}`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/csv/);
+    expect(res.headers["content-disposition"]).toContain(
+      `audit-log-${ADMIN_A_EMAIL}-${new Date().toISOString().slice(0, 10)}.csv`,
+    );
+
+    const lines = res.text.trimEnd().split(/\r?\n/);
+    const dataLines = lines.slice(1);
+    expect(dataLines).toHaveLength(EXPORT_MATCH_COUNT);
+    expect(dataLines.every((line) => line.includes(ADMIN_A_EMAIL))).toBe(true);
+    expect(dataLines.some((line) => line.includes(ADMIN_B_EMAIL))).toBe(false);
+    const exportedIds = dataLines.map((line) => {
+      const id = line.match(/^"(\d+)"/)?.[1];
+      expect(id).toBeDefined();
+      return Number(id);
+    });
+    expect(exportedIds.sort((a, b) => a - b))
+      .toEqual([...exportMatchRowIds].sort((a, b) => a - b));
   });
 
   it("returns all rows when no email filter is active", async () => {
@@ -180,7 +290,10 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
-    // Filename should not contain an email part.
-    expect(res.headers["content-disposition"]).toMatch(/audit-log-\d{4}-\d{2}-\d{2}\.csv/);
+    const contentDisposition = res.headers["content-disposition"];
+    expect(contentDisposition).toContain(
+      `audit-log-${new Date().toISOString().slice(0, 10)}.csv`,
+    );
+    expect(contentDisposition).not.toContain(ADMIN_A_EMAIL);
   });
 });

@@ -2729,51 +2729,23 @@ function AuditLogTab() {
   const [page, setPage] = useState(0);
   const LIMIT = 25;
 
-  const params = {
-    limit: LIMIT,
-    offset: page * LIMIT,
-    ...(actionFilter ? { action: actionFilter } : {}),
-    ...(adminEmailFilter ? { adminEmail: adminEmailFilter } : {}),
-    ...(entityTypeFilter !== "all"
-      ? { entityType: entityTypeFilter as any }
-      : {}),
-    ...(dateFrom ? { dateFrom: new Date(dateFrom).toISOString() } : {}),
-    ...(dateTo ? { dateTo: new Date(dateTo + "T23:59:59").toISOString() } : {}),
-  };
+  const activeFilters: Record<string, string> = {};
+  if (actionFilter) activeFilters.action = actionFilter;
+  if (adminEmailFilter) activeFilters.adminEmail = adminEmailFilter;
+  if (entityTypeFilter !== "all") activeFilters.entityType = entityTypeFilter;
+  if (dateFrom) activeFilters.dateFrom = new Date(dateFrom).toISOString();
+  if (dateTo) {
+    activeFilters.dateTo = new Date(dateTo + "T23:59:59").toISOString();
+  }
+
+  const params = { limit: LIMIT, offset: page * LIMIT, ...activeFilters };
+  const exportQuery = new URLSearchParams(activeFilters).toString();
+  const exportUrl = `/api/admin/audit-log/export${exportQuery ? `?${exportQuery}` : ""}`;
 
   const { data, isLoading } = useGetAdminAuditLog(params);
 
   const totalPages = Math.ceil((data?.total ?? 0) / LIMIT);
-
-  const { getToken } = useAuth();
-
-  const exportCSV = async () => {
-    const token = await getToken();
-    const params = new URLSearchParams();
-    if (actionFilter) params.set("action", actionFilter);
-    if (adminEmailFilter) params.set("adminEmail", adminEmailFilter);
-    if (entityTypeFilter !== "all") params.set("entityType", entityTypeFilter);
-    if (dateFrom) params.set("dateFrom", new Date(dateFrom).toISOString());
-    if (dateTo)
-      params.set("dateTo", new Date(dateTo + "T23:59:59").toISOString());
-
-    const qs = params.size > 0 ? `?${params}` : "";
-    const res = await fetch(`/api/admin/audit-log/export${qs}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) return;
-
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const cd = res.headers.get("content-disposition") ?? "";
-    const match = cd.match(/filename="([^"]+)"/);
-    a.download =
-      match?.[1] ?? `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.href = url;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const hasExportRows = (data?.total ?? 0) > 0;
 
   const ACTION_COLOR: Record<string, string> = {
     approved_contribution:
@@ -2797,13 +2769,18 @@ function AuditLogTab() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-display font-bold">Audit Log</h2>
         <Button
+          asChild
           size="sm"
           variant="outline"
-          className="rounded-xl gap-1.5"
-          onClick={exportCSV}
-          disabled={!data?.entries.length}
+          className={`rounded-xl gap-1.5 ${hasExportRows ? "" : "pointer-events-none opacity-50"}`}
         >
-          <Download className="w-3.5 h-3.5" /> Export CSV
+          <a
+            href={hasExportRows ? exportUrl : undefined}
+            aria-disabled={!hasExportRows}
+            tabIndex={hasExportRows ? undefined : -1}
+          >
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </a>
         </Button>
       </div>
 

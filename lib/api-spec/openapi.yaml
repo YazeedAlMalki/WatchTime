@@ -1221,6 +1221,41 @@ paths:
                 $ref: "#/components/schemas/AuditLogPage"
         "403":
           description: Forbidden
+  /admin/audit-log/export:
+    get:
+      operationId: exportAdminAuditLog
+      tags: [admin]
+      summary: Download every audit log entry matching the active filters as CSV
+      parameters:
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: entityType
+          in: query
+          schema: { type: string, enum: [contribution, report, feedback, content] }
+        - name: adminEmail
+          in: query
+          schema: { type: string }
+        - name: dateFrom
+          in: query
+          schema: { type: string, format: date-time }
+        - name: dateTo
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Complete filtered audit log export, without list pagination
+          headers:
+            Content-Disposition:
+              description: Attachment filename based on the email filter and current date
+              schema: { type: string }
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        "403":
+          description: Forbidden
 components:
   parameters:
     ImportId:

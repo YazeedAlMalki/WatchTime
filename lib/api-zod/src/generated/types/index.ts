@@ -49,6 +49,8 @@ export * from './devAuthLogin200';
 export * from './devAuthLoginBody';
 export * from './episode';
 export * from './episodeWatchInput';
+export * from './exportAdminAuditLogEntityType';
+export * from './exportAdminAuditLogParams';
 export * from './exportAdminContentAliasesOwnership';
 export * from './exportAdminContentAliasesParams';
 export * from './feedbackInput';
