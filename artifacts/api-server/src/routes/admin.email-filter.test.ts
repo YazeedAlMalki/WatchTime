@@ -63,71 +63,89 @@ import { eq, inArray } from "drizzle-orm";
 
 // ─── Setup / teardown ────────────────────────────────────────────────────────
 
-let auditRowIds: number[] = [];
+const sharedEvents = [
+  { action: "approve_contribution", entityType: "contribution", entityId: 71001 },
+  { action: "resolve_report", entityType: "report", entityId: 72001 },
+  { action: "dismiss_report", entityType: "report", entityId: 72002 },
+] as const;
+let adminARowIds: number[] = [];
+let adminBRowIds: number[] = [];
 
 beforeAll(async () => {
-  // Ensure both admin user rows exist.
+  // Clear leftovers from an interrupted prior run for these test-only identities.
+  await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.adminId, [ADMIN_A_ID, ADMIN_B_ID]));
+  await db.delete(usersTable).where(inArray(usersTable.id, [ADMIN_A_ID, ADMIN_B_ID]));
+
+  // This app enforces one current admin at the DB level. The mocked auth
+  // middleware authorizes the request while these distinct actor rows exercise
+  // the real adminId -> users.email join used by historical audit entries.
   await db.insert(usersTable).values([
     { id: ADMIN_A_ID, email: ADMIN_A_EMAIL, name: "Alpha Admin", isAdmin: false },
     { id: ADMIN_B_ID, email: ADMIN_B_EMAIL, name: "Beta Admin", isAdmin: false },
-  ]).onConflictDoNothing();
+  ]);
 
-  // Seed 3 rows for admin A and 2 rows for admin B.
-  const inserted = await db.insert(adminAuditLogTable).values([
-    { adminId: ADMIN_A_ID, action: "approved_contribution", entityType: "contribution", entityId: 1001 },
-    { adminId: ADMIN_A_ID, action: "resolved_report",       entityType: "report",       entityId: 1002 },
-    { adminId: ADMIN_A_ID, action: "feedback_closed",       entityType: "feedback",     entityId: 1003 },
-    { adminId: ADMIN_B_ID, action: "rejected_contribution", entityType: "contribution", entityId: 2001 },
-    { adminId: ADMIN_B_ID, action: "dismissed_report",      entityType: "report",       entityId: 2002 },
-  ]).returning({ id: adminAuditLogTable.id });
-
-  auditRowIds = inserted.map(r => r.id);
+  // Both admins perform the same actions on the same entities. The email
+  // filter must distinguish the rows even when entity/action fields cannot.
+  const [adminA, adminB] = await Promise.all([
+    db.insert(adminAuditLogTable).values(sharedEvents.map((event) => ({
+      ...event,
+      adminId: ADMIN_A_ID,
+      details: { testMarker: "admin-a" },
+    }))).returning({ id: adminAuditLogTable.id }),
+    db.insert(adminAuditLogTable).values(sharedEvents.map((event) => ({
+      ...event,
+      adminId: ADMIN_B_ID,
+      details: { testMarker: "admin-b" },
+    }))).returning({ id: adminAuditLogTable.id }),
+  ]);
+  adminARowIds = adminA.map((row) => row.id);
+  adminBRowIds = adminB.map((row) => row.id);
 });
 
 afterAll(async () => {
-  if (auditRowIds.length) {
-    await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.id, auditRowIds));
-  }
+  await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.adminId, [ADMIN_A_ID, ADMIN_B_ID]));
   await db.delete(usersTable).where(inArray(usersTable.id, [ADMIN_A_ID, ADMIN_B_ID]));
 });
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("GET /api/admin/audit-log?adminEmail — email filter isolation", () => {
-  it("exact email match returns only that admin's rows", async () => {
+  it("exact email match isolates admin A when both admins acted on the same entities", async () => {
     const res = await supertest(app)
       .get(`/api/admin/audit-log?adminEmail=${encodeURIComponent(ADMIN_A_EMAIL)}&limit=50`);
 
     expect(res.status).toBe(200);
-
-    const adminEmails = res.body.entries.map((e: any) => e.adminEmail);
-    // Every returned row must belong to admin A.
-    expect(adminEmails.every((email: string) => email === ADMIN_A_EMAIL)).toBe(true);
-    // Admin B's email must not appear.
-    expect(adminEmails).not.toContain(ADMIN_B_EMAIL);
-    // All 3 of admin A's seeded rows must be present (there may be more from other tests).
-    const adminARows = res.body.entries.filter((e: any) => e.adminEmail === ADMIN_A_EMAIL);
-    expect(adminARows.length).toBeGreaterThanOrEqual(3);
+    expect(res.body.total).toBe(adminARowIds.length);
+    expect(res.body.entries).toHaveLength(adminARowIds.length);
+    expect(res.body.entries.every((entry: any) => entry.adminEmail === ADMIN_A_EMAIL)).toBe(true);
+    expect(res.body.entries.map((entry: any) => entry.id).sort((a: number, b: number) => a - b))
+      .toEqual([...adminARowIds].sort((a, b) => a - b));
+    expect(res.body.entries.map((entry: any) => entry.id).some((id: number) => adminBRowIds.includes(id))).toBe(false);
   });
 
-  it("partial/domain email match returns only rows whose admin email contains the substring", async () => {
-    // Both admins share the domain "watchtime-test.example".
+  it("case-insensitive partial/domain match returns only the matching admins' rows", async () => {
+    // Uppercase substring verifies both ILIKE case-insensitivity and partial matching.
     const res = await supertest(app)
-      .get("/api/admin/audit-log?adminEmail=watchtime-test.example&limit=50");
+      .get("/api/admin/audit-log?adminEmail=WATCHTIME-TEST.EXAMPLE&limit=50");
 
     expect(res.status).toBe(200);
-
-    const adminEmails: string[] = res.body.entries.map((e: any) => e.adminEmail);
-    // Every returned email must contain the domain substring.
-    expect(adminEmails.every(email => email.includes("watchtime-test.example"))).toBe(true);
-    // Both admin A and admin B rows should be present.
-    expect(adminEmails).toContain(ADMIN_A_EMAIL);
-    expect(adminEmails).toContain(ADMIN_B_EMAIL);
+    expect(res.body.total).toBe(adminARowIds.length + adminBRowIds.length);
+    expect(res.body.entries).toHaveLength(adminARowIds.length + adminBRowIds.length);
+    expect(res.body.entries.every((entry: any) => entry.adminEmail.toLowerCase().includes("watchtime-test.example"))).toBe(true);
+    expect(res.body.entries.map((entry: any) => entry.id).sort((a: number, b: number) => a - b))
+      .toEqual([...adminARowIds, ...adminBRowIds].sort((a, b) => a - b));
+    for (const entityId of new Set(sharedEvents.map((event) => event.entityId))) {
+      const adminsForEntity = res.body.entries
+        .filter((entry: any) => entry.entityId === entityId)
+        .map((entry: any) => entry.adminEmail)
+        .sort();
+      expect(adminsForEntity).toEqual([ADMIN_A_EMAIL, ADMIN_B_EMAIL].sort());
+    }
   });
 
   it("non-existent email returns an empty result set", async () => {
     const res = await supertest(app)
-      .get("/api/admin/audit-log?adminEmail=nobody%40nowhere.invalid&limit=50");
+      .get("/api/admin/audit-log?adminEmail=absent-audit-admin%40nowhere.invalid&limit=50");
 
     expect(res.status).toBe(200);
     expect(res.body.entries).toHaveLength(0);
