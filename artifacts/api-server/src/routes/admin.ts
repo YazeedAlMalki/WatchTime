@@ -19,7 +19,7 @@ import {
   safetySyncRunsTable,
   type SafetySyncRunResult,
 } from "@workspace/db";
-import { and, asc, eq, sql, desc, gte, gt, lte, ilike, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, sql, desc, gte, gt, lt, lte, ilike, inArray, isNull, or } from "drizzle-orm";
 import {
   UpdateAdminContributionBody,
   UpdateAdminReportBody,
@@ -52,6 +52,7 @@ const router: IRouter = Router();
 
 const WIKIDATA_LOW_SUCCESS_RATE_THRESHOLD_PERCENT = 50;
 const CONTENT_REVIEW_PAGE_SIZE = 50;
+const CONTENT_REVIEW_CANDIDATE_BATCH_SIZE = 250;
 const activeSafetySyncRunIds = new Set<number>();
 const activeSafetySyncUniqueIndex =
   "safety_sync_runs_active_provider_offset_unique_idx";
@@ -842,89 +843,118 @@ router.get("/content", async (req, res) => {
   const region = parsedParams.data.region as RatingRegion;
   const malformedRefreshTimestamp = parsedParams.data.malformedRefreshTimestamp;
   const offset = parsedParams.data.offset;
-  const titleQuery = db
+  const makeTitleQuery = (after?: { popularity: number; id: number }) => db
     .select()
     .from(titlesTable)
-    .where(q ? ilike(titlesTable.name, `%${q}%`) : undefined)
+    .where(and(
+      q ? ilike(titlesTable.name, `%${q}%`) : undefined,
+      after
+        ? or(
+            lt(titlesTable.popularity, after.popularity),
+            and(
+              eq(titlesTable.popularity, after.popularity),
+              gt(titlesTable.id, after.id),
+            ),
+          )
+        : undefined,
+    ))
     .orderBy(desc(titlesTable.popularity), asc(titlesTable.id));
-  const titles = malformedRefreshTimestamp
-    ? await titleQuery
-    : await titleQuery.limit(50);
-  const ids = titles.map((t) => t.id);
-  const mappings = ids.length
-    ? await db
-        .select()
-        .from(providerMappingsTable)
-        .where(inArray(providerMappingsTable.titleId, ids))
-    : [];
-  const safetyRecords = ids.length
-    ? await db
-        .select({
-          id: safetyRecordsTable.id,
-          titleId: safetyRecordsTable.titleId,
-          tier: safetyRecordsTable.tier,
-          isCommunity: safetyRecordsTable.isCommunity,
-          status: safetyRecordsTable.status,
-          items: safetyRecordsTable.items,
-          updatedAt: safetyRecordsTable.updatedAt,
-          rawUpdatedAt: sql<string>`${safetyRecordsTable.updatedAt}::text`,
-          url: safetyRecordsTable.url,
-          sourceName: safetyRecordsTable.sourceName,
-        })
-        .from(safetyRecordsTable)
-        .where(and(
-          inArray(safetyRecordsTable.titleId, ids),
-          isNull(safetyRecordsTable.seasonNumber),
-          isNull(safetyRecordsTable.episodeNumber),
-        ))
-    : [];
+  const buildContent = async (titles: (typeof titlesTable.$inferSelect)[]) => {
+    const ids = titles.map((title) => title.id);
+    const [mappings, safetyRecords] = ids.length
+      ? await Promise.all([
+          db
+            .select()
+            .from(providerMappingsTable)
+            .where(inArray(providerMappingsTable.titleId, ids)),
+          db
+            .select({
+              id: safetyRecordsTable.id,
+              titleId: safetyRecordsTable.titleId,
+              tier: safetyRecordsTable.tier,
+              isCommunity: safetyRecordsTable.isCommunity,
+              status: safetyRecordsTable.status,
+              items: safetyRecordsTable.items,
+              updatedAt: safetyRecordsTable.updatedAt,
+              rawUpdatedAt: sql<string>`${safetyRecordsTable.updatedAt}::text`,
+              url: safetyRecordsTable.url,
+              sourceName: safetyRecordsTable.sourceName,
+            })
+            .from(safetyRecordsTable)
+            .where(and(
+              inArray(safetyRecordsTable.titleId, ids),
+              isNull(safetyRecordsTable.seasonNumber),
+              isNull(safetyRecordsTable.episodeNumber),
+            )),
+        ])
+      : [[], []];
 
-  const mappingsByTitle = new Map<number, (typeof mappings)[number][]>();
-  for (const mapping of mappings) {
-    const titleMappings = mappingsByTitle.get(mapping.titleId);
-    if (titleMappings) titleMappings.push(mapping);
-    else mappingsByTitle.set(mapping.titleId, [mapping]);
-  }
-  const safetyRecordsByTitle = new Map<number, (typeof safetyRecords)[number][]>();
-  for (const record of safetyRecords) {
-    const titleRecords = safetyRecordsByTitle.get(record.titleId);
-    if (titleRecords) titleRecords.push(record);
-    else safetyRecordsByTitle.set(record.titleId, [record]);
+    const mappingsByTitle = new Map<number, (typeof mappings)[number][]>();
+    for (const mapping of mappings) {
+      const titleMappings = mappingsByTitle.get(mapping.titleId);
+      if (titleMappings) titleMappings.push(mapping);
+      else mappingsByTitle.set(mapping.titleId, [mapping]);
+    }
+    const safetyRecordsByTitle = new Map<number, (typeof safetyRecords)[number][]>();
+    for (const record of safetyRecords) {
+      const titleRecords = safetyRecordsByTitle.get(record.titleId);
+      if (titleRecords) titleRecords.push(record);
+      else safetyRecordsByTitle.set(record.titleId, [record]);
+    }
+
+    return titles.map((title) => {
+      const titleSafetyRecords = safetyRecordsByTitle.get(title.id) ?? [];
+      const ratingRecords = titleSafetyRecords.map((record) => ({
+        ...record,
+        updatedAt: hasMalformedTimestamp(record.rawUpdatedAt)
+          ? record.rawUpdatedAt
+          : record.updatedAt,
+      }));
+      const selectedRating = resolvePreferredRating(ratingRecords, region);
+      const selectedRecord = titleSafetyRecords.find((record) => record.id === selectedRating?.recordId);
+      return {
+        id: title.id,
+        name: title.name,
+        type: title.type,
+        tmdbId: title.tmdbId,
+        imdbId: title.imdbId,
+        mappings: (mappingsByTitle.get(title.id) ?? []).map((mapping) => ({
+          provider: mapping.provider,
+          externalId: mapping.externalId,
+          status: mapping.status,
+          lastRefreshedAt: mapping.lastRefreshedAt?.toISOString() ?? null,
+        })),
+        selectedRating: selectedRating
+          ? { ...selectedRating, refreshTimestampMalformed: hasMalformedTimestamp(selectedRecord?.rawUpdatedAt) }
+          : null,
+      };
+    });
+  };
+
+  if (!malformedRefreshTimestamp) {
+    const titles = await makeTitleQuery().limit(50);
+    return res.json(await buildContent(titles));
   }
 
-  const content = titles.map((t) => {
-    const titleSafetyRecords = safetyRecordsByTitle.get(t.id) ?? [];
-    const ratingRecords = titleSafetyRecords.map((record) => ({
-      ...record,
-      updatedAt: hasMalformedTimestamp(record.rawUpdatedAt)
-        ? record.rawUpdatedAt
-        : record.updatedAt,
-    }));
-    const selectedRating = resolvePreferredRating(ratingRecords, region);
-    const selectedRecord = titleSafetyRecords.find((record) => record.id === selectedRating?.recordId);
-    return {
-      id: t.id,
-      name: t.name,
-      type: t.type,
-      tmdbId: t.tmdbId,
-      imdbId: t.imdbId,
-      mappings: (mappingsByTitle.get(t.id) ?? []).map((m) => ({
-        provider: m.provider,
-        externalId: m.externalId,
-        status: m.status,
-        lastRefreshedAt: m.lastRefreshedAt?.toISOString() ?? null,
-      })),
-      selectedRating: selectedRating
-        ? { ...selectedRating, refreshTimestampMalformed: hasMalformedTimestamp(selectedRecord?.rawUpdatedAt) }
-        : null,
-    };
-  });
-  const filteredContent = malformedRefreshTimestamp
-    ? content.filter((item) => item.selectedRating?.refreshTimestampMalformed)
-    : content;
-  return res.json(malformedRefreshTimestamp
-    ? filteredContent.slice(offset, offset + CONTENT_REVIEW_PAGE_SIZE + 1)
-    : filteredContent);
+  const filteredContent: Awaited<ReturnType<typeof buildContent>> = [];
+  let matchingOffset = 0;
+  let afterCandidate: { popularity: number; id: number } | undefined;
+  while (filteredContent.length < CONTENT_REVIEW_PAGE_SIZE + 1) {
+    const titleBatch = await makeTitleQuery(afterCandidate)
+      .limit(CONTENT_REVIEW_CANDIDATE_BATCH_SIZE);
+    if (!titleBatch.length) break;
+    const lastCandidate = titleBatch[titleBatch.length - 1];
+    afterCandidate = { popularity: lastCandidate.popularity, id: lastCandidate.id };
+
+    const contentBatch = await buildContent(titleBatch);
+    for (const item of contentBatch) {
+      if (!item.selectedRating?.refreshTimestampMalformed) continue;
+      if (matchingOffset++ < offset) continue;
+      filteredContent.push(item);
+      if (filteredContent.length >= CONTENT_REVIEW_PAGE_SIZE + 1) break;
+    }
+  }
+  return res.json(filteredContent);
 });
 
 const normalizeAlias = (value: string) =>

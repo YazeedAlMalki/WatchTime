@@ -162,6 +162,52 @@ describe("admin Content review timestamp filter", () => {
     )).toBe(true);
   });
 
+  it("finds a late malformed-timestamp match in a large catalog", async () => {
+    const fixturePrefix = "timestamp-large-catalog-fixture-20261004";
+    const candidateCount = 2_000;
+    const titles = await db.insert(titlesTable).values(
+      Array.from({ length: candidateCount }, (_, index) => ({
+        name: `${fixturePrefix}-${String(index + 1).padStart(4, "0")}`,
+        type: "movie" as const,
+        popularity: 10,
+      })),
+    ).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    const [record] = await db.insert(safetyRecordsTable).values({
+      titleId: titles[titles.length - 1].id,
+      sourceName: "Wikidata",
+      status: "available",
+      isCommunity: false,
+      url: "https://www.wikidata.org/wiki/Qlarge-catalog",
+      updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+      items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
+    }).returning({ id: safetyRecordsTable.id });
+    restoreTimestampMocks.push(mockMalformedSafetyTimestamps(
+      db,
+      new Map([[record.id, "not-a-timestamp"]]),
+    ));
+
+    const startedAt = performance.now();
+    const response = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true`)
+      .expect(200);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(response.body).toHaveLength(1);
+    expect(response.body[0]).toMatchObject({
+      name: `${fixturePrefix}-${String(candidateCount).padStart(4, "0")}`,
+      selectedRating: {
+        region: "US",
+        refreshTimestampMalformed: true,
+      },
+    });
+    expect(elapsedMs).toBeLessThan(10_000);
+    if (process.env.REPORT_CONTENT_REVIEW_TIMING === "1") {
+      console.info(`Large-catalog malformed-timestamp request: ${elapsedMs.toFixed(1)}ms`);
+    }
+  });
+
   it("rejects invalid filter query values", async () => {
     await request(app)
       .get("/api/admin/content?malformedRefreshTimestamp=sometimes")
