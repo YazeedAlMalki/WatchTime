@@ -150,9 +150,11 @@ export function Loading() {
 export function ErrorState({
   onRetry,
   message = "Couldn't load data",
+  retryAccessibilityLabel = 'Retry',
 }: {
   onRetry: () => void;
   message?: string;
+  retryAccessibilityLabel?: string;
 }) {
   const c = useColors();
   return (
@@ -170,6 +172,8 @@ export function ErrorState({
       </Text>
       <Pressable
         testID="retry-button"
+        accessibilityRole="button"
+        accessibilityLabel={retryAccessibilityLabel}
         onPress={onRetry}
         style={({ pressed }) => [
           {

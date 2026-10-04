@@ -88,17 +88,10 @@ jest.mock('@workspace/api-client-react', () => {
 
 jest.mock('@/components/ui', () => {
   const React = require('react');
-  const { Pressable, Text, View } = require('react-native');
+  const { Text, View } = require('react-native');
   return {
     EmptyState: ({ title }: { title: string }) => <Text>{title}</Text>,
-    ErrorState: ({ message, onRetry }: { message: string; onRetry: () => void }) => (
-      <View>
-        <Text>{message}</Text>
-        <Pressable testID="retry-button" onPress={onRetry}>
-          <Text>Retry</Text>
-        </Pressable>
-      </View>
-    ),
+    ErrorState: jest.requireActual('@/components/ui').ErrorState,
     Loading: () => <View testID="loading" />,
     PosterCard: ({ title }: { title: { name: string } }) => <Text>{title.name}</Text>,
     SectionHeader: ({ title }: { title: string }) => <Text>{title}</Text>,
@@ -196,7 +189,9 @@ describe('mobile signed-in Home partial feed failures', () => {
     await notify();
     expect(screen.getByText("Couldn't load trending titles")).toBeTruthy();
     expect(mockMarkStartup).toHaveBeenCalledWith('trending-error');
-    fireEvent.press(screen.getByTestId('retry-button'));
+    const trendingRetry = screen.getByRole('button', { name: 'Retry Trending Now' });
+    expect(within(trendingRetry).getByText('Retry')).toBeTruthy();
+    fireEvent.press(trendingRetry);
     expect(mockTrendingRefetch).toHaveBeenCalledTimes(1);
     expect(mockMarkStartup).toHaveBeenCalledWith('trending-retry');
 
@@ -247,16 +242,33 @@ describe('mobile signed-in Home partial feed failures', () => {
     }
     mockShowsState.current = failed;
     mockWatchlistState.current = failed;
+    mockRecommendationsState.current = failed;
+    mockTrendingRefetch.mockClear();
     await notify();
     expect(screen.getByText("Couldn't load Up Next")).toBeTruthy();
     expect(screen.getByText("Couldn't load your watchlist")).toBeTruthy();
-    expect(screen.getByText('Suggested Show')).toBeTruthy();
-    fireEvent.press(within(screen.getByTestId('watchlist-error')).getByTestId('retry-button'));
-    expect(mockWatchlistRefetch).toHaveBeenCalledTimes(1);
-    expect(mockShowsRefetch).not.toHaveBeenCalled();
-    expect(mockRecommendationsRefetch).not.toHaveBeenCalled();
+    const retryActions = [
+      ['Retry Up Next', mockShowsRefetch],
+      ['Retry your watchlist', mockWatchlistRefetch],
+      ['Retry recommendations', mockRecommendationsRefetch],
+    ] as const;
+    expect(screen.getAllByText('Retry')).toHaveLength(3);
+    for (const [name, retry] of retryActions) {
+      const button = screen.getByRole('button', { name });
+      expect(within(button).getByText('Retry')).toBeTruthy();
+      fireEvent.press(button);
+      expect(retry).toHaveBeenCalledTimes(1);
+      for (const [, other] of retryActions) {
+        if (other !== retry) expect(other).not.toHaveBeenCalled();
+      }
+      retry.mockClear();
+    }
     mockShowsState.current = ready([trackedShow]);
     mockWatchlistState.current = ready([{ id: 8, name: 'Saved Show' }]);
+    mockRecommendationsState.current = ready([
+      { reason: 'Because you watch drama', titles: [{ id: 9, name: 'Suggested Show' }] },
+    ]);
+    mockTrendingQueryState.current = ready([{ id: 1, name: 'Recovered trending title' }]);
     await notify();
     mockShowsRefetch.mockClear();
     mockWatchlistRefetch.mockClear();
@@ -310,5 +322,18 @@ describe('mobile signed-in Home partial feed failures', () => {
     expect(screen.getByTestId('recommendations-refresh-warning')).toBeTruthy();
     expect(screen.getByText('No recommendations yet')).toBeTruthy();
     expect(screen.getByText('Up Next Show')).toBeTruthy();
+    mockShowsState.current = { ...ready([trackedShow]), isError: true };
+    await notify();
+    expect(screen.getAllByText('Retry')).toHaveLength(3);
+    for (const [name, retry] of retryActions) {
+      const button = screen.getByRole('button', { name });
+      expect(within(button).getByText('Retry')).toBeTruthy();
+      fireEvent.press(button);
+      expect(retry).toHaveBeenCalledTimes(1);
+      for (const [, other] of retryActions) {
+        if (other !== retry) expect(other).not.toHaveBeenCalled();
+      }
+      retry.mockClear();
+    }
   });
 });

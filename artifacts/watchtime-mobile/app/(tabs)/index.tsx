@@ -156,7 +156,13 @@ function RefreshWarning({
       <Text style={[styles.refreshWarningText, { color: c.mutedForeground }]}>
         Couldn't refresh {section}. Results may be out of date.
       </Text>
-      <Pressable testID="retry-button" onPress={onRetry} hitSlop={8}>
+      <Pressable
+        testID="retry-button"
+        accessibilityRole="button"
+        accessibilityLabel={`Retry ${section}`}
+        onPress={onRetry}
+        hitSlop={8}
+      >
         <Text style={[styles.refreshRetry, { color: c.primary }]}>Retry</Text>
       </Pressable>
     </View>
@@ -231,7 +237,7 @@ function SignedInHome({ startupReady, userId }: { startupReady: boolean; userId:
       <SectionHeader title="Up Next" />
       {shows.isError && shows.data === undefined ? (
         <View testID="up-next-error">
-          <ErrorState message="Couldn't load Up Next" onRetry={() => void shows.refetch()} />
+          <ErrorState message="Couldn't load Up Next" retryAccessibilityLabel="Retry Up Next" onRetry={() => void shows.refetch()} />
         </View>
       ) : shows.isLoading && shows.data === undefined ? (
         <Loading />
@@ -263,7 +269,7 @@ function SignedInHome({ startupReady, userId }: { startupReady: boolean; userId:
       <SectionHeader title="Your Watchlist" />
       {watchlist.isError && watchlist.data === undefined ? (
         <View testID="watchlist-error">
-          <ErrorState message="Couldn't load your watchlist" onRetry={() => void watchlist.refetch()} />
+          <ErrorState message="Couldn't load your watchlist" retryAccessibilityLabel="Retry your watchlist" onRetry={() => void watchlist.refetch()} />
         </View>
       ) : watchlist.isLoading && watchlist.data === undefined ? (
         <Loading />
@@ -293,7 +299,7 @@ function SignedInHome({ startupReady, userId }: { startupReady: boolean; userId:
           <SectionHeader title="Recommendations" />
           {recs.isError && recs.data === undefined ? (
             <View testID="recommendations-error">
-              <ErrorState message="Couldn't load recommendations" onRetry={() => void recs.refetch()} />
+              <ErrorState message="Couldn't load recommendations" retryAccessibilityLabel="Retry recommendations" onRetry={() => void recs.refetch()} />
             </View>
           ) : recs.isLoading && recs.data === undefined ? (
             <Loading />
@@ -417,6 +423,7 @@ function SignedOutHome({
       ) : trending.isError ? (
         <ErrorState
           message="Couldn't load trending titles"
+          retryAccessibilityLabel="Retry Trending Now"
           onRetry={retryTrending}
         />
       ) : (
