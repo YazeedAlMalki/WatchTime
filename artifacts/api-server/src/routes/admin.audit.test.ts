@@ -234,6 +234,7 @@ describe("PATCH /api/admin/contributions/:id — audit log", () => {
       .send({ status: "approved" });
 
     expect(res.status).toBe(200);
+    expect(logger.error).not.toHaveBeenCalled();
 
     const audit = await latestAuditRow("contribution", contributionId);
     expect(audit).not.toBeNull();
@@ -261,6 +262,7 @@ describe("PATCH /api/admin/contributions/:id — audit log", () => {
       .send({ status: "rejected" });
 
     expect(res.status).toBe(200);
+    expect(logger.error).not.toHaveBeenCalled();
 
     const audit = await latestAuditRow("contribution", contributionId);
     expect(audit).not.toBeNull();
@@ -287,6 +289,7 @@ describe("PATCH /api/admin/contributions/:id — audit log", () => {
       .send({ status: "rejected" });
 
     expect(res.status).toBe(200);
+    expect(logger.error).not.toHaveBeenCalled();
 
     const audit = await latestAuditRow("contribution", contributionId);
     expect(audit).not.toBeNull();
@@ -370,6 +373,7 @@ describe("PATCH /api/admin/reports/:id — audit log", () => {
       .send({ status: "resolved" });
 
     expect(res.status).toBe(200);
+    expect(logger.error).not.toHaveBeenCalled();
 
     const audit = await latestAuditRow("report", reportId);
     expect(audit).not.toBeNull();
@@ -396,6 +400,7 @@ describe("PATCH /api/admin/reports/:id — audit log", () => {
       .send({ status: "dismissed" });
 
     expect(res.status).toBe(200);
+    expect(logger.error).not.toHaveBeenCalled();
 
     const audit = await latestAuditRow("report", reportId);
     expect(audit).not.toBeNull();
@@ -469,6 +474,7 @@ describe("PATCH /api/admin/feedback/:id — audit log", () => {
       .send({ status: "resolved" });
 
     expect(res.status).toBe(200);
+    expect(logger.error).not.toHaveBeenCalled();
 
     const audit = await latestAuditRow("feedback", feedbackId);
     expect(audit).not.toBeNull();
@@ -495,6 +501,7 @@ describe("PATCH /api/admin/feedback/:id — audit log", () => {
       .send({ status: "closed" });
 
     expect(res.status).toBe(200);
+    expect(logger.error).not.toHaveBeenCalled();
 
     const audit = await latestAuditRow("feedback", feedbackId);
     expect(audit).not.toBeNull();

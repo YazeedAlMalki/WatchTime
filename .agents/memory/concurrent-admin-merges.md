@@ -7,7 +7,7 @@ During conflict resolution, inspect each side's behavior, not just whether the c
 
 **Why:** An overlapping admin merge contained route and test code with undefined values and broken control flow; choosing the coherent side alone also dropped an independent alias-correction edit.
 
-**How to apply:** Compare both conflict stages and their tests, retain the coherent implementation, port independent behavior from the other side, and run focused route, UI, type, and contract checks before continuing the merge.
+**How to apply:** Compare both conflict stages and their tests, retain the coherent implementation, port independent behavior from the other side, and run focused route, UI, type, and contract checks before continuing the merge. Confirm routes are actively registered at the expected method/path and use matching parameter and body schemas; commented duplicate blocks can leave source valid while requests fail with 404/400.
 
 After concurrent task changes land, inspect the complete edited test block even if Git reports a clean merge. A context-based patch can leave displaced assertions or duplicate declarations that only the project-wide typecheck catches.
 
