@@ -2100,6 +2100,20 @@ export function AliasReview({
     }: ${requestNames.join(" and ")}.`;
   };
 
+  const describeRefreshStaleness = (
+    failedRequests: ReviewRefreshRequest[],
+  ) => {
+    const aliasesFailed = failedRequests.includes("aliases");
+    const catalogFailed = failedRequests.includes("catalog");
+    if (aliasesFailed && catalogFailed) {
+      return "The alternate-title list and collision results may be stale.";
+    }
+    if (aliasesFailed) {
+      return "The alternate-title list may be stale; collision results refreshed successfully.";
+    }
+    return "Collision results may be stale; the alternate-title list refreshed successfully.";
+  };
+
   const refreshAliasViews = async (
     requests: ReviewRefreshRequest[] = ["aliases", "catalog"],
   ) => {
@@ -2218,7 +2232,7 @@ export function AliasReview({
               ? { title: "Alternate title updated" }
               : {
                   title: "Alternate title updated, but refresh failed",
-                  description: `The saved change may not be reflected in the review table yet. ${formatRefreshFailures(failedRequests)} Retry the refresh below.`,
+                  description: `${describeRefreshStaleness(failedRequests)} ${formatRefreshFailures(failedRequests)} Retry the refresh below.`,
                   variant: "destructive",
                 },
           );
@@ -2410,7 +2424,7 @@ export function AliasReview({
           <div>
             <p className="font-semibold">Alternate-title refresh failed</p>
             <p>
-              The review data may be stale.{" "}
+              {describeRefreshStaleness(refreshError)}{" "}
               {savedAliasPreview
                 ? "Your saved correction is shown in the table below, but its review details may be out of date. "
                 : ""}

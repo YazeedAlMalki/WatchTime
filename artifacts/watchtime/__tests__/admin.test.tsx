@@ -439,7 +439,9 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).toContain("Shared Local Title");
     expect(container.textContent).toContain("Alternate-title refresh failed");
     expect(container.textContent).toContain("Retry refresh");
-    expect(container.textContent).toContain("The review data may be stale.");
+    expect(container.textContent).toContain(
+      "The alternate-title list may be stale; collision results refreshed successfully.",
+    );
     expect(container.textContent).not.toContain("Your change was saved");
     expect(mocks.toast).toHaveBeenCalledWith({
       title: "Could not update alternate title",
@@ -507,6 +509,76 @@ describe("admin alternate-title review", () => {
     expectRefreshCalls(["catalog"]);
     expect(container.textContent).not.toContain(
       "Alternate-title refresh failed",
+    );
+  });
+
+  it("shows the latest alias when only collision results fail to refresh", async () => {
+    const latestServerAlias: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Latest saved alias",
+      language: "it",
+      sourceName: "Latest editorial source",
+      sourceUrl: "https://example.test/latest-source",
+      updatedAt: "2026-09-20T12:00:00.000Z",
+    };
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) => {
+        if (queryKey[0] === "/api/admin/content-aliases") {
+          render([latestServerAlias]);
+          return Promise.resolve();
+        }
+        return Promise.reject(new Error("Catalog refresh unavailable"));
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        latestServerAlias.alias,
+      );
+      setInput(container, "Language for Shared Local Title", "it");
+      setInput(
+        container,
+        "Source link for Shared Local Title",
+        latestServerAlias.sourceUrl,
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expectRefreshCalls(["aliases", "catalog"]);
+    const latestRow = container.querySelector("tbody tr");
+    expect(latestRow?.textContent).toContain(latestServerAlias.alias);
+    expect(latestRow?.textContent).toContain(latestServerAlias.language);
+    expect(
+      latestRow?.querySelector<HTMLAnchorElement>(
+        `a[href="${latestServerAlias.sourceUrl}"]`,
+      )?.textContent,
+    ).toBe(latestServerAlias.sourceName);
+    expect(latestRow?.textContent).not.toContain("Shared Local Title");
+    expect(container.textContent).toContain(
+      "Collision results may be stale; the alternate-title list refreshed successfully.",
+    );
+    expect(container.textContent).toContain(
+      "Failed refresh request: catalog search (collision results).",
+    );
+    expect(container.textContent).not.toContain(
+      "Your saved correction is shown in the table below",
+    );
+
+    mocks.queryClient.invalidateQueries.mockClear();
+    mocks.queryClient.invalidateQueries.mockResolvedValue(undefined);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+
+    expectRefreshCalls(["catalog"]);
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+    expect(container.querySelector("tbody tr")?.textContent).toContain(
+      latestServerAlias.alias,
     );
   });
 
