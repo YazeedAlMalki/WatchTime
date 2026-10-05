@@ -149,6 +149,48 @@ describe("in-progress show discovery across large libraries", () => {
     }
   });
 
+  it("serves updated progress and history to web and mobile after a watched-episode write", async () => {
+    const titleId = titleIds[68];
+    const watchedEpisodeId = episodeIds[136];
+    await db.delete(watchedEpisodesTable).where(
+      and(eq(watchedEpisodesTable.userId, USER_ID), eq(watchedEpisodesTable.titleId, titleId)),
+    );
+
+    try {
+      const write = await supertest(app)
+        .post(`/api/episodes/${watchedEpisodeId}/watched`)
+        .send({});
+      expect(write.status).toBe(200);
+
+      const [shows, history] = await Promise.all([
+        supertest(app).get("/api/me/shows").query({ q: "progress_page_68" }),
+        supertest(app).get("/api/me/recent"),
+      ]);
+      expect(shows.status).toBe(200);
+      expect(history.status).toBe(200);
+      expect(shows.body).toEqual([
+        expect.objectContaining({
+          title: expect.objectContaining({ id: titleId }),
+          watchedEpisodes: 1,
+          totalEpisodes: 2,
+          nextEpisode: expect.objectContaining({ id: episodeIds[137] }),
+        }),
+      ]);
+      expect(history.body).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          titleId,
+          titleName: "__progress_page_68__",
+          kind: "episode",
+          episodeLabel: "S1E1",
+        }),
+      ]));
+    } finally {
+      await db.delete(watchedEpisodesTable).where(
+        and(eq(watchedEpisodesTable.userId, USER_ID), eq(watchedEpisodesTable.titleId, titleId)),
+      );
+    }
+  });
+
   it("rejects invalid cursors for the independent feed", async () => {
     expect((await supertest(app).get("/api/me/shows/in-progress").query({ beforeId: -1 })).status).toBe(400);
     expect((await supertest(app).get("/api/me/shows/in-progress").query({ offset: 24 })).status).toBe(400);

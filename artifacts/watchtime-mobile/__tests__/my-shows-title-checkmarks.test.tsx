@@ -18,6 +18,7 @@ const mockEpisodes = [
 ];
 const mockTitleFetch = jest.fn();
 const mockSeasonFetch = jest.fn();
+const mockRecentActivityFetch = jest.fn();
 const mockTitleData = () => ({
   id: 42, name: 'Example Show', type: 'series', year: 2024,
   genres: [], altTitles: [], providers: [], inWatchlist: false,
@@ -79,8 +80,8 @@ jest.mock('@/hooks/useColors', () => ({
 }));
 jest.mock('@/constants/colors', () => ({ __esModule: true, default: { radius: 8 } }));
 
-// React Query stays real, so inactive cached seasons only refresh when the
-// screen mutation invalidates the same keys used by title detail.
+// React Query stays real so mutations exercise the generated-key invalidation
+// paths for collection data, history, and title details.
 jest.mock('@workspace/api-client-react', () => {
   const { useMutation, useQuery } = require('@tanstack/react-query');
   const titleKey = (id: number) => [`/api/titles/${id}`];
@@ -95,17 +96,34 @@ jest.mock('@workspace/api-client-react', () => {
     getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
     getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
     getGetTitleSafetyQueryKey: () => ['/api/safety'],
-    getMyShows: jest.fn(async () => [{
-      title: { id: 42, name: 'Example Show' },
-      nextEpisode: { ...mockEpisodes[2] },
-      totalEpisodes: 4,
-      watchedEpisodes: mockWatched.size,
-    }]),
+    getMyShows: jest.fn(async () => {
+      const nextEpisode = mockEpisodes.find((episode) => !mockWatched.has(episode.id)) ?? null;
+      return [{
+        title: { id: 42, name: 'Example Show' },
+        nextEpisode: nextEpisode ? { ...nextEpisode } : null,
+        totalEpisodes: 4,
+        watchedEpisodes: mockWatched.size,
+      }];
+    }),
     getMyInProgressShows: async () => [],
     getMyMovies: async () => [],
     mergeTrackedShows: (shows: any[], inProgress: any[]) => [...inProgress, ...shows],
-    useGetMyRecentActivity: () => ({
-      data: [], isLoading: false, isError: false, isRefetching: false, refetch: jest.fn(),
+    useGetMyRecentActivity: (options: {
+      query?: { enabled?: boolean; queryKey?: readonly unknown[] };
+    } = {}) => useQuery({
+      queryKey: options.query?.queryKey ?? ['/api/me/activity'],
+      queryFn: async () => {
+        mockRecentActivityFetch();
+        return mockWatched.has(201) ? [{
+          titleId: 42,
+          titleName: 'Example Show',
+          posterUrl: null,
+          kind: 'episode',
+          episodeLabel: 'S2E1',
+          watchedAt: '2026-10-05T00:00:00.000Z',
+        }] : [];
+      },
+      enabled: options.query?.enabled ?? true,
     }),
     useGetTitle: (id: number) => useQuery({
       queryKey: titleKey(id),
@@ -159,12 +177,19 @@ function SeasonRows({ season }: { season: number }) {
   );
 }
 
-it('refreshes previously cached seasons after marking Up Next in My Shows and opening title detail', async () => {
+it('refreshes My Shows, history, and title detail caches after marking Up Next', async () => {
   mockWatched.clear();
+  mockWatched.add(101);
+  mockWatched.add(102);
   const client = new QueryClient({
     defaultOptions: { queries: { staleTime: Infinity, retry: false }, mutations: { retry: false } },
   });
-  const { getGetSeasonQueryKey, getGetTitleQueryKey } = require('@workspace/api-client-react');
+  const {
+    getGetSeasonQueryKey,
+    getGetTitleQueryKey,
+    getGetMyShowsQueryKey,
+    getGetMyRecentActivityQueryKey,
+  } = require('@workspace/api-client-react');
   client.setQueryData(getGetTitleQueryKey(42), mockTitleData());
   for (const season of mockSeasons) {
     client.setQueryData(getGetSeasonQueryKey(42, season.seasonNumber), mockSeasonData(season.seasonNumber));
@@ -208,16 +233,37 @@ it('refreshes previously cached seasons after marking Up Next in My Shows and op
   });
   await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeTruthy());
 
+  const showQuery = client.getQueryCache().findAll({ queryKey: getGetMyShowsQueryKey() })[0];
+  const recentActivityQuery = client.getQueryCache().findAll({
+    queryKey: getGetMyRecentActivityQueryKey(),
+  })[0];
+  expect(showQuery?.queryKey[1]).toBe('account');
+  expect(recentActivityQuery?.queryKey).toEqual([
+    ...getGetMyRecentActivityQueryKey(),
+    'account',
+    'checkmarks-user',
+  ]);
+  const showsFetchesBeforeWatch = api.getMyShows.mock.calls.length;
+  const historyFetchesBeforeWatch = mockRecentActivityFetch.mock.calls.length;
   fireEvent.press(shows.getByTestId('mark-watched-201'));
   await waitFor(() => {
     expect([...mockWatched].sort()).toEqual([101, 102, 201]);
+    expect(api.getMyShows.mock.calls.length).toBeGreaterThan(showsFetchesBeforeWatch);
+    expect(mockRecentActivityFetch.mock.calls.length).toBeGreaterThan(historyFetchesBeforeWatch);
+    expect(shows.getByTestId('mark-watched-202')).toBeTruthy();
+    expect(shows.getByText('3 / 4 episodes')).toBeTruthy();
     expect(client.getQueryState(getGetTitleQueryKey(42))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetSeasonQueryKey(42, 1))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetSeasonQueryKey(42, 2))?.isInvalidated).toBe(true);
   });
   expect(client.getQueryState(getGetSeasonQueryKey(420, 1))?.isInvalidated).toBe(false);
 
-  fireEvent.press(shows.getByTestId('show-row-42'));
+  fireEvent.press(shows.getByTestId('tab-history'));
+  await waitFor(() => {
+    expect(shows.getByTestId('history-item-42')).toBeTruthy();
+    expect(shows.getByText('S2E1')).toBeTruthy();
+  });
+  fireEvent.press(shows.getByTestId('history-item-42'));
   expect(mockRouter.push).toHaveBeenCalledWith('/title/42');
   await act(async () => shows.unmount());
 
