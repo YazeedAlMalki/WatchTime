@@ -85,7 +85,7 @@ function UpNextCard({ show }: { show: TrackedShow }) {
         transition={150}
       />
       <View style={{ padding: 12 }}>
-        <Text numberOfLines={1} style={{ color: c.foreground, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
+        <Text numberOfLines={2} style={{ color: c.foreground, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
           {show.title.name}
         </Text>
         {ep ? (
@@ -104,7 +104,7 @@ function UpNextCard({ show }: { show: TrackedShow }) {
           />
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-          <Text style={{ color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
+          <Text style={{ flexShrink: 1, color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
             {show.watchedEpisodes}/{show.totalEpisodes} episodes
           </Text>
           {ep ? (
@@ -122,6 +122,7 @@ function UpNextCard({ show }: { show: TrackedShow }) {
                   gap: 6,
                   backgroundColor: c.primary,
                   borderRadius: 999,
+                  minHeight: 44,
                   paddingHorizontal: 12,
                   paddingVertical: 6,
                   opacity: markWatched.isPending ? 0.5 : pressed ? 0.8 : 1,

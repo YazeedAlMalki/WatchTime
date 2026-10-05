@@ -86,6 +86,7 @@ import TitleDetailScreen from '../app/title/[id]';
 describe('title action sign-in return', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockTitle.name = 'The selected movie';
     mockAuth.isSignedIn = false;
     mockAuth.isAuthAvailable = true;
     mockRoute.current = { id: '456' };
@@ -125,6 +126,16 @@ describe('title action sign-in return', () => {
     expect(mockSignInUnavailable).toHaveBeenCalledTimes(1);
     expect(mockRouter.push).not.toHaveBeenCalled();
     expect(mockAdd).not.toHaveBeenCalled();
+  });
+
+  it('wraps title actions instead of forcing them into one row', async () => {
+    mockTitle.name = 'A deliberately long title that needs room to wrap';
+    const detail = await render(<TitleDetailScreen />);
+
+    expect(detail.getByText(mockTitle.name)).toBeTruthy();
+    expect(detail.getByTestId('title-primary-actions').props.style).toEqual(
+      expect.objectContaining({ flexWrap: 'wrap' }),
+    );
   });
 
   it.each([

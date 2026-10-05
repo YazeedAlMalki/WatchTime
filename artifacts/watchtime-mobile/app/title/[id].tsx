@@ -911,7 +911,10 @@ export default function TitleDetailScreen() {
         ) : null}
 
         {/* Actions – visible to all; signed-out users are redirected to sign in */}
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+        <View
+          testID="title-primary-actions"
+          style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14 }}
+        >
           <Pressable
             testID="watchlist-toggle"
             disabled={watchlistBusy}
@@ -931,6 +934,8 @@ export default function TitleDetailScreen() {
             style={({ pressed }) => [
               styles.actionButton,
               {
+                flexShrink: 1,
+                maxWidth: '100%',
                 backgroundColor: t.inWatchlist ? c.card : c.primary,
                 borderWidth: t.inWatchlist ? 1 : 0,
                 borderColor: c.border,
@@ -948,6 +953,7 @@ export default function TitleDetailScreen() {
                 color: t.inWatchlist ? c.foreground : c.primaryForeground,
                 fontSize: 14,
                 fontFamily: 'Inter_600SemiBold',
+                flexShrink: 1,
               }}
             >
               {t.inWatchlist ? 'In Watchlist' : 'Watchlist'}
@@ -976,6 +982,8 @@ export default function TitleDetailScreen() {
               style={({ pressed }) => [
                 styles.actionButton,
                 {
+                  flexShrink: 1,
+                  maxWidth: '100%',
                   backgroundColor: t.watched ? c.card : c.secondary,
                   borderWidth: 1,
                   borderColor: t.watched ? c.primary : c.border,
@@ -989,6 +997,7 @@ export default function TitleDetailScreen() {
                   color: t.watched ? c.primary : c.foreground,
                   fontSize: 14,
                   fontFamily: 'Inter_600SemiBold',
+                  flexShrink: 1,
                 }}
               >
                 {t.watched ? 'Watched' : 'Mark watched'}
@@ -1093,6 +1102,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    minHeight: 44,
     borderRadius: colors.radius,
     paddingHorizontal: 16,
     paddingVertical: 10,
