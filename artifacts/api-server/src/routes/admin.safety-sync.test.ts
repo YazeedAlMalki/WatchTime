@@ -111,6 +111,45 @@ describe("admin integration health", () => {
       lowAccumulatedSuccessRateAlert: true,
     });
   });
+
+  it.each([
+    {
+      recovery: "the accumulated rate reaches 50%",
+      successRatePercent: 50,
+      refreshAttempts: 6,
+      successfulRefreshes: 3,
+    },
+    {
+      recovery: "the tracked sample drops below five refreshes",
+      successRatePercent: 40,
+      refreshAttempts: 4,
+      successfulRefreshes: 2,
+    },
+  ])(
+    "clears the Wikidata warning when $recovery",
+    async ({ successRatePercent, refreshAttempts, successfulRefreshes }) => {
+      const [health] = await db.insert(integrationHealthTable).values({
+        provider: "Wikidata",
+        status: "healthy",
+        successRatePercent,
+        refreshAttempts,
+        successfulRefreshes,
+      }).returning({ id: integrationHealthTable.id });
+      healthIds.push(health.id);
+
+      const response = await request(app).get("/api/admin/integrations").expect(200);
+      const wikidataHealth = response.body.find(
+        (entry: any) => entry.provider === "Wikidata",
+      );
+
+      expect(wikidataHealth).toMatchObject({
+        successRatePercent,
+        refreshAttempts,
+        successfulRefreshes,
+        lowAccumulatedSuccessRateAlert: false,
+      });
+    },
+  );
 });
 
 describe("admin safety sync status", () => {

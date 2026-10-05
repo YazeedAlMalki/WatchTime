@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   batchStatus: undefined as unknown,
   batchStatusListeners: new Set<() => void>(),
   integrations: [] as unknown[],
+  integrationListeners: new Set<() => void>(),
 }));
 
 vi.mock("@workspace/api-client-react", async (importOriginal) => {
@@ -41,7 +42,13 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     useGetMe: () => ({ data: { isAdmin: true }, isLoading: false }),
     useGetAdminDashboard: () => ({ data: undefined }),
     useListAdminIntegrations: () => ({
-      data: mocks.integrations,
+      data: React.useSyncExternalStore(
+        (listener) => {
+          mocks.integrationListeners.add(listener);
+          return () => mocks.integrationListeners.delete(listener);
+        },
+        () => mocks.integrations,
+      ),
       isLoading: false,
     }),
     useListCatalogRefreshes: () => ({ data: [] }),
@@ -78,6 +85,11 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
 vi.mock("@clerk/react", () => ({ useAuth: () => ({ getToken: async () => null }) }));
 
 import AdminPage from "@/pages/admin";
+
+function publishIntegrations(integrations: unknown[]) {
+  mocks.integrations = integrations;
+  for (const listener of mocks.integrationListeners) listener();
+}
 
 it("uses the returned batch offset and processed count for the next resume offset", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
@@ -191,6 +203,64 @@ it("uses the returned batch offset and processed count for the next resume offse
     mocks.batchMutate.mockReset();
     mocks.batchStatus = undefined;
     mocks.batchStatusListeners.clear();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("hides the Wikidata warning after an updated health response clears it", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=integrations");
+  publishIntegrations([
+    {
+      provider: "Wikidata",
+      status: "healthy",
+      lastSyncAt: "2026-09-24T09:00:00.000Z",
+      lastSuccessAt: "2026-09-24T09:00:00.000Z",
+      lastError: null,
+      successRatePercent: 40,
+      refreshAttempts: 5,
+      successfulRefreshes: 2,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: true,
+    },
+  ]);
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    const warning = page.getByText("Persistently low accumulated success rate");
+    await expect.element(warning).toBeVisible();
+
+    publishIntegrations([
+      {
+        provider: "Wikidata",
+        status: "healthy",
+        lastSyncAt: "2026-09-24T09:00:00.000Z",
+        lastSuccessAt: "2026-09-24T09:00:00.000Z",
+        lastError: null,
+        successRatePercent: 50,
+        refreshAttempts: 6,
+        successfulRefreshes: 3,
+        mappedTitles: 0,
+        missingMappings: 0,
+        malformedRefreshTimestampCount: 0,
+        sustainedFailureAlert: false,
+        lowAccumulatedSuccessRateAlert: false,
+      },
+    ]);
+
+    await expect.element(warning).not.toBeInTheDocument();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.integrations = [];
     window.history.replaceState({}, "", previousUrl);
   }
 });
