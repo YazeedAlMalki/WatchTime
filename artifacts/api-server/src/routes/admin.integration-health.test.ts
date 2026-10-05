@@ -6,7 +6,7 @@ import {
   safetyRecordsTable,
   titlesTable,
 } from "@workspace/db";
-import { inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
@@ -206,6 +206,24 @@ describe("GET /api/admin/integrations", () => {
       status: "healthy",
       successRatePercent: 97,
       malformedRefreshTimestampCount: 1,
+    });
+
+    await db
+      .update(safetyRecordsTable)
+      .set({ updatedAt: new Date("2026-10-04T12:00:00.000Z") })
+      .where(eq(safetyRecordsTable.id, rating.id));
+
+    const repairedResponse = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+    const repairedHealth = repairedResponse.body.find(
+      (row: { provider: string }) => row.provider === malformedProvider,
+    );
+
+    expect(repairedHealth).toMatchObject({
+      status: malformedHealth.status,
+      successRatePercent: malformedHealth.successRatePercent,
+      malformedRefreshTimestampCount: 0,
     });
   });
 });
