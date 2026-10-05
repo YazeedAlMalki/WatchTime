@@ -8,6 +8,7 @@
     "scheme": "watchtime-mobile",
     "userInterfaceStyle": "automatic",
     "ios": {
+      "bundleIdentifier": "com.watchtime.mobile",
       "supportsTablet": false
     },
     "android": {
