@@ -534,6 +534,71 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("leaves TVMaze and Wikipedia health history unchanged during a dry run", async () => {
+    const previousSyncAt = new Date("2025-04-03T02:01:00.000Z");
+    const previousSuccessAt = new Date("2025-04-02T01:00:00.000Z");
+    const seededHealth = [
+      {
+        provider: "TVMaze",
+        status: "degraded",
+        lastSyncAt: previousSyncAt,
+        lastSuccessAt: previousSuccessAt,
+        lastError: "Previous TVMaze warning",
+        successRatePercent: 60,
+        refreshAttempts: 10,
+        successfulRefreshes: 6,
+        mappedTitles: 8,
+        missingMappings: 2,
+      },
+      {
+        provider: "Wikipedia",
+        status: "failing",
+        lastSyncAt: previousSyncAt,
+        lastSuccessAt: previousSuccessAt,
+        lastError: "Previous Wikipedia warning",
+        successRatePercent: 25,
+        refreshAttempts: 8,
+        successfulRefreshes: 2,
+        mappedTitles: 5,
+        missingMappings: 3,
+      },
+    ];
+    await db.delete(integrationHealthTable)
+      .where(inArray(integrationHealthTable.provider, ["TVMaze", "Wikipedia"]));
+    await db.insert(integrationHealthTable).values(seededHealth);
+
+    const wikipediaItem: SourceItem = {
+      key: "movie:dry-run-health-history",
+      source: "wikipedia",
+      type: "movie",
+      name: "Dry Run Health History Test",
+      imdbId: "tt9990010",
+      wikiPage: "Dry Run Health History Test",
+      popularity: 0,
+    };
+    const fetchMock = vi.fn(async (input: string | URL | Request) =>
+      String(input).includes("wikipedia.org")
+        ? jsonResponse({ extract: "A sourced preview summary." })
+        : jsonResponse(showPayload),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runCatalogSync(
+      { dryRun: true, allowPartial: false },
+      [testItem, wikipediaItem],
+    );
+
+    expect(result).toMatchObject({ selected: 2, succeeded: 2, failures: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const storedHealth = await db.select().from(integrationHealthTable)
+      .where(inArray(integrationHealthTable.provider, ["TVMaze", "Wikipedia"]));
+    expect(storedHealth).toHaveLength(2);
+    for (const expected of seededHealth) {
+      expect(storedHealth.find((health) => health.provider === expected.provider))
+        .toMatchObject(expected);
+    }
+  });
+
   it("leaves live safety integration health unchanged", async () => {
     await db.delete(integrationHealthTable).where(eq(integrationHealthTable.provider, "Does the Dog Die?"));
     const expected = {
