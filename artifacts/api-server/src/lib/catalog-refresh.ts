@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, notInArray, or, sql } from "drizzle-orm";
 import {
   catalogSyncItemsTable,
   catalogSyncRunsTable,
@@ -11,9 +11,11 @@ import { logger } from "./logger";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const SUSTAINED_FAILURE_MS = 3 * 24 * 60 * 60 * 1000;
+export const STALE_QUEUED_REFRESH_MS = 5 * 60 * 1000;
 export const CATALOG_REFRESH_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 const COMPLETED_RUN_STATUSES = ["succeeded", "partial", "failed", "skipped"];
 let timer: NodeJS.Timeout | undefined;
+const activeRunIds = new Set<number>();
 
 type CatalogRefreshTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -54,9 +56,18 @@ export async function startCatalogRefresh(
 }
 
 async function executeRun(runId: number, items: SourceItem[]) {
+  activeRunIds.add(runId);
   try {
-    await db.update(catalogSyncRunsTable).set({ status: "running", startedAt: new Date() })
-      .where(eq(catalogSyncRunsTable.id, runId));
+    // A transaction-scoped lease protects the queued startup write across API
+    // processes without reserving an extra pool connection for the whole sync.
+    const started = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:catalog-refresh-worker'), ${runId})`);
+      const runs = await tx.update(catalogSyncRunsTable).set({ status: "running", startedAt: new Date() })
+        .where(and(eq(catalogSyncRunsTable.id, runId), eq(catalogSyncRunsTable.status, "queued")))
+        .returning({ id: catalogSyncRunsTable.id });
+      return runs.length > 0;
+    });
+    if (!started) return;
     const result = await runCatalogSync(
       { dryRun: false, allowPartial: true },
       items,
@@ -104,6 +115,7 @@ async function executeRun(runId: number, items: SourceItem[]) {
       logger.error({ err: recordError, runId }, "unable to record catalog refresh failure");
     }
   } finally {
+    activeRunIds.delete(runId);
     void pruneCatalogRefreshHistory().catch((error) => {
       logger.warn({ err: error }, "unable to prune catalog refresh history");
     });
@@ -151,9 +163,16 @@ export async function retryFailedCatalogTitles(runId: number) {
 }
 
 export async function scheduleCatalogRefresh(delayOverride?: number) {
+  if (delayOverride === undefined) {
+    await recoverInterruptedRuns();
+  } else {
+    // Recovery must not prevent the next scheduled attempt during an outage.
+    await recoverInterruptedRuns().catch((err) => {
+      logger.warn({ err }, "unable to recover interrupted catalog refreshes");
+    });
+  }
   let delay = delayOverride;
   if (delay === undefined) {
-    await recoverInterruptedRuns();
     const [latest] = await db.select().from(catalogSyncRunsTable)
       // Failed and skipped runs are attempts too. Scheduling from only
       // successful runs made a restart immediately repeat an overdue failure.
@@ -181,27 +200,51 @@ export async function scheduleCatalogRefresh(delayOverride?: number) {
   logger.info({ dueAt: new Date(Date.now() + delay) }, "catalog refresh scheduled");
 }
 
-async function recoverInterruptedRuns() {
+export async function recoverInterruptedRuns(
+  queuedCutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS),
+) {
   const client = await pool.connect();
   try {
     const lock = await client.query<{ locked: boolean }>(
       "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
     );
     if (!lock.rows[0]?.locked) return;
-    const interrupted = await db.update(catalogSyncRunsTable).set({
-      status: "failed",
-      error: "Catalog refresh was interrupted by a server restart",
-      finishedAt: new Date(),
-    }).where(eq(catalogSyncRunsTable.status, "running")).returning({ id: catalogSyncRunsTable.id });
-    if (interrupted.length) {
-      await db.update(catalogSyncItemsTable).set({
+    // The catalog lock excludes provider work; run leases also protect workers
+    // awaiting their startup write in another process. Local workers are
+    // protected even while acquiring their lease. Leave newly queued work alone.
+    const queuedExplanation = "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles";
+    const runningExplanation = "Catalog refresh was interrupted by a server restart";
+    const interrupted = await db.transaction(async (tx) => {
+      const runs = await tx.update(catalogSyncRunsTable).set({
         status: "failed",
-        error: "Catalog refresh was interrupted by a server restart",
+        error: sql`case when ${catalogSyncRunsTable.status} = 'queued' then ${queuedExplanation} else ${runningExplanation} end`,
         finishedAt: new Date(),
       }).where(and(
-        inArray(catalogSyncItemsTable.runId, interrupted.map((run) => run.id)),
-        inArray(catalogSyncItemsTable.status, ["queued", "running"]),
-      ));
+        or(
+          eq(catalogSyncRunsTable.status, "running"),
+          and(
+            eq(catalogSyncRunsTable.status, "queued"),
+            lt(catalogSyncRunsTable.createdAt, queuedCutoff),
+          ),
+        ),
+        activeRunIds.size ? notInArray(catalogSyncRunsTable.id, [...activeRunIds]) : undefined,
+        sql`pg_try_advisory_xact_lock(hashtext('watchtime:catalog-refresh-worker'), ${catalogSyncRunsTable.id})`,
+      )).returning({ id: catalogSyncRunsTable.id, error: catalogSyncRunsTable.error });
+      for (const explanation of [queuedExplanation, runningExplanation]) {
+        const runIds = runs.filter((run) => run.error === explanation).map((run) => run.id);
+        if (!runIds.length) continue;
+        await tx.update(catalogSyncItemsTable).set({
+          status: "failed",
+          error: explanation,
+          finishedAt: new Date(),
+        }).where(and(
+          inArray(catalogSyncItemsTable.runId, runIds),
+          inArray(catalogSyncItemsTable.status, ["queued", "running"]),
+        ));
+      }
+      return runs;
+    });
+    if (interrupted.length) {
       logger.warn({ runIds: interrupted.map((run) => run.id) }, "recovered interrupted catalog refreshes");
     }
   } finally {

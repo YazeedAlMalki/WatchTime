@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { catalogSyncItemsTable, catalogSyncRunsTable, db } from "@workspace/db";
+import { catalogSyncItemsTable, catalogSyncRunsTable, db, pool } from "@workspace/db";
 import { logger } from "./logger";
-import { pruneCatalogRefreshHistory, startCatalogRefresh } from "./catalog-refresh";
+import { pruneCatalogRefreshHistory, recoverInterruptedRuns, startCatalogRefresh, STALE_QUEUED_REFRESH_MS } from "./catalog-refresh";
 
 const runCatalogSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("../seed-real", async (importOriginal) => ({
@@ -69,9 +69,7 @@ describe("pruneCatalogRefreshHistory", () => {
 describe("catalog refresh startup failure", () => {
   it("records and logs a failed startup write without running the sync or rejecting the detached task", async () => {
     const startupError = new Error("unable to mark refresh running");
-    const updateSpy = vi.spyOn(db, "update").mockReturnValueOnce({
-      set: () => ({ where: () => Promise.reject(startupError) }),
-    } as unknown as ReturnType<typeof db.update>);
+    const startupSpy = vi.spyOn(db, "transaction").mockRejectedValueOnce(startupError);
     const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
     const unhandledRejections: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
@@ -93,9 +91,10 @@ describe("catalog refresh startup failure", () => {
       expect(runCatalogSyncMock).not.toHaveBeenCalled();
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(unhandledRejections).toEqual([]);
+
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
-      updateSpy.mockRestore();
+      startupSpy.mockRestore();
       errorSpy.mockRestore();
       runCatalogSyncMock.mockReset();
     }
@@ -104,12 +103,10 @@ describe("catalog refresh startup failure", () => {
   it("logs both errors if recording the startup failure also fails", async () => {
     const startupError = new Error("unable to mark refresh running");
     const recordError = new Error("unable to mark refresh failed");
-    const updateSpy = vi.spyOn(db, "update");
-    for (const error of [startupError, recordError]) {
-      updateSpy.mockReturnValueOnce({
-        set: () => ({ where: () => Promise.reject(error) }),
-      } as unknown as ReturnType<typeof db.update>);
-    }
+    const startupSpy = vi.spyOn(db, "transaction").mockRejectedValueOnce(startupError);
+    const updateSpy = vi.spyOn(db, "update").mockReturnValueOnce({
+      set: () => ({ where: () => Promise.reject(recordError) }),
+    } as unknown as ReturnType<typeof db.update>);
     const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
     const unhandledRejections: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
@@ -125,8 +122,23 @@ describe("catalog refresh startup failure", () => {
       expect(runCatalogSyncMock).not.toHaveBeenCalled();
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(unhandledRejections).toEqual([]);
+      const [queued] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(queued.status).toBe("queued");
+      // Once the database is available and the orphan is stale, recovery
+      // makes it actionable even though neither failure write succeeded.
+      await db.update(catalogSyncRunsTable).set({
+        createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
+      }).where(eq(catalogSyncRunsTable.id, runId));
+      await recoverInterruptedRuns();
+      const [recovered] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(recovered.status).toBe("failed");
+      expect(recovered.error).toContain("database outage");
+      expect(recovered.finishedAt).toBeInstanceOf(Date);
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
+      startupSpy.mockRestore();
       updateSpy.mockRestore();
       errorSpy.mockRestore();
       runCatalogSyncMock.mockReset();
@@ -134,6 +146,132 @@ describe("catalog refresh startup failure", () => {
   });
 });
 
+
+describe("catalog refresh recovery", () => {
+  it("fails stale queued and interrupted runs and unfinished items, but preserves new and completed work", async () => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const staleAt = new Date(cutoff.getTime() - 1_000);
+    const runs = await db.insert(catalogSyncRunsTable).values([
+      { trigger: "manual", status: "queued", createdAt: staleAt },
+      { trigger: "manual", status: "running", createdAt: staleAt },
+      { trigger: "manual", status: "queued" },
+      { trigger: "manual", status: "queued", createdAt: cutoff },
+      { trigger: "manual", status: "succeeded", createdAt: staleAt },
+    ]).returning();
+    createdRunIds.push(...runs.map((run) => run.id));
+    await db.insert(catalogSyncItemsTable).values([
+      ...runs.map((run) => ({
+        runId: run.id, itemKey: `recovery-${run.id}`, title: "Recovery test", provider: "TVMaze",
+      })),
+      {
+        runId: runs[0].id, itemKey: "already-finished", title: "Completed item", provider: "TVMaze",
+        status: "succeeded", finishedAt: staleAt,
+      },
+    ]);
+
+    await recoverInterruptedRuns(cutoff);
+
+    const recovered = await db.select().from(catalogSyncRunsTable)
+      .where(inArray(catalogSyncRunsTable.id, createdRunIds)).orderBy(catalogSyncRunsTable.id);
+    expect(recovered.map((run) => run.status)).toEqual(["failed", "failed", "queued", "queued", "succeeded"]);
+    expect(recovered[0].error).toContain("retry the failed titles");
+    expect(recovered[1].error).toBe("Catalog refresh was interrupted by a server restart");
+    for (const run of recovered.slice(0, 2)) {
+      expect(run.finishedAt).toBeInstanceOf(Date);
+    }
+    expect(recovered.slice(2)).toEqual(runs.slice(2));
+    const items = await db.select().from(catalogSyncItemsTable)
+      .where(inArray(catalogSyncItemsTable.runId, createdRunIds)).orderBy(catalogSyncItemsTable.id);
+    expect(items.map((item) => item.status)).toEqual(["failed", "failed", "queued", "queued", "queued", "succeeded"]);
+    for (const [index, item] of items.slice(0, 2).entries()) {
+      expect(item.error).toBe(recovered[index].error);
+      expect(item.finishedAt).toBeInstanceOf(Date);
+    }
+    expect(items[5].finishedAt).toEqual(staleAt);
+    await recoverInterruptedRuns(cutoff);
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(inArray(catalogSyncRunsTable.id, createdRunIds)).orderBy(catalogSyncRunsTable.id)).toEqual(recovered);
+  });
+
+  it("does not recover queued work while its local startup write is pending, even when stale", async () => {
+    let finishStartup!: () => void;
+    const startupGate = new Promise<void>((resolve) => { finishStartup = resolve; });
+    const startupSpy = vi.spyOn(db, "transaction").mockImplementationOnce(async () => {
+      await startupGate;
+      return true;
+    });
+    runCatalogSyncMock.mockResolvedValueOnce({ selected: 0, succeeded: 0, episodes: 0, failures: [] });
+    let runId: number | undefined;
+    try {
+      runId = await startCatalogRefresh("manual", []);
+      createdRunIds.push(runId);
+      await db.update(catalogSyncRunsTable).set({
+        createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
+      }).where(eq(catalogSyncRunsTable.id, runId));
+      await recoverInterruptedRuns();
+      const [run] = await db.select().from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, runId));
+      expect(run.status).toBe("queued");
+      expect(run.error).toBeNull();
+      expect(run.finishedAt).toBeNull();
+    } finally {
+      finishStartup();
+      if (runId !== undefined) {
+        await vi.waitFor(async () => {
+          const [run] = await db.select().from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, runId!));
+          expect(run.status).toBe("succeeded");
+        });
+      }
+      startupSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+    }
+  });
+
+  it("leaves stale queued work alone when another worker owns the catalog lock", async () => {
+    const [run] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual", status: "queued",
+      createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
+    }).returning();
+    createdRunIds.push(run.id);
+    const client = await pool.connect();
+    try {
+      await client.query("select pg_advisory_lock(hashtext('watchtime:catalog-sync'))");
+      await recoverInterruptedRuns();
+      const [unchanged] = await db.select().from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, run.id));
+      expect(unchanged).toEqual(run);
+    } finally {
+      await client.query("select pg_advisory_unlock(hashtext('watchtime:catalog-sync'))");
+      client.release();
+    }
+  });
+
+  it("preserves a stale queued worker owned by another process before provider work starts", async () => {
+    const [run] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual", status: "queued",
+      createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
+    }).returning();
+    createdRunIds.push(run.id);
+    const client = await pool.connect();
+    try {
+      await client.query(
+        "select pg_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1)", [run.id],
+      );
+      await recoverInterruptedRuns();
+      const [unchanged] = await db.select().from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, run.id));
+      expect(unchanged).toEqual(run);
+      await client.query(
+        "select pg_advisory_unlock(hashtext('watchtime:catalog-refresh-worker'), $1)", [run.id],
+      );
+      await recoverInterruptedRuns();
+      const [recovered] = await db.select().from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, run.id));
+      expect(recovered.status).toBe("failed");
+    } finally {
+      await client.query(
+        "select pg_advisory_unlock(hashtext('watchtime:catalog-refresh-worker'), $1)", [run.id],
+      );
+      client.release();
+    }
+  });
+});
 
 describe("catalog refresh history cleanup failure", () => {
   it("leaves a successful refresh successful and logs the cleanup rejection", async () => {
