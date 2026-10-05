@@ -1105,7 +1105,7 @@ export const ListAdminIntegrationsResponseItem = zod.object({
   "missingMappings": zod.int(),
   "malformedRefreshTimestampCount": zod.int().describe('Number of malformed rating refresh timestamps for this provider; a data-quality metric that does not affect provider refresh status.'),
   "sustainedFailureAlert": zod.boolean(),
-  "lowAccumulatedSuccessRateAlert": zod.boolean().describe('True for Wikidata when at least five tracked refreshes have a success rate below 50%, independent of the latest status.')
+  "lowAccumulatedSuccessRateAlert": zod.boolean().describe('True for providers with reliable tracked refresh counts when at least five refreshes have a success rate below 50%, independent of the latest status.')
 })
 export const ListAdminIntegrationsResponse = zod.array(ListAdminIntegrationsResponseItem)
 

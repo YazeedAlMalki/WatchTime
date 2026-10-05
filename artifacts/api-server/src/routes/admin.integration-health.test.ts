@@ -150,6 +150,85 @@ describe("GET /api/admin/integrations", () => {
     });
   });
 
+  it("warns for low accumulated rates across providers with reliable counts, even after recovery", async () => {
+    const trackedProviders = [
+      "Wikidata",
+      "Does the Dog Die?",
+      "TVMaze",
+      "Wikipedia",
+    ];
+    const previousRows = await db
+      .select()
+      .from(integrationHealthTable)
+      .where(inArray(integrationHealthTable.provider, trackedProviders));
+    await db
+      .delete(integrationHealthTable)
+      .where(inArray(integrationHealthTable.provider, trackedProviders));
+
+    try {
+      const recoveredAt = new Date();
+      const insertedRows = await db
+        .insert(integrationHealthTable)
+        .values(
+          trackedProviders.map((provider) => ({
+            provider,
+            status: "healthy",
+            lastSyncAt: recoveredAt,
+            lastSuccessAt: recoveredAt,
+            successRatePercent: 40,
+            refreshAttempts: 5,
+            successfulRefreshes: 2,
+          })),
+        )
+        .returning({ id: integrationHealthTable.id });
+
+      const response = await request(app)
+        .get("/api/admin/integrations")
+        .expect(200);
+      for (const provider of trackedProviders) {
+        const health = response.body.find(
+          (row: { provider: string }) => row.provider === provider,
+        );
+        expect(health).toMatchObject({
+          provider,
+          status: "healthy",
+          refreshAttempts: 5,
+          successfulRefreshes: 2,
+          lowAccumulatedSuccessRateAlert: true,
+        });
+      }
+
+      await db
+        .delete(integrationHealthTable)
+        .where(inArray(
+          integrationHealthTable.id,
+          insertedRows.map((row) => row.id),
+        ));
+
+      await db.insert(integrationHealthTable).values({
+        provider: "Wikidata",
+        status: "healthy",
+        successRatePercent: 0,
+        refreshAttempts: null,
+        successfulRefreshes: null,
+      });
+      const incompleteResponse = await request(app)
+        .get("/api/admin/integrations")
+        .expect(200);
+      const incompleteHealth = incompleteResponse.body.find(
+        (row: { provider: string }) => row.provider === "Wikidata",
+      );
+      expect(incompleteHealth.lowAccumulatedSuccessRateAlert).toBe(false);
+    } finally {
+      await db
+        .delete(integrationHealthTable)
+        .where(inArray(integrationHealthTable.provider, trackedProviders));
+      if (previousRows.length) {
+        await db.insert(integrationHealthTable).values(previousRows);
+      }
+    }
+  });
+
   it("reports zero and non-zero malformed rating timestamp counts without changing health status", async () => {
     const zeroCountProvider = "Timestamp health zero regression";
     const malformedProvider = "Timestamp health malformed regression";

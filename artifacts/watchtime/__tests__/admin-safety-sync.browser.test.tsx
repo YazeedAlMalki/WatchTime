@@ -421,6 +421,21 @@ it("shows refresh counts only when both are available and keeps partial health p
       lowAccumulatedSuccessRateAlert: true,
     },
     {
+      provider: "Does the Dog Die?",
+      status: "healthy",
+      lastSyncAt: "2026-09-24T09:00:00.000Z",
+      lastSuccessAt: "2026-09-24T09:00:00.000Z",
+      lastError: null,
+      successRatePercent: 40,
+      refreshAttempts: 5,
+      successfulRefreshes: 2,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: true,
+    },
+    {
       provider: "Attempts-only provider",
       status: "degraded",
       lastSyncAt: null,
@@ -468,6 +483,9 @@ it("shows refresh counts only when both are available and keeps partial health p
     const wikidataCard = Array.from(
       container.querySelectorAll<HTMLElement>("h3"),
     ).find((heading) => heading.textContent === "Wikidata")?.closest("div.bg-card");
+    const doesTheDogDieCard = Array.from(
+      container.querySelectorAll<HTMLElement>("h3"),
+    ).find((heading) => heading.textContent === "Does the Dog Die?")?.closest("div.bg-card");
     const attemptsOnlyCard = Array.from(
       container.querySelectorAll<HTMLElement>("h3"),
     ).find((heading) => heading.textContent === "Attempts-only provider")?.closest("div.bg-card");
@@ -481,6 +499,11 @@ it("shows refresh counts only when both are available and keeps partial health p
     expect(wikidataCard?.textContent).toContain(
       "A recent successful refresh does not clear this warning.",
     );
+    expect(doesTheDogDieCard?.textContent).toContain("healthy");
+    expect(doesTheDogDieCard?.textContent).toContain(
+      "Persistently low accumulated success rate",
+    );
+    expect(doesTheDogDieCard?.textContent).toContain("(2/5 refreshes)");
     expect(attemptsOnlyCard?.textContent).toContain("66.7%");
     expect(attemptsOnlyCard?.textContent).not.toContain("refreshes");
     expect(successesOnlyCard?.textContent).toContain("50%");

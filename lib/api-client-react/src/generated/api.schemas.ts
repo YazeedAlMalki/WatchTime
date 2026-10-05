@@ -894,7 +894,7 @@ export interface IntegrationHealth {
   /** Number of malformed rating refresh timestamps for this provider; a data-quality metric that does not affect provider refresh status. */
   malformedRefreshTimestampCount: number;
   sustainedFailureAlert: boolean;
-  /** True for Wikidata when at least five tracked refreshes have a success rate below 50%, independent of the latest status. */
+  /** True for providers with reliable tracked refresh counts when at least five refreshes have a success rate below 50%, independent of the latest status. */
   lowAccumulatedSuccessRateAlert: boolean;
 }
 

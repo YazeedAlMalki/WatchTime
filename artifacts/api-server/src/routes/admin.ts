@@ -50,7 +50,16 @@ import { retryFailedCatalogTitles, startCatalogRefresh } from "../lib/catalog-re
 
 const router: IRouter = Router();
 
-const WIKIDATA_LOW_SUCCESS_RATE_THRESHOLD_PERCENT = 50;
+const LOW_ACCUMULATED_SUCCESS_RATE_THRESHOLD_PERCENT = 50;
+const LOW_ACCUMULATED_SUCCESS_RATE_MIN_ATTEMPTS = 5;
+// Include only providers whose refresh paths maintain reliable attempt and
+// success counters; legacy or metadata-only health rows are not eligible.
+const LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS = new Set([
+  "Wikidata",
+  "Does the Dog Die?",
+  "TVMaze",
+  "Wikipedia",
+]);
 const CONTENT_REVIEW_PAGE_SIZE = 50;
 const CONTENT_REVIEW_CANDIDATE_BATCH_SIZE = 250;
 const activeSafetySyncRunIds = new Set<number>();
@@ -648,9 +657,14 @@ router.get("/integrations", async (_req, res) => {
         r.status === "failing" &&
         (!r.lastSuccessAt || r.lastSuccessAt.getTime() < sustainedFailureThreshold),
       lowAccumulatedSuccessRateAlert:
-        r.provider === "Wikidata" &&
-        (r.refreshAttempts ?? 0) >= WIKIDATA_LOW_SUCCESS_RATE_MIN_ATTEMPTS &&
-        r.successRatePercent < WIKIDATA_LOW_SUCCESS_RATE_THRESHOLD_PERCENT,
+        LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS.has(r.provider) &&
+        r.refreshAttempts != null &&
+        r.successfulRefreshes != null &&
+        r.refreshAttempts >= LOW_ACCUMULATED_SUCCESS_RATE_MIN_ATTEMPTS &&
+        r.successfulRefreshes >= 0 &&
+        r.successfulRefreshes <= r.refreshAttempts &&
+        (r.successfulRefreshes / r.refreshAttempts) * 100 <
+          LOW_ACCUMULATED_SUCCESS_RATE_THRESHOLD_PERCENT,
     })),
   );
 });
@@ -1623,5 +1637,3 @@ router.get("/audit-log/export", async (req, res) => {
 });
 
 export default router;
-
-const WIKIDATA_LOW_SUCCESS_RATE_MIN_ATTEMPTS = 5;
