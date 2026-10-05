@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, timestamp, index } from "drizzle-orm/pg-core";
 
 /**
  * Persistent store for express-rate-limit counters.
@@ -9,4 +9,6 @@ export const rateLimitHitsTable = pgTable("rate_limit_hits", {
   key: text("key").primaryKey(),
   hits: integer("hits").notNull().default(1),
   resetTime: timestamp("reset_time").notNull(),
-});
+}, (table) => [
+  index("rate_limit_hits_reset_time_idx").on(table.resetTime),
+]);

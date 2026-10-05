@@ -9,6 +9,7 @@
 import type { Store, Options, ClientRateLimitInfo } from "express-rate-limit";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { registerRateLimitCleanup, unregisterRateLimitCleanup } from "./rateLimitCleanup";
 
 export class DrizzleRateLimitStore implements Store {
   private windowMs = 60_000;
@@ -21,6 +22,11 @@ export class DrizzleRateLimitStore implements Store {
   /** Called by express-rate-limit once during setup — captures the windowMs. */
   init(options: Options): void {
     this.windowMs = options.windowMs;
+    registerRateLimitCleanup(this);
+  }
+
+  shutdown(): void {
+    unregisterRateLimitCleanup(this);
   }
 
   private key(rawKey: string): string {
