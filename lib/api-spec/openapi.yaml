@@ -428,7 +428,7 @@ paths:
       operationId: getMyShows
       tags: [tracking]
       summary: Tracked shows with progress and next episode to watch
-      description: Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh.
+      description: Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh. Optional q searches title names case-insensitively, and status filters shows with or without a next episode before pagination.
       parameters:
         - name: limit
           in: query
@@ -436,6 +436,12 @@ paths:
         - name: beforeId
           in: query
           schema: { type: integer, minimum: 1 }
+        - name: q
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - name: status
+          in: query
+          schema: { type: string, enum: ["up-next", "caught-up"] }
       responses:
         "200":
           description: Tracked shows

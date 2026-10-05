@@ -20,7 +20,7 @@ vi.mock("../middlewares/clerkProxyMiddleware", () => ({
 import supertest from "supertest";
 import app from "../app";
 import { db, episodesTable, titlesTable, usersTable, watchedEpisodesTable, watchedTitlesTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 let titleIds: number[] = [];
 let episodeIds: number[] = [];
@@ -97,6 +97,56 @@ describe("in-progress show discovery across large libraries", () => {
     expect(new Set([...ids(progressFirst), ...ids(progressSecond)]).size).toBe(25);
     expect(ids(await page("/in-progress"))[0]).toBe(titleIds[69]);
     expect((await page("/in-progress", ids(progressSecond).at(-1)))).toEqual([]);
+  });
+
+  it("searches all tracked titles by case-insensitive literal name before pagination", async () => {
+    const response = await supertest(app)
+      .get("/api/me/shows")
+      .query({ limit: 24, q: "  PROGRESS_PAGE_69  " });
+    expect(response.status).toBe(200);
+    expect(ids(response.body)).toEqual([titleIds[69]]);
+
+    const wildcardSearch = await supertest(app)
+      .get("/api/me/shows")
+      .query({ q: "%" });
+    expect(wildcardSearch.status).toBe(200);
+    expect(wildcardSearch.body).toEqual([]);
+
+    expect((await supertest(app).get("/api/me/shows").query({ q: "x".repeat(101) })).status).toBe(400);
+  });
+
+  it("filters the full tracked-show collection by Up Next and Caught Up status", async () => {
+    const completedEpisodeIds = episodeIds.slice(138, 140);
+    await db.insert(watchedEpisodesTable).values(
+      completedEpisodeIds.map((episodeId) => ({
+        userId: USER_ID,
+        titleId: titleIds[69],
+        episodeId,
+      })),
+    ).onConflictDoNothing();
+
+    try {
+      const upNext = await supertest(app)
+        .get("/api/me/shows")
+        .query({ limit: 50, status: "up-next" });
+      expect(upNext.status).toBe(200);
+      expect(ids(upNext.body)).not.toContain(titleIds[69]);
+
+      const caughtUp = await supertest(app)
+        .get("/api/me/shows")
+        .query({ status: "caught-up", q: "progress_page_69" });
+      expect(caughtUp.status).toBe(200);
+      expect(ids(caughtUp.body)).toEqual([titleIds[69]]);
+
+      expect((await supertest(app).get("/api/me/shows").query({ status: "archived" })).status).toBe(400);
+    } finally {
+      await db.delete(watchedEpisodesTable).where(
+        and(
+          eq(watchedEpisodesTable.userId, USER_ID),
+          eq(watchedEpisodesTable.titleId, titleIds[69]),
+        ),
+      );
+    }
   });
 
   it("rejects invalid cursors for the independent feed", async () => {

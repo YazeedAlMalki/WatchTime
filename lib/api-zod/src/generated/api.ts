@@ -415,18 +415,22 @@ export const UnmarkEpisodeWatchedResponse = zod.object({
 
 
 /**
- * Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh.
+ * Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh. Optional q searches title names case-insensitively, and status filters shows with or without a next episode before pagination.
  * @summary Tracked shows with progress and next episode to watch
  */
 export const getMyShowsQueryLimitDefault = 24;
 export const getMyShowsQueryLimitMax = 50;
 
 
+export const getMyShowsQueryQMax = 100;
+
 
 
 export const GetMyShowsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getMyShowsQueryLimitMax).default(getMyShowsQueryLimitDefault),
-  "beforeId": zod.coerce.number().int().min(1).optional()
+  "beforeId": zod.coerce.number().int().min(1).optional(),
+  "q": zod.coerce.string().min(1).max(getMyShowsQueryQMax).optional(),
+  "status": zod.enum(['up-next', 'caught-up']).optional()
 })
 
 export const GetMyShowsResponseItem = zod.object({

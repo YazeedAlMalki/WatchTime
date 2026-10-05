@@ -21,6 +21,8 @@ import {
   arrayOverlaps,
   or,
   isNotNull,
+  ilike,
+  not,
 } from "drizzle-orm";
 import { MarkEpisodeWatchedBody, UpdateMeBody } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/auth";
@@ -31,6 +33,7 @@ const router: IRouter = Router();
 const CONTRIBUTION_THRESHOLD = 5;
 const DEFAULT_COLLECTION_LIMIT = 24;
 const MAX_COLLECTION_LIMIT = 50;
+const MAX_SHOW_SEARCH_LENGTH = 100;
 
 function getCollectionPage(query: Record<string, unknown>) {
   const limit = Number(query.limit ?? DEFAULT_COLLECTION_LIMIT);
@@ -219,6 +222,25 @@ for (const [path, inProgressOnly] of [
   const userId = req.userId!;
   const page = getCollectionPage(req.query);
   if (!page || req.query.before !== undefined) return res.status(400).json({ error: "Invalid pagination" });
+  const rawSearch = inProgressOnly ? undefined : req.query.q;
+  const search = typeof rawSearch === "string" ? rawSearch.trim() : "";
+  if (
+    rawSearch !== undefined &&
+    (typeof rawSearch !== "string" || !search || search.length > MAX_SHOW_SEARCH_LENGTH)
+  ) {
+    return res.status(400).json({ error: "Invalid show search" });
+  }
+  const rawStatus = inProgressOnly ? undefined : req.query.status;
+  const status = typeof rawStatus === "string" ? rawStatus : undefined;
+  if (
+    rawStatus !== undefined &&
+    (status === undefined || !["up-next", "caught-up"].includes(status))
+  ) {
+    return res.status(400).json({ error: "Invalid show status" });
+  }
+  const searchPattern = search
+    ? `%${search.replace(/[\\%_]/g, "\\$&")}%`
+    : undefined;
   setPrivateCollectionCache(res);
 
   const watchedCounts = db
@@ -238,6 +260,14 @@ for (const [path, inProgressOnly] of [
   const totalEpisodes = sql<number>`(
     select count(*)::int from ${episodesTable} episode_count
     where episode_count.title_id = ${titlesTable.id}
+  )`;
+  const hasUnwatchedEpisode = sql<boolean>`exists (
+    select 1 from ${episodesTable} remaining
+    where remaining.title_id = ${titlesTable.id}
+      and not exists (
+        select 1 from ${watchedEpisodesTable} watched
+        where watched.user_id = ${userId} and watched.episode_id = remaining.id
+      )
   )`;
   const rows = await db
     .select({
@@ -261,16 +291,15 @@ for (const [path, inProgressOnly] of [
     .where(and(
       ne(titlesTable.type, "movie"),
       or(isNotNull(watchedCounts.titleId), isNotNull(followed.titleId)),
+      searchPattern ? ilike(titlesTable.name, searchPattern) : undefined,
+      status === "up-next"
+        ? hasUnwatchedEpisode
+        : status === "caught-up"
+          ? not(hasUnwatchedEpisode)
+          : undefined,
       inProgressOnly ? and(
         gt(watchedCounts.watchedEpisodes, 0),
-        sql`exists (
-          select 1 from ${episodesTable} remaining
-          where remaining.title_id = ${titlesTable.id}
-            and not exists (
-              select 1 from ${watchedEpisodesTable} watched
-              where watched.user_id = ${userId} and watched.episode_id = remaining.id
-            )
-        )`,
+        hasUnwatchedEpisode,
       ) : undefined,
       page.beforeId === undefined ? undefined : lt(titlesTable.id, page.beforeId),
     ))

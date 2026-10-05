@@ -5,6 +5,7 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { GetMyShowsStatus } from './getMyShowsStatus';
 
 export type GetMyShowsParams = {
 /**
@@ -16,4 +17,10 @@ limit?: number;
  * @minimum 1
  */
 beforeId?: number;
+/**
+ * @minLength 1
+ * @maxLength 100
+ */
+q?: string;
+status?: GetMyShowsStatus;
 };

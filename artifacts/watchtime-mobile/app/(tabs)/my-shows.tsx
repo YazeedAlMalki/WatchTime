@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -14,6 +14,7 @@ import {
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import {
   showSignInUnavailableMessage,
   useAppAuth,
@@ -310,21 +311,31 @@ export default function MyShowsScreen() {
   const { isSignedIn, isAuthAvailable, userId } = useAppAuth();
   const [activeTab, setActiveTab] = useState<Tab>('shows');
   const [showSearch, setShowSearch] = useState('');
+  const [debouncedShowSearch, setDebouncedShowSearch] = useState('');
   const [showFilter, setShowFilter] = useState<ShowFilter>('all');
 
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebouncedShowSearch(showSearch.trim()), 350);
+    return () => clearTimeout(timeout);
+  }, [showSearch]);
+
+  const showQueryParams = {
+    q: debouncedShowSearch || undefined,
+    status: showFilter === 'all' ? undefined : showFilter,
+  };
   const shows = useInfiniteQuery({
-    queryKey: [...getGetMyShowsQueryKey(), 'account', userId, 'infinite'],
+    queryKey: [...getGetMyShowsQueryKey(), 'account', userId, 'infinite', showQueryParams],
     initialPageParam: undefined as number | undefined,
     enabled: !!isSignedIn && !!userId,
     queryFn: ({ pageParam, signal }) =>
-      getMyShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
+      getMyShows({ limit: PAGE_SIZE, beforeId: pageParam, ...showQueryParams }, { signal }),
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.title.id : undefined,
   });
   const inProgress = useInfiniteQuery({
     queryKey: [...getGetMyInProgressShowsQueryKey(), 'account', userId, 'infinite'],
     initialPageParam: undefined as number | undefined,
-    enabled: !!isSignedIn && !!userId,
+    enabled: !!isSignedIn && !!userId && showFilter !== 'caught-up',
     queryFn: ({ pageParam, signal }) =>
       getMyInProgressShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
     getNextPageParam: (lastPage) =>
@@ -349,9 +360,10 @@ export default function MyShowsScreen() {
   // Client-side filter for the TV Shows tab
   const allShows = mergeTrackedShows(shows.data?.pages.flat() ?? [], inProgress.data?.pages.flat() ?? []);
   const allMovies = movies.data?.pages.flat() ?? [];
+  const normalizedShowSearch = debouncedShowSearch.toLowerCase();
   const filteredShows = allShows.filter(show => {
-    const matchesSearch = !showSearch.trim() ||
-      show.title.name.toLowerCase().includes(showSearch.toLowerCase());
+    const matchesSearch = !normalizedShowSearch ||
+      show.title.name.toLowerCase().includes(normalizedShowSearch);
     const matchesFilter =
       showFilter === 'all' ||
       (showFilter === 'up-next' && show.nextEpisode !== null) ||
@@ -380,7 +392,7 @@ export default function MyShowsScreen() {
 
   const onRefresh = () => {
     shows.refetch();
-    inProgress.refetch();
+    if (showFilter !== 'caught-up') inProgress.refetch();
     movies.refetch();
     history.refetch();
   };
@@ -431,7 +443,12 @@ export default function MyShowsScreen() {
   ];
 
   return (
-    <View style={{ flex: 1, backgroundColor: c.background }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: c.background }}
+      behavior="padding"
+      keyboardVerticalOffset={0}
+    >
+      <View style={{ flex: 1, backgroundColor: c.background }}>
       <TabBar active={activeTab} onChange={setActiveTab} />
 
       {/* Search bar + filter chips — TV Shows tab only */}
@@ -444,11 +461,27 @@ export default function MyShowsScreen() {
               style={{ flex: 1, color: c.foreground, paddingHorizontal: 10, paddingVertical: 11, fontSize: 14, fontFamily: 'Inter_400Regular' }}
               placeholder="Search my shows…"
               placeholderTextColor={c.mutedForeground}
+              accessibilityLabel="Search tracked shows"
+              accessibilityHint="Filters your tracked shows by title."
               value={showSearch}
               onChangeText={setShowSearch}
               returnKeyType="search"
-              clearButtonMode="while-editing"
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={100}
             />
+            {showSearch.length > 0 && (
+              <Pressable
+                testID="shows-search-clear"
+                accessibilityRole="button"
+                accessibilityLabel="Clear show search"
+                hitSlop={8}
+                onPress={() => setShowSearch('')}
+                style={{ paddingHorizontal: 12, paddingVertical: 10 }}
+              >
+                <Feather name="x" size={16} color={c.mutedForeground} />
+              </Pressable>
+            )}
           </View>
           <ScrollView
             horizontal
@@ -461,6 +494,8 @@ export default function MyShowsScreen() {
                 <Pressable
                   key={chip.key}
                   testID={`filter-chip-${chip.key}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
                   onPress={() => { Haptics.selectionAsync(); setShowFilter(chip.key); }}
                   style={[
                     styles.filterChip,
@@ -485,14 +520,17 @@ export default function MyShowsScreen() {
         <FlatList
           data={filteredShows}
           keyExtractor={(s) => String(s.title.id)}
+          keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: bottomPad, gap: 12 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
           onEndReached={() => {
              if (shows.hasNextPage && !shows.isFetchingNextPage) shows.fetchNextPage();
-             if (inProgress.hasNextPage && !inProgress.isFetchingNextPage) inProgress.fetchNextPage();
+             if (showFilter !== 'caught-up' && inProgress.hasNextPage && !inProgress.isFetchingNextPage) {
+               inProgress.fetchNextPage();
+             }
           }}
           onEndReachedThreshold={0.4}
-           ListHeaderComponent={filteredShows.length || inProgress.isError ? (
+           ListHeaderComponent={showFilter !== 'caught-up' && (filteredShows.length || inProgress.isError) ? (
              <View>
             <Text style={{ color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular', marginBottom: 4 }}>
                In-progress shows first, even beyond loaded pages
@@ -557,7 +595,8 @@ export default function MyShowsScreen() {
           renderItem={({ item }) => <HistoryRow item={item} />}
         />
       )}
-    </View>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 

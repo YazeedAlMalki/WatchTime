@@ -65,6 +65,7 @@ export * from './getAdminAuditLogParams';
 export * from './getMyInProgressShowsParams';
 export * from './getMyMoviesParams';
 export * from './getMyShowsParams';
+export * from './getMyShowsStatus';
 export * from './getMyWatchlistParams';
 export * from './getTitleSafetyParams';
 export * from './getTrendingTitlesParams';

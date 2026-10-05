@@ -43,8 +43,16 @@ jest.mock('@/lib/app-auth', () => ({
   useAppAuth: () => ({ isLoaded: true, isSignedIn: true, userId: 'checkmarks-user' }),
 }));
 jest.mock('expo-image', () => ({ Image: () => null }));
+jest.mock('react-native-keyboard-controller', () => {
+  const { View } = require('react-native');
+  return {
+    KeyboardAvoidingView: ({ children, ...props }: { children: React.ReactNode }) =>
+      <View {...props}>{children}</View>,
+  };
+});
 jest.mock('expo-haptics', () => ({
   impactAsync: jest.fn(),
+  selectionAsync: jest.fn(),
   ImpactFeedbackStyle: { Light: 'light' },
 }));
 jest.mock('react-native-safe-area-context', () => ({
@@ -87,12 +95,12 @@ jest.mock('@workspace/api-client-react', () => {
     getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
     getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
     getGetTitleSafetyQueryKey: () => ['/api/safety'],
-    getMyShows: async () => [{
+    getMyShows: jest.fn(async () => [{
       title: { id: 42, name: 'Example Show' },
       nextEpisode: { ...mockEpisodes[2] },
       totalEpisodes: 4,
       watchedEpisodes: mockWatched.size,
-    }],
+    }]),
     getMyInProgressShows: async () => [],
     getMyMovies: async () => [],
     mergeTrackedShows: (shows: any[], inProgress: any[]) => [...inProgress, ...shows],
@@ -167,6 +175,39 @@ it('refreshes previously cached seasons after marking Up Next in My Shows and op
     <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
   );
   await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeTruthy());
+  const api = require('@workspace/api-client-react');
+  api.getMyShows.mockClear();
+
+  fireEvent.changeText(shows.getByTestId('shows-search-input'), '  Example ');
+  await waitFor(() => {
+    expect(api.getMyShows).toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'Example' }),
+      expect.anything(),
+    );
+  });
+  expect(shows.getByTestId('show-row-42')).toBeTruthy();
+
+  fireEvent.press(shows.getByTestId('shows-search-clear'));
+  await waitFor(() => expect(shows.getByTestId('shows-search-input').props.value).toBe(''));
+
+  fireEvent.press(shows.getByTestId('filter-chip-caught-up'));
+  await waitFor(() => {
+    expect(api.getMyShows).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'caught-up' }),
+      expect.anything(),
+    );
+  });
+  expect(shows.queryByTestId('show-row-42')).toBeNull();
+
+  fireEvent.press(shows.getByTestId('filter-chip-up-next'));
+  await waitFor(() => {
+    expect(api.getMyShows).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'up-next' }),
+      expect.anything(),
+    );
+  });
+  await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeTruthy());
+
   fireEvent.press(shows.getByTestId('mark-watched-201'));
   await waitFor(() => {
     expect([...mockWatched].sort()).toEqual([101, 102, 201]);

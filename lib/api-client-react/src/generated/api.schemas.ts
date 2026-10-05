@@ -1125,7 +1125,21 @@ limit?: number;
  * @minimum 1
  */
 beforeId?: number;
+/**
+ * @minLength 1
+ * @maxLength 100
+ */
+q?: string;
+status?: GetMyShowsStatus;
 };
+
+export type GetMyShowsStatus = typeof GetMyShowsStatus[keyof typeof GetMyShowsStatus];
+
+
+export const GetMyShowsStatus = {
+  'up-next': 'up-next',
+  'caught-up': 'caught-up',
+} as const;
 
 export type GetMyInProgressShowsParams = {
 /**

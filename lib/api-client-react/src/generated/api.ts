@@ -1555,7 +1555,7 @@ export const getGetMyShowsUrl = (params?: GetMyShowsParams,) => {
 }
 
 /**
- * Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh.
+ * Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh. Optional q searches title names case-insensitively, and status filters shows with or without a next episode before pagination.
  * @summary Tracked shows with progress and next episode to watch
  */
 export const getMyShows = async (params?: GetMyShowsParams, options?: Parameters<typeof customFetch>[1]): Promise<TrackedShow[]> => {
