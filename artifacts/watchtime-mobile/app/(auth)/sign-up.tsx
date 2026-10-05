@@ -37,6 +37,7 @@ function ClerkSignUpScreen() {
   const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
+  const [emailCodeSent, setEmailCodeSent] = useState(false);
   const [resendStatus, setResendStatus] = useState<{ message: string; failed: boolean } | null>(null);
   const [resending, setResending] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
@@ -50,6 +51,7 @@ function ClerkSignUpScreen() {
     setResendStatus(null);
     try {
       const { error } = await signUp.verifications.sendEmailCode();
+      if (!error) setEmailCodeSent(true);
       setResendStatus(error
         ? { message: `Could not send a new code. ${error.message || 'Please try again.'}`, failed: true }
         : { message: 'A new code is on its way. Check your email.', failed: false });
@@ -62,7 +64,23 @@ function ClerkSignUpScreen() {
 
   const handleSubmit = async () => {
     const { error } = await signUp.password({ emailAddress, password });
-    if (!error) await signUp.verifications.sendEmailCode();
+    if (error) return;
+    setResending(true);
+    setResendStatus(null);
+    setEmailCodeSent(false);
+    const recoveryMessage = 'Could not send your verification code. Tap “I need a new code” below to try again.';
+    try {
+      const { error: sendError } = await signUp.verifications.sendEmailCode();
+      if (sendError) {
+        setResendStatus({ message: recoveryMessage, failed: true });
+      } else {
+        setEmailCodeSent(true);
+      }
+    } catch {
+      setResendStatus({ message: recoveryMessage, failed: true });
+    } finally {
+      setResending(false);
+    }
   };
 
   const handleFinalize = async () => {
@@ -148,7 +166,11 @@ function ClerkSignUpScreen() {
             {awaitingSession
               ? 'Your email is verified. Finish signing in to continue.'
               : verifying
-              ? `We sent a verification code to ${emailAddress}`
+              ? emailCodeSent
+                ? `We sent a verification code to ${emailAddress}`
+                : resending
+                  ? `Sending a verification code to ${emailAddress}…`
+                  : `Verify your email address: ${emailAddress}`
               : 'Track shows, movies and more'}
           </Text>
         </View>
