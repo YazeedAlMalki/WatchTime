@@ -35,6 +35,7 @@ import {
   type AdminContentRefreshBatch,
   type AdminContentRefreshBatchHistoryEntry,
   type AdminContentAlias,
+  type AdminContentAliasPage,
   type AdminContentAliasRecord,
   type ListAdminContentAliasesOwnership,
 } from "@workspace/api-client-react";
@@ -1958,9 +1959,15 @@ export function AliasReview({
   const [isExporting, setIsExporting] = useState(false);
   const [savedAliasPreview, setSavedAliasPreview] =
     useState<AdminContentAlias | null>(null);
+  const [removedAliasPreviews, setRemovedAliasPreviews] = useState<
+    AdminContentAlias[]
+  >([]);
   React.useEffect(() => {
     if (linkedAlias) linkedRowRef.current?.scrollIntoView?.({ block: "center" });
   }, [linkedAlias?.id]);
+  const removedAliasIds = new Set(
+    removedAliasPreviews.map((alias) => alias.id),
+  );
   const aliasesWithSavedPreview = aliases?.map((alias) =>
     savedAliasPreview?.id === alias.id ? savedAliasPreview : alias,
   );
@@ -1976,10 +1983,18 @@ export function AliasReview({
     : savedAliasPreview
       ? [savedAliasPreview]
       : undefined;
-  const visibleAliases =
+  const visibleAliasesBeforeRemoval =
     linkedAlias && !reviewAliases?.some((alias) => alias.id === linkedAlias.id)
       ? [linkedAlias, ...(reviewAliases ?? [])]
       : reviewAliases;
+  const visibleAliases = visibleAliasesBeforeRemoval?.filter(
+    (alias) => !removedAliasIds.has(alias.id),
+  );
+  const visibleAliasTotal = Math.max(
+    0,
+    aliasTotal -
+      (aliases?.filter((alias) => removedAliasIds.has(alias.id)).length ?? 0),
+  );
   const aliasPageNumber = Math.floor(aliasOffset / aliasPageSize) + 1;
   const copyAliasLink = async (alias: AdminContentAlias) => {
     if (!reviewUrl) return;
@@ -2115,6 +2130,7 @@ export function AliasReview({
         !failedRequests.includes("aliases")
       ) {
         setSavedAliasPreview(null);
+        setRemovedAliasPreviews([]);
       }
       return failedRequests;
     } finally {
@@ -2255,7 +2271,28 @@ export function AliasReview({
       },
       {
         onSuccess: async () => {
+          qc.setQueriesData<AdminContentAliasPage>(
+            { queryKey: getListAdminContentAliasesQueryKey() },
+            (current) => {
+              if (!current?.items.some((item) => item.id === alias.id)) {
+                return current;
+              }
+              return {
+                ...current,
+                items: current.items.filter((item) => item.id !== alias.id),
+                total: Math.max(0, current.total - 1),
+              };
+            },
+          );
           if (editingId === alias.id) setEditingId(null);
+          setRemovedAliasPreviews((current) =>
+            current.some((removedAlias) => removedAlias.id === alias.id)
+              ? current
+              : [...current, alias],
+          );
+          setSavedAliasPreview((current) =>
+            current?.id === alias.id ? null : current,
+          );
           setConflictAlias((current) =>
             current?.id === alias.id ? null : current,
           );
@@ -2312,7 +2349,7 @@ export function AliasReview({
             </SelectContent>
           </Select>
           <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-            {isError ? "Aliases unavailable" : `${aliasTotal} aliases`}
+            {isError ? "Aliases unavailable" : `${visibleAliasTotal} aliases`}
           </span>
           <Button
             type="button"
@@ -2329,13 +2366,34 @@ export function AliasReview({
       </div>
       {linkedAliasId !== null && (
         <div role="status" className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
-          {linkedAliasLoading
+          {removedAliasIds.has(linkedAliasId)
+            ? "This alternate title was removed and is hidden until the list refresh succeeds."
+            : linkedAliasLoading
             ? "Finding linked alternate title…"
             : linkedAliasError
               ? <>Could not load the linked alternate title. <button type="button" className="text-primary underline" onClick={onRetryLinkedAlias}>Retry</button></>
               : linkedAlias
                 ? <>Linked alternate title: <strong>{linkedAlias.alias}</strong>{!aliases?.some((alias) => alias.id === linkedAlias.id) ? " (shown above the filtered results)" : ""}</>
                 : "This alternate title no longer exists."}
+        </div>
+      )}
+      {removedAliasPreviews.length > 0 && (
+        <div
+          role="status"
+          className="mb-3 rounded-xl border border-border bg-secondary/20 px-4 py-3 text-sm"
+        >
+          {removedAliasPreviews.length === 1 ? (
+            <>
+              Removed alternate title:{" "}
+              <strong>{removedAliasPreviews[0].alias}</strong>. It is hidden
+              until the list refresh succeeds.
+            </>
+          ) : (
+            <>
+              {removedAliasPreviews.length} alternate titles were removed. They
+              are hidden until the list refresh succeeds.
+            </>
+          )}
         </div>
       )}
       {isError && linkedAlias && (
@@ -2729,7 +2787,7 @@ export function AliasReview({
           className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
         >
           <p role="status" className="text-sm text-muted-foreground">
-            Page {aliasPageNumber} · {aliasTotal} matching aliases
+            Page {aliasPageNumber} · {visibleAliasTotal} matching aliases
           </p>
           <div className="flex items-center gap-2">
             <Button

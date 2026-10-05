@@ -9,6 +9,7 @@ import type {
 const mocks = vi.hoisted(() => ({
   queryClient: {
     invalidateQueries: vi.fn().mockResolvedValue(undefined),
+    setQueriesData: vi.fn(),
   },
   toast: vi.fn(),
   updateMutation: {
@@ -104,6 +105,7 @@ describe("admin alternate-title review", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     mocks.queryClient.invalidateQueries.mockReset();
     mocks.queryClient.invalidateQueries.mockResolvedValue(undefined);
+    mocks.queryClient.setQueriesData.mockReset();
     mocks.toast.mockClear();
     mocks.updateMutation.mutate.mockReset();
     mocks.deleteMutation.mutate.mockReset();
@@ -1311,7 +1313,7 @@ describe("admin alternate-title review", () => {
     },
   );
 
-  it("keeps the removed alias visible and offers a retry when refresh fails", async () => {
+  it("hides a removed alias until a failed list refresh is retried", async () => {
     mocks.queryClient.invalidateQueries.mockRejectedValueOnce(
       new Error("Alias refresh unavailable"),
     );
@@ -1321,9 +1323,42 @@ describe("admin alternate-title review", () => {
     act(() => button(container, "Remove").click());
     await flushEffects();
 
+    expect(mocks.queryClient.setQueriesData).toHaveBeenCalledWith(
+      { queryKey: ["/api/admin/content-aliases"] },
+      expect.any(Function),
+    );
+    type AliasPageSnapshot = {
+      items: AdminContentAlias[];
+      total: number;
+      limit: number;
+      offset: number;
+      nextAfterId: number | null;
+    };
+    const updateCachedPage = mocks.queryClient.setQueriesData.mock
+      .calls[0][1] as (
+      current: AliasPageSnapshot | undefined,
+    ) => AliasPageSnapshot | undefined;
+    const stalePage: AliasPageSnapshot = {
+      items: [initialAlias],
+      total: 1,
+      limit: 50,
+      offset: 0,
+      nextAfterId: null,
+    };
+    expect(updateCachedPage(stalePage)).toEqual({
+      ...stalePage,
+      items: [],
+      total: 0,
+    });
+
     expect(container.textContent).toContain("Alternate-title refresh failed");
     expect(container.textContent).toContain("Retry refresh");
-    expect(container.textContent).toContain("2 titles");
+    expect(container.textContent).toContain(
+      "Removed alternate title: Shared Local Title. It is hidden until the list refresh succeeds.",
+    );
+    expect(container.textContent).toContain("0 aliases");
+    expect(container.textContent).not.toContain("2 titles");
+    expect(container.querySelector("tbody tr")).toBeNull();
     expect(mocks.toast).toHaveBeenCalledWith({
       title: "Alternate title removed, but refresh failed",
       description:
@@ -1333,7 +1368,19 @@ describe("admin alternate-title review", () => {
 
     act(() => button(container, "Retry refresh").click());
     await flushEffects();
+    render([
+      {
+        ...initialAlias,
+        id: 18,
+        alias: "Latest server alternate title",
+        collision: false,
+        collisionTitleCount: 1,
+      },
+    ]);
     expect(container.textContent).not.toContain("Alternate-title refresh failed");
+    expect(container.textContent).not.toContain("Removed alternate title:");
+    expect(container.textContent).toContain("Latest server alternate title");
+    expect(container.textContent).not.toContain("Shared Local Title");
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(3);
   });
 });
