@@ -308,6 +308,41 @@ describe("real catalog sync", () => {
     expect(concurrentEpisodes).toHaveLength(1);
   });
 
+  it("uses refreshed provider casing without creating a duplicate normalized alias", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(showPayload)));
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [testItem]);
+    const [title] = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
+    const [before] = await db.select().from(titleAliasesTable).where(and(
+      eq(titleAliasesTable.titleId, title.id),
+      eq(titleAliasesTable.normalizedAlias, "alternatetesttitle"),
+    ));
+    expect(before.alias).toBe("Alternate Test Title");
+    expect(before.isEditorial).toBe(false);
+
+    const refreshedAliases = testItem.aliases!.map((source) =>
+      source.alias === "Alternate Test Title"
+        ? { ...source, alias: "ALTERNATE TEST TITLE" }
+        : source,
+    );
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [{
+      ...testItem,
+      aliases: refreshedAliases,
+    }]);
+    const aliases = await db.select().from(titleAliasesTable).where(and(
+      eq(titleAliasesTable.titleId, title.id),
+      eq(titleAliasesTable.normalizedAlias, before.normalizedAlias),
+    ));
+    expect(aliases).toEqual([expect.objectContaining({
+      id: before.id,
+      alias: "ALTERNATE TEST TITLE",
+      isEditorial: false,
+      providerSources: ["tvmaze"],
+    })]);
+    const [after] = await db.select().from(titlesTable).where(eq(titlesTable.id, title.id));
+    expect(after.altTitles).toContain("ALTERNATE TEST TITLE");
+    expect(after.altTitles).not.toContain("Alternate Test Title");
+  });
+
   it("withdraws only aliases owned by the refreshing provider", async () => {
     const wikipediaItem: SourceItem = {
       key: "movie:shared-title-alias-test",
