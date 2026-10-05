@@ -9,15 +9,29 @@ vi.mock("@/pages/landing", () => ({
 }));
 
 import App from "@/App";
+import { PublicNavbar } from "@/components/layout/PublicNavbar";
 
 const container = document.createElement("div");
 let root: ReturnType<typeof createRoot> | undefined;
 
-afterEach(() => {
+afterEach(async () => {
   root?.unmount();
   root = undefined;
   container.remove();
   window.history.replaceState({}, "", "/");
+  await page.viewport(390, 844);
+});
+
+it.each([640, 900])("names the public search shortcut at a %ipx viewport", async (width) => {
+  await page.viewport(width, 844);
+  document.body.append(container);
+  root = createRoot(container);
+  root.render(<PublicNavbar />);
+
+  const search = page.getByRole("link", { name: "Browse titles", exact: true });
+  await expect.element(search).toBeVisible();
+  await expect.element(search).toHaveAccessibleName("Browse titles");
+  await expect.element(search).toHaveAttribute("href", "/browse");
 });
 
 it("keeps the public mobile menu keyboard accessible without loading authenticated scripts", async () => {

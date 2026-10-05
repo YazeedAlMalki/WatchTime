@@ -38,8 +38,8 @@ export function PublicNavbar() {
         </div>
 
         <div className="flex items-center gap-3">
-          <Link href="/browse" className="hidden rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground sm:flex">
-            <Search className="h-5 w-5" />
+          <Link href="/browse" aria-label="Browse titles" className="hidden rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground sm:flex">
+            <Search aria-hidden="true" className="h-5 w-5" />
           </Link>
           <div className="hidden items-center gap-2 sm:flex">
             <Link href="/sign-in" className="px-3 py-2 text-sm font-medium text-foreground transition-colors hover:text-primary">
