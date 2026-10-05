@@ -222,6 +222,78 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(mockRouterReplace).not.toHaveBeenCalled();
   });
 
+  it('accepts a resent email code on the same screen after a rejected attempt', async () => {
+    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
+    const errors: { fields: { code?: { message: string } } } = { fields: {} };
+    let newCodeSent = false;
+    const sendEmailCode = jest.fn(async () => {
+      newCodeSent = true;
+      delete errors.fields.code;
+      return { error: null };
+    });
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: ['email_address'],
+      missingFields: [],
+      verifications: { verifyEmailCode: jest.fn(), sendEmailCode },
+      finalize: jest.fn(),
+    };
+    signUp.verifications.verifyEmailCode.mockImplementation(async ({ code }: { code: string }) => {
+      if (!newCodeSent || code !== '654321') {
+        errors.fields.code = { message: 'That verification code has expired.' };
+        return { error: errors.fields.code };
+      }
+      delete errors.fields.code;
+      signUp.status = 'complete';
+      return { error: null };
+    });
+    const decorateUrl = jest.fn((url: string) => `${url}?verified=1`);
+    signUp.finalize.mockImplementation(async ({ navigate }: { navigate: (args: unknown) => void }) => {
+      navigate({ session: { currentTask: null }, decorateUrl });
+    });
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors, fetchStatus: 'idle' }));
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('code-input'), '000000');
+    await fireEvent.press(screen.getByTestId('verify-button'));
+    await waitFor(() => expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledWith({ code: '000000' }));
+    await screen.rerender(<SignUpScreen />);
+
+    expect(screen.getByText('That verification code has expired.')).toBeTruthy();
+    expect(signUp.finalize).not.toHaveBeenCalled();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+
+    await fireEvent.press(screen.getByTestId('resend-code-button'));
+    await waitFor(() => expect(screen.getByTestId('resend-code-status').props.children)
+      .toBe('A new code is on its way. Check your email.'));
+
+    expect(sendEmailCode).toHaveBeenCalledTimes(1);
+    expect(sendEmailCode).toHaveBeenCalledWith();
+    expect(screen.getByText('Check your email')).toBeTruthy();
+    expect(screen.getByTestId('code-input').props.value).toBe('000000');
+    expect(screen.queryByText('That verification code has expired.')).toBeNull();
+    expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledTimes(1);
+    expect(signUp.finalize).not.toHaveBeenCalled();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+
+    await fireEvent.changeText(screen.getByTestId('code-input'), '654321');
+    await fireEvent.press(screen.getByTestId('verify-button'));
+
+    await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith('/title/456?verified=1'));
+    expect(signUp.verifications.verifyEmailCode.mock.calls).toEqual([
+      [{ code: '000000' }],
+      [{ code: '654321' }],
+    ]);
+    expect(signUp.finalize).toHaveBeenCalledTimes(1);
+    expect(signUp.finalize).toHaveBeenCalledWith({ navigate: expect.any(Function) });
+    expect(decorateUrl).toHaveBeenCalledTimes(1);
+    expect(decorateUrl).toHaveBeenCalledWith('/title/456');
+    expect(mockRouterReplace).toHaveBeenCalledTimes(1);
+    await screen.rerender(<SignUpScreen />);
+    expect(errors.fields.code).toBeUndefined();
+    expect(screen.queryByText('That verification code has expired.')).toBeNull();
+  });
+
   it('accepts a corrected email code on the same screen after a rejected attempt', async () => {
     mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
     const errors: { fields: { code?: { message: string } } } = { fields: {} };
