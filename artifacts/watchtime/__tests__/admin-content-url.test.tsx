@@ -12,6 +12,7 @@ describe("admin content URL", () => {
       q: "",
       ownership: "all",
       malformedRefreshTimestamp: false,
+      malformedRefreshTimestampProvider: "",
       contentOffset: 0,
       aliasId: null,
     });
@@ -94,6 +95,25 @@ describe("admin content URL", () => {
       malformedRefreshTimestamp: true,
     });
 
+    const providerFiltered = adminContentUrl(
+      new URL(filtered, "https://example.test").search,
+      "content",
+      "GB",
+      "",
+      "all",
+      undefined,
+      true,
+      0,
+      "Wikidata",
+    );
+    expect(
+      new URL(providerFiltered, "https://example.test").searchParams.get(
+        "malformedRefreshTimestampProvider",
+      ),
+    ).toBe("Wikidata");
+    expect(readAdminContentUrl(new URL(providerFiltered, "https://example.test").search))
+      .toMatchObject({ malformedRefreshTimestampProvider: "Wikidata" });
+
     const changedRegion = adminContentUrl(
       new URL(filtered, "https://example.test").search,
       "content",
@@ -107,6 +127,8 @@ describe("admin content URL", () => {
       .not.toContain("malformedRefreshTimestamp");
     expect(adminContentUrl(new URL(filtered, "https://example.test").search, "content", "GB", undefined, undefined, undefined, false))
       .not.toContain("malformedRefreshTimestamp");
+    expect(adminContentUrl(new URL(providerFiltered, "https://example.test").search, "reports", "GB"))
+      .not.toContain("malformedRefreshTimestampProvider");
   });
 
   it("shares the current malformed-timestamp page and resets it when filters change", () => {
@@ -170,6 +192,7 @@ describe("admin content URL", () => {
       q: "Alien",
       ownership: "editorial",
       malformedRefreshTimestamp: false,
+      malformedRefreshTimestampProvider: "",
       contentOffset: 0,
       aliasId: 217,
     });

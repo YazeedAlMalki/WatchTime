@@ -92,6 +92,17 @@ describe("admin Content review timestamp filter", () => {
       refreshTimestampMalformed: true,
     });
 
+    const providerFilteredResponse = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata`)
+      .expect(200);
+    expect(providerFilteredResponse.body.map((item: any) => item.name)).toEqual([
+      `${fixturePrefix}-us-broken`,
+    ]);
+    const unmatchedProviderResponse = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Another+Provider`)
+      .expect(200);
+    expect(unmatchedProviderResponse.body).toEqual([]);
+
     const gbResponse = await request(app)
       .get(`/api/admin/content?q=${fixturePrefix}&region=GB&malformedRefreshTimestamp=true`)
       .expect(200);

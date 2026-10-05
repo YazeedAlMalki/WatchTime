@@ -415,6 +415,34 @@ it("shows refresh counts only when both are available and keeps partial health p
     expect(attemptsOnlyCard?.textContent).not.toContain("refreshes");
     expect(successesOnlyCard?.textContent).toContain("50%");
     expect(successesOnlyCard?.textContent).not.toContain("refreshes");
+
+    const malformedAlert = countedCard?.querySelector('[role="alert"]');
+    expect(malformedAlert?.textContent).toContain(
+      "Malformed rating timestamps detected",
+    );
+    expect(malformedAlert?.textContent).toContain(
+      "This data quality warning does not change provider health status.",
+    );
+    expect(legacyCard?.querySelector('[role="alert"]')).toBeNull();
+
+    await userEvent.click(
+      page.getByRole("link", { name: "Review affected ratings" }),
+    );
+    await expect
+      .element(
+        page.getByRole("checkbox", {
+          name: "Only ratings with malformed refresh timestamps",
+        }),
+      )
+      .toBeChecked();
+    const reviewUrl = new URL(location.href);
+    expect(reviewUrl.searchParams.get("tab")).toBe("content");
+    expect(reviewUrl.searchParams.get("malformedRefreshTimestamp")).toBe(
+      "true",
+    );
+    expect(
+      reviewUrl.searchParams.get("malformedRefreshTimestampProvider"),
+    ).toBe("Counted provider");
   } finally {
     root.unmount();
     container.remove();

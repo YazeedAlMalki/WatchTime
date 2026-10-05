@@ -40,7 +40,7 @@ import {
 } from "@workspace/api-client-react";
 import { RATING_REGIONS, type RatingRegion } from "@workspace/rating-regions";
 import { useQueryClient } from "@tanstack/react-query";
-import { Redirect, useLocation, useSearch } from "wouter";
+import { Link, Redirect, useLocation, useSearch } from "wouter";
 import {
   adminContentUrl,
   readAdminContentUrl,
@@ -92,7 +92,16 @@ import { useToast } from "@/hooks/use-toast";
 export default function AdminPage() {
   const [, setLocation] = useLocation();
   const search = useSearch();
-  const { tab, region, q, ownership, malformedRefreshTimestamp, contentOffset, aliasId } = readAdminContentUrl(search);
+  const {
+    tab,
+    region,
+    q,
+    ownership,
+    malformedRefreshTimestamp,
+    malformedRefreshTimestampProvider,
+    contentOffset,
+    aliasId,
+  } = readAdminContentUrl(search);
   const selectTab = (nextTab: string) => {
     setLocation(adminContentUrl(search, nextTab as AdminTab, region));
   };
@@ -274,17 +283,42 @@ export default function AdminPage() {
             aliasOwnership={ownership}
             onAliasOwnershipChange={selectAliasOwnership}
             malformedRefreshTimestamp={malformedRefreshTimestamp}
+            malformedRefreshTimestampProvider={malformedRefreshTimestampProvider}
             onMalformedRefreshTimestampChange={selectMalformedRefreshTimestamp}
             contentOffset={contentOffset}
             onContentOffsetChange={selectContentPage}
-            reviewUrl={adminContentUrl(search, "content", region, q, ownership, undefined, malformedRefreshTimestamp, contentOffset)}
+            reviewUrl={adminContentUrl(
+              search,
+              "content",
+              region,
+              q,
+              ownership,
+              undefined,
+              malformedRefreshTimestamp,
+              contentOffset,
+              malformedRefreshTimestampProvider,
+            )}
             aliasId={aliasId}
           />
         </TabsContent>
 
         {/* Integrations */}
         <TabsContent value="integrations" className="outline-none">
-          <IntegrationsTab />
+          <IntegrationsTab
+            reviewMalformedTimestampsUrl={(provider) =>
+              adminContentUrl(
+                search,
+                "content",
+                region,
+                "",
+                "all",
+                undefined,
+                true,
+                0,
+                provider,
+              )
+            }
+          />
         </TabsContent>
 
         {/* Audit Log */}
@@ -979,6 +1013,7 @@ function ContentTab({
   aliasOwnership,
   onAliasOwnershipChange,
   malformedRefreshTimestamp,
+  malformedRefreshTimestampProvider,
   onMalformedRefreshTimestampChange,
   contentOffset,
   onContentOffsetChange,
@@ -992,6 +1027,7 @@ function ContentTab({
   aliasOwnership: AliasOwnershipFilter;
   onAliasOwnershipChange: (ownership: AliasOwnershipFilter) => void;
   malformedRefreshTimestamp: boolean;
+  malformedRefreshTimestampProvider: string;
   onMalformedRefreshTimestampChange: (enabled: boolean) => void;
   contentOffset: number;
   onContentOffsetChange: (offset: number) => void;
@@ -1062,6 +1098,9 @@ function ContentTab({
       region: ratingRegion,
       ...(debouncedQ ? { q: debouncedQ } : {}),
       ...(malformedRefreshTimestamp ? { malformedRefreshTimestamp: true } : {}),
+      ...(malformedRefreshTimestampProvider
+        ? { malformedRefreshTimestampProvider }
+        : {}),
       ...(malformedRefreshTimestamp ? { offset: contentOffset } : {}),
     },
   );
@@ -2976,7 +3015,11 @@ function AuditLogTab() {
 
 /* ─── Integrations ─── */
 
-function IntegrationsTab() {
+function IntegrationsTab({
+  reviewMalformedTimestampsUrl,
+}: {
+  reviewMalformedTimestampsUrl: (provider: string) => string;
+}) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: integrations, isLoading } = useListAdminIntegrations();
@@ -3138,6 +3181,36 @@ function IntegrationsTab() {
                   </strong>
                   Below 50% after at least 5 tracked refreshes. A recent
                   successful refresh does not clear this warning.
+                </div>
+              )}
+              {int.malformedRefreshTimestampCount > 0 && (
+                <div
+                  role="alert"
+                  className="rounded-xl border border-orange-300 bg-orange-50 p-3 text-orange-800 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-300"
+                >
+                  <strong className="block">
+                    Malformed rating timestamps detected
+                  </strong>
+                  {int.malformedRefreshTimestampCount.toLocaleString()}{" "}
+                  {int.malformedRefreshTimestampCount === 1
+                    ? "rating has"
+                    : "ratings have"}{" "}
+                  an invalid refresh timestamp for {int.provider}. This data
+                  quality warning does not change provider health status.
+                  <div className="mt-2">
+                    <Button
+                      asChild
+                      size="sm"
+                      variant="outline"
+                      className="border-orange-400 text-orange-900 dark:border-orange-700 dark:text-orange-200"
+                    >
+                      <Link
+                        href={reviewMalformedTimestampsUrl(int.provider)}
+                      >
+                        Review affected ratings
+                      </Link>
+                    </Button>
+                  </div>
                 </div>
               )}
               <div className="flex justify-between items-center py-2 border-b border-border/50">

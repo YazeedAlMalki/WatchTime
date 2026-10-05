@@ -932,6 +932,10 @@ paths:
           in: query
           description: Return only titles whose selected regional rating has a malformed refresh timestamp
           schema: { type: boolean, default: false }
+        - name: malformedRefreshTimestampProvider
+          in: query
+          description: When malformed refresh timestamp filtering is enabled, restrict results to selected ratings from this provider
+          schema: { type: string }
         - name: offset
           in: query
           description: Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
@@ -1873,7 +1877,9 @@ components:
         successfulRefreshes: { type: ["integer", "null"] }
         mappedTitles: { type: integer }
         missingMappings: { type: integer }
-        malformedRefreshTimestampCount: { type: integer }
+        malformedRefreshTimestampCount:
+          type: integer
+          description: Number of malformed rating refresh timestamps for this provider; a data-quality metric that does not affect provider refresh status.
         sustainedFailureAlert: { type: boolean }
         lowAccumulatedSuccessRateAlert:
           type: boolean

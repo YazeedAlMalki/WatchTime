@@ -1103,7 +1103,7 @@ export const ListAdminIntegrationsResponseItem = zod.object({
   "successfulRefreshes": zod.int().nullable(),
   "mappedTitles": zod.int(),
   "missingMappings": zod.int(),
-  "malformedRefreshTimestampCount": zod.int(),
+  "malformedRefreshTimestampCount": zod.int().describe('Number of malformed rating refresh timestamps for this provider; a data-quality metric that does not affect provider refresh status.'),
   "sustainedFailureAlert": zod.boolean(),
   "lowAccumulatedSuccessRateAlert": zod.boolean().describe('True for Wikidata when at least five tracked refreshes have a success rate below 50%, independent of the latest status.')
 })
@@ -1169,6 +1169,7 @@ export const SearchAdminContentQueryParams = zod.object({
   "q": zod.coerce.string().optional(),
   "region": zod.enum(['US', 'GB', 'DE', 'FR', 'AU', 'BR']).default(searchAdminContentQueryRegionDefault).describe('Rating region used to select the official Wikidata record'),
   "malformedRefreshTimestamp": zod.coerce.boolean().default(searchAdminContentQueryMalformedRefreshTimestampDefault).describe('Return only titles whose selected regional rating has a malformed refresh timestamp'),
+  "malformedRefreshTimestampProvider": zod.coerce.string().optional().describe('When malformed refresh timestamp filtering is enabled, restrict results to selected ratings from this provider'),
   "offset": zod.coerce.number().int().min(searchAdminContentQueryOffsetMin).default(searchAdminContentQueryOffsetDefault).describe('Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled')
 })
 

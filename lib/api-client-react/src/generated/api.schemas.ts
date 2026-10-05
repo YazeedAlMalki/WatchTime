@@ -891,6 +891,7 @@ export interface IntegrationHealth {
   successfulRefreshes: number | null;
   mappedTitles: number;
   missingMappings: number;
+  /** Number of malformed rating refresh timestamps for this provider; a data-quality metric that does not affect provider refresh status. */
   malformedRefreshTimestampCount: number;
   sustainedFailureAlert: boolean;
   /** True for Wikidata when at least five tracked refreshes have a success rate below 50%, independent of the latest status. */
@@ -1232,6 +1233,10 @@ region?: RatingRegion;
  * Return only titles whose selected regional rating has a malformed refresh timestamp
  */
 malformedRefreshTimestamp?: boolean;
+/**
+ * When malformed refresh timestamp filtering is enabled, restrict results to selected ratings from this provider
+ */
+malformedRefreshTimestampProvider?: string;
 /**
  * Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
  * @minimum 0

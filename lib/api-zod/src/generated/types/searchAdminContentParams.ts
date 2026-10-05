@@ -18,6 +18,10 @@ region?: RatingRegion;
  */
 malformedRefreshTimestamp?: boolean;
 /**
+ * When malformed refresh timestamp filtering is enabled, restrict results to selected ratings from this provider
+ */
+malformedRefreshTimestampProvider?: string;
+/**
  * Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
  * @minimum 0
  */

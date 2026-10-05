@@ -22,6 +22,7 @@ export function readAdminContentUrl(search: string): {
   q: string;
   ownership: AliasOwnershipFilter;
   malformedRefreshTimestamp: boolean;
+  malformedRefreshTimestampProvider: string;
   contentOffset: number;
   aliasId: number | null;
 } {
@@ -41,6 +42,10 @@ export function readAdminContentUrl(search: string): {
     ? Number(rawAliasId)
     : null;
   const malformedRefreshTimestamp = tab === "content" && params.get("malformedRefreshTimestamp") === "true";
+  const malformedRefreshTimestampProvider =
+    malformedRefreshTimestamp
+      ? params.get("malformedRefreshTimestampProvider")?.trim() ?? ""
+      : "";
   const rawOffset = params.get("offset");
   const parsedOffset = rawOffset !== null && /^(0|[1-9]\d*)$/.test(rawOffset) &&
       Number.isSafeInteger(Number(rawOffset))
@@ -52,6 +57,7 @@ export function readAdminContentUrl(search: string): {
     q: tab === "content" ? (params.get("q") ?? "") : "",
     ownership,
     malformedRefreshTimestamp,
+    malformedRefreshTimestampProvider,
     contentOffset: malformedRefreshTimestamp ? parsedOffset : 0,
     aliasId: tab === "content" ? aliasId : null,
   };
@@ -66,6 +72,7 @@ export function adminContentUrl(
   aliasId?: number,
   malformedRefreshTimestamp?: boolean,
   contentOffset?: number,
+  malformedRefreshTimestampProvider?: string,
 ): string {
   const params = new URLSearchParams(search);
   params.set("tab", tab);
@@ -89,10 +96,20 @@ export function adminContentUrl(
     } else {
       params.delete("offset");
     }
+    const selectedMalformedProvider = selectedMalformedRefreshTimestamp
+      ? malformedRefreshTimestampProvider ??
+        readAdminContentUrl(search).malformedRefreshTimestampProvider
+      : "";
+    if (selectedMalformedProvider) {
+      params.set("malformedRefreshTimestampProvider", selectedMalformedProvider);
+    } else {
+      params.delete("malformedRefreshTimestampProvider");
+    }
   } else {
     params.delete("q");
     params.delete("ownership");
     params.delete("malformedRefreshTimestamp");
+    params.delete("malformedRefreshTimestampProvider");
     params.delete("offset");
   }
   return `/admin?${params.toString()}`;

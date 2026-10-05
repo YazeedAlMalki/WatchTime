@@ -745,6 +745,8 @@ router.get("/content", async (req, res) => {
   const q = parsedParams.data.q?.trim() ?? "";
   const region = parsedParams.data.region as RatingRegion;
   const malformedRefreshTimestamp = parsedParams.data.malformedRefreshTimestamp;
+  const malformedRefreshTimestampProvider =
+    parsedParams.data.malformedRefreshTimestampProvider?.trim() ?? "";
   const offset = parsedParams.data.offset;
   const makeTitleQuery = (after?: { popularity: number; id: number }) => db
     .select()
@@ -852,6 +854,12 @@ router.get("/content", async (req, res) => {
     const contentBatch = await buildContent(titleBatch);
     for (const item of contentBatch) {
       if (!item.selectedRating?.refreshTimestampMalformed) continue;
+      if (
+        malformedRefreshTimestampProvider &&
+        item.selectedRating.sourceName !== malformedRefreshTimestampProvider
+      ) {
+        continue;
+      }
       if (matchingOffset++ < offset) continue;
       filteredContent.push(item);
       if (filteredContent.length >= CONTENT_REVIEW_PAGE_SIZE + 1) break;
