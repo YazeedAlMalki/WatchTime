@@ -52,6 +52,14 @@ jest.mock('expo-image', () => {
   return { Image: () => <View /> };
 });
 
+jest.mock('react-native-keyboard-controller', () => {
+  const { View } = require('react-native');
+  return {
+    KeyboardAvoidingView: ({ children, ...props }: { children: React.ReactNode }) =>
+      <View {...props}>{children}</View>,
+  };
+});
+
 jest.mock('expo-haptics', () => ({
   impactAsync: jest.fn(),
   ImpactFeedbackStyle: { Light: 'light' },

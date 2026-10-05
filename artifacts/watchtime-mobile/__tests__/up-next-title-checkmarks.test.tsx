@@ -58,6 +58,13 @@ jest.mock('@/lib/home-startup', () => ({
 }));
 jest.mock('@/lib/startup-metrics', () => ({ markStartup: jest.fn() }));
 jest.mock('expo-image', () => ({ Image: () => null }));
+jest.mock('react-native-keyboard-controller', () => {
+  const { View } = require('react-native');
+  return {
+    KeyboardAvoidingView: ({ children, ...props }: { children: React.ReactNode }) =>
+      <View {...props}>{children}</View>,
+  };
+});
 jest.mock('expo-haptics', () => ({
   impactAsync: jest.fn(),
   selectionAsync: jest.fn(),
