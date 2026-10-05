@@ -75,6 +75,35 @@ describe("GET /api/admin/integrations", () => {
     );
   });
 
+  it("preserves a zero success count when refresh attempts are present", async () => {
+    const provider = "Admin history zero-success regression";
+    const [stored] = await db
+      .insert(integrationHealthTable)
+      .values({
+        provider,
+        status: "failing",
+        successRatePercent: 0,
+        refreshAttempts: 5,
+        successfulRefreshes: 0,
+      })
+      .returning({ id: integrationHealthTable.id });
+    insertedIds.push(stored.id);
+
+    const response = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+    const health = response.body.find(
+      (row: { provider: string }) => row.provider === provider,
+    );
+
+    expect(health).toMatchObject({
+      provider,
+      successRatePercent: 0,
+      refreshAttempts: 5,
+      successfulRefreshes: 0,
+    });
+  });
+
   it("preserves null counts for legacy rows", async () => {
     const provider = "Admin history legacy regression";
     const [stored] = await db

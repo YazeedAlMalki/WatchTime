@@ -391,6 +391,20 @@ it("shows refresh counts only when both are available and keeps partial health p
       lowAccumulatedSuccessRateAlert: false,
     },
     {
+      provider: "Zero-success provider",
+      status: "failing",
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: "Refresh failed",
+      successRatePercent: 0,
+      refreshAttempts: 5,
+      successfulRefreshes: 0,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+    },
+    {
       provider: "Legacy provider",
       status: "healthy",
       lastSyncAt: null,
@@ -476,6 +490,9 @@ it("shows refresh counts only when both are available and keeps partial health p
     const countedCard = Array.from(
       container.querySelectorAll<HTMLElement>("h3"),
     ).find((heading) => heading.textContent === "Counted provider")?.closest("div.bg-card");
+    const zeroSuccessCard = Array.from(
+      container.querySelectorAll<HTMLElement>("h3"),
+    ).find((heading) => heading.textContent === "Zero-success provider")?.closest("div.bg-card");
     const legacyCard = Array.from(
       container.querySelectorAll<HTMLElement>("h3"),
     ).find((heading) => heading.textContent === "Legacy provider")?.closest("div.bg-card");
@@ -508,6 +525,7 @@ it("shows refresh counts only when both are available and keeps partial health p
     expect(attemptsOnlyCard?.textContent).not.toContain("refreshes");
     expect(successesOnlyCard?.textContent).toContain("50%");
     expect(successesOnlyCard?.textContent).not.toContain("refreshes");
+    expect(zeroSuccessCard?.textContent).toContain("0% (0/5 refreshes)");
 
     const malformedAlert = countedCard?.querySelector('[role="alert"]');
     expect(malformedAlert?.textContent).toContain(
