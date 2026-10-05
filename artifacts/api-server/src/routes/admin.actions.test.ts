@@ -11,7 +11,7 @@ import {
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
-const startCatalogRefresh = vi.hoisted(() => vi.fn().mockResolvedValue(123));
+const startCatalogRefresh = vi.hoisted(() => vi.fn());
 const retryFailedCatalogTitles = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 const refreshWikidataTitle = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, titleId: 1 }));
 const refreshDoesTheDogDieTitle = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, titleId: 1 }));
@@ -35,6 +35,16 @@ vi.mock("../middlewares/auth", () => ({
 }));
 
 import app from "../app";
+import type { startCatalogRefresh as startCatalogRefreshImpl } from "../lib/catalog-refresh";
+
+startCatalogRefresh.mockImplementation(async (
+  _trigger: string,
+  _items: unknown,
+  beforeStart: Parameters<typeof startCatalogRefreshImpl>[2],
+) => {
+  if (beforeStart) await db.transaction((tx) => beforeStart(tx, 123));
+  return 123;
+});
 
 const adminId = "test-admin-actions";
 let titleId: number;
@@ -58,7 +68,7 @@ afterAll(async () => {
 });
 
 describe("restored admin actions", () => {
-  it("lists catalog runs with their failed items and starts a manual run", async () => {
+  it("lists catalog runs with their failed items", async () => {
     const [run] = await db.insert(catalogSyncRunsTable).values({
       trigger: "admin-actions-test",
       status: "partial",
@@ -79,9 +89,11 @@ describe("restored admin actions", () => {
       failedItems: 1,
       failures: [{ title: "Missing episode", provider: "TVMaze", error: "Unavailable" }],
     });
+  });
 
+  it("starts a manual run with an audit prerequisite", async () => {
     await request(app).post("/api/admin/catalog-refreshes").expect(202, { runId: 123 });
-    expect(startCatalogRefresh).toHaveBeenCalledWith("manual");
+    expect(startCatalogRefresh).toHaveBeenCalledWith("manual", undefined, expect.any(Function));
     expect(retryFailedCatalogTitles).not.toHaveBeenCalled();
     const audit = await db.select().from(adminAuditLogTable)
       .where(eq(adminAuditLogTable.adminId, adminId));

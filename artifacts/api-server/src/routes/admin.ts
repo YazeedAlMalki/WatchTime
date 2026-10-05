@@ -710,12 +710,13 @@ router.get("/catalog-refreshes", async (_req, res) => {
 });
 
 router.post("/catalog-refreshes", async (req, res) => {
-  const runId = await startCatalogRefresh("manual");
-  await db.insert(adminAuditLogTable).values({
-    adminId: req.userId!,
-    action: "start_catalog_refresh",
-    entityType: "catalog_sync",
-    entityId: runId,
+  const runId = await startCatalogRefresh("manual", undefined, async (tx, id) => {
+    await tx.insert(adminAuditLogTable).values({
+      adminId: req.userId!,
+      action: "start_catalog_refresh",
+      entityType: "catalog_sync",
+      entityId: id,
+    });
   });
   return res.status(202).json({ runId });
 });

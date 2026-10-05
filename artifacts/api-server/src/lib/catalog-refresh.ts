@@ -15,26 +15,42 @@ export const CATALOG_REFRESH_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 const COMPLETED_RUN_STATUSES = ["succeeded", "partial", "failed", "skipped"];
 let timer: NodeJS.Timeout | undefined;
 
+type CatalogRefreshTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 export async function startCatalogRefresh(
   trigger: "scheduled" | "manual" | "retry",
   items: SourceItem[] = sourceItems,
+  beforeStart?: (tx: CatalogRefreshTransaction, runId: number) => Promise<void>,
 ) {
-  const [run] = await db.insert(catalogSyncRunsTable).values({
-    trigger,
-    status: "queued",
-    totalItems: items.length,
-  }).returning();
-  if (items.length) {
-    await db.insert(catalogSyncItemsTable).values(items.map((item) => ({
-      runId: run.id,
-      itemKey: item.key,
-      title: item.name,
-      provider: item.source === "tvmaze" ? "TVMaze" : "Wikipedia",
-    })));
-  }
+  const queueRun = async (connection: Pick<typeof db, "insert">) => {
+    const [run] = await connection.insert(catalogSyncRunsTable).values({
+      trigger,
+      status: "queued",
+      totalItems: items.length,
+    }).returning();
+    if (items.length) {
+      await connection.insert(catalogSyncItemsTable).values(items.map((item) => ({
+        runId: run.id,
+        itemKey: item.key,
+        title: item.name,
+        provider: item.source === "tvmaze" ? "TVMaze" : "Wikipedia",
+      })));
+    }
+    return run.id;
+  };
 
-  void executeRun(run.id, items);
-  return run.id;
+  // Audited starts commit the queue and audit together before any detached work.
+  // A failed audit rolls back both run and items; scheduled starts are unchanged.
+  const runId = beforeStart
+    ? await db.transaction(async (tx) => {
+        const id = await queueRun(tx);
+        await beforeStart(tx, id);
+        return id;
+      })
+    : await queueRun(db);
+
+  void executeRun(runId, items);
+  return runId;
 }
 
 async function executeRun(runId: number, items: SourceItem[]) {
