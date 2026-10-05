@@ -5,6 +5,7 @@ const mockUseLocalSearchParams = jest.fn();
 const mockUseSignUp = jest.fn();
 const mockLinkHref = jest.fn();
 const mockRouterReplace = jest.fn();
+const mockRedirect = jest.fn();
 
 jest.mock('@workspace/dev-auth', () => ({
   isDevelopmentAuthEnabled: () => false,
@@ -22,7 +23,10 @@ jest.mock('expo-router', () => ({
     mockLinkHref(href);
     return children;
   },
-  Redirect: () => null,
+  Redirect: (props: unknown) => {
+    mockRedirect(props);
+    return null;
+  },
 }));
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -151,6 +155,59 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(verifyEmailCode).toHaveBeenCalledWith({ code: '123456' });
     expect(finalize).toHaveBeenCalledWith({ navigate: expect.any(Function) });
     expect(decorateUrl).toHaveBeenCalledWith(destination);
+  });
+
+  it.each(['returned error', 'rejected promise'])('recovers from a finalization failure: %s', async (failure) => {
+    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: ['email_address'],
+      missingFields: [],
+      verifications: { verifyEmailCode: jest.fn() },
+      finalize: jest.fn(),
+    };
+    signUp.verifications.verifyEmailCode.mockImplementation(async () => {
+      signUp.status = 'complete';
+      return { error: null };
+    });
+    const privateError = 'Internal activation details must not be displayed';
+    if (failure === 'returned error') {
+      signUp.finalize.mockResolvedValueOnce({ error: { message: privateError } });
+    } else {
+      signUp.finalize.mockRejectedValueOnce(new Error(privateError));
+    }
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
+    await fireEvent.press(screen.getByTestId('verify-button'));
+
+    await waitFor(() => expect(screen.getByTestId('finalization-error').props.children).toBe(
+      'Your email is verified, but we could not finish signing you in. Try again, or use Sign in below.',
+    ));
+    await screen.rerender(<SignUpScreen />);
+    expect(screen.getByText('Finish signing in')).toBeTruthy();
+    expect(screen.queryByTestId('code-input')).toBeNull();
+    expect(screen.queryByText(privateError)).toBeNull();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+    expect(mockRedirect).not.toHaveBeenCalled();
+    expect(screen.getByTestId('retry-finalization-button').props.accessibilityState.disabled).toBe(false);
+    expect(screen.getByText('Sign in')).toBeTruthy();
+    expect(mockLinkHref).toHaveBeenLastCalledWith({
+      pathname: '/(auth)/sign-in',
+      params: { returnTo: '/title/456' },
+    });
+
+    signUp.finalize.mockImplementationOnce(async ({ navigate }: { navigate: (args: unknown) => void }) => {
+      navigate({ session: { currentTask: null }, decorateUrl: (url: string) => `${url}?verified=1` });
+      return { error: null };
+    });
+    await fireEvent.press(screen.getByTestId('retry-finalization-button'));
+
+    await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith('/title/456?verified=1'));
+    expect(screen.queryByTestId('finalization-error')).toBeNull();
+    expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledTimes(1);
+    expect(signUp.finalize).toHaveBeenCalledTimes(2);
   });
 
   it('keeps a rejected email code on the verification screen without finalizing', async () => {

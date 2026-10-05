@@ -39,8 +39,10 @@ function ClerkSignUpScreen() {
   const [code, setCode] = useState('');
   const [resendStatus, setResendStatus] = useState<{ message: string; failed: boolean } | null>(null);
   const [resending, setResending] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizationError, setFinalizationError] = useState<string | null>(null);
 
-  const busy = fetchStatus === 'fetching';
+  const busy = fetchStatus === 'fetching' || finalizing;
 
   const handleResend = async () => {
     if (busy || resending) return;
@@ -63,12 +65,14 @@ function ClerkSignUpScreen() {
     if (!error) await signUp.verifications.sendEmailCode();
   };
 
-  const handleVerify = async () => {
-    const { error } = await signUp.verifications.verifyEmailCode({ code });
-    if (error) return;
-    if (signUp.status === 'complete') {
+  const handleFinalize = async () => {
+    if (busy) return;
+    setFinalizing(true);
+    setFinalizationError(null);
+    const recoveryMessage = 'Your email is verified, but we could not finish signing you in. Try again, or use Sign in below.';
+    try {
       const dest = (returnTo as string | undefined) ?? '/';
-      await signUp.finalize({
+      const result = await signUp.finalize({
         navigate: ({ session, decorateUrl }: any) => {
           if (session?.currentTask) return;
           const url = decorateUrl(dest);
@@ -80,11 +84,24 @@ function ClerkSignUpScreen() {
           }
         },
       });
+      if (result?.error) setFinalizationError(recoveryMessage);
+    } catch {
+      setFinalizationError(recoveryMessage);
+    } finally {
+      setFinalizing(false);
     }
   };
 
-  if (signUp.status === 'complete' || isSignedIn) return <Redirect href="/" />;
+  const handleVerify = async () => {
+    if (busy) return;
+    const { error } = await signUp.verifications.verifyEmailCode({ code });
+    if (error) return;
+    if (signUp.status === 'complete') await handleFinalize();
+  };
 
+  if (isSignedIn) return <Redirect href="/" />;
+
+  const awaitingSession = signUp.status === 'complete';
   const verifying =
     signUp.status === 'missing_requirements' &&
     signUp.unverifiedFields.includes('email_address') &&
@@ -117,7 +134,7 @@ function ClerkSignUpScreen() {
             <Feather name={verifying ? 'mail' : 'user-plus'} size={28} color={c.primaryForeground} />
           </View>
           <Text style={{ color: c.foreground, fontSize: 26, fontFamily: 'Inter_700Bold' }}>
-            {verifying ? 'Check your email' : 'Create your account'}
+            {awaitingSession ? 'Finish signing in' : verifying ? 'Check your email' : 'Create your account'}
           </Text>
           <Text
             style={{
@@ -128,13 +145,41 @@ function ClerkSignUpScreen() {
               textAlign: 'center',
             }}
           >
-            {verifying
+            {awaitingSession
+              ? 'Your email is verified. Finish signing in to continue.'
+              : verifying
               ? `We sent a verification code to ${emailAddress}`
               : 'Track shows, movies and more'}
           </Text>
         </View>
 
-        {verifying ? (
+        {awaitingSession ? (
+          <>
+            {finalizationError ? (
+              <Text
+                testID="finalization-error"
+                accessibilityRole="alert"
+                accessibilityLiveRegion="polite"
+                style={{ color: c.destructive, fontSize: 13, textAlign: 'center', marginBottom: 12 }}
+              >
+                {finalizationError}
+              </Text>
+            ) : null}
+            <Pressable
+              testID="retry-finalization-button"
+              onPress={handleFinalize}
+              disabled={busy}
+              style={({ pressed }) => [
+                styles.button,
+                { backgroundColor: c.primary, opacity: busy ? 0.5 : pressed ? 0.8 : 1 },
+              ]}
+            >
+              <Text style={{ color: c.primaryForeground, fontSize: 16, fontFamily: 'Inter_600SemiBold' }}>
+                {busy ? 'Signing in…' : 'Try signing in again'}
+              </Text>
+            </Pressable>
+          </>
+        ) : verifying ? (
           <>
             <TextInput
               testID="code-input"
