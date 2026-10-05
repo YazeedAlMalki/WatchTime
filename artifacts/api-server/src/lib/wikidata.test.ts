@@ -950,6 +950,69 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
+  it("keeps the newer refresh status when an older query fails after it finishes", async () => {
+    const previousRows = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    await db.delete(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+
+    const olderStartedAt = new Date("2026-10-05T10:00:00.000Z");
+    const newerStartedAt = new Date("2026-10-05T10:00:01.000Z");
+    let signalOlderQueryStarted!: () => void;
+    const olderQueryStarted = new Promise<void>((resolve) => {
+      signalOlderQueryStarted = resolve;
+    });
+    let rejectOlderQuery!: (error: Error) => void;
+    const olderQuery = new Promise<WikidataItem>((_resolve, reject) => {
+      rejectOlderQuery = reject;
+    });
+    let olderRefresh: ReturnType<typeof refreshWikidataTitle> | undefined;
+    let olderRefreshCompleted = false;
+
+    try {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(olderStartedAt);
+      olderRefresh = refreshWikidataTitle(titleId, {
+        queryByImdbId: async () => {
+          signalOlderQueryStarted();
+          return olderQuery;
+        },
+      });
+      await olderQueryStarted;
+
+      vi.setSystemTime(newerStartedAt);
+      await expect(refreshWikidataTitle(titleId, {
+        queryByImdbId: async () => matchedItem,
+      })).resolves.toMatchObject({ ok: true });
+
+      rejectOlderQuery(new WikidataError("Older Wikidata request failed", "unavailable"));
+      await expect(olderRefresh).resolves.toMatchObject({ ok: false, status: "error" });
+      olderRefreshCompleted = true;
+
+      const [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(health).toMatchObject({
+        status: "healthy",
+        lastSyncAt: newerStartedAt,
+        lastSuccessAt: newerStartedAt,
+        lastError: null,
+        refreshAttempts: 2,
+        successfulRefreshes: 1,
+      });
+    } finally {
+      if (olderRefresh && !olderRefreshCompleted) {
+        rejectOlderQuery(new Error("Cleaning up incomplete out-of-order refresh test"));
+        await olderRefresh.catch(() => undefined);
+      }
+      vi.useRealTimers();
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousRows.length > 0) {
+        await db.insert(integrationHealthTable).values(previousRows);
+      }
+    }
+  });
+
   it("retains every outcome when successful and failed title refreshes overlap", async () => {
     const previousRows = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
