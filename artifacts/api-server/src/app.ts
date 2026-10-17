@@ -10,6 +10,7 @@ import {
   getClerkProxyHost,
 } from "./middlewares/clerkProxyMiddleware";
 import router from "./routes";
+import healthRouter from "./routes/health";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
@@ -74,6 +75,11 @@ app.use(
 );
 app.use(compression({ threshold: 1024 }));
 
+// Internal startup probes need no public hostname, cookies, or Clerk service.
+// Only this public GET/HEAD route bypasses authentication; other API routes
+// still pass through the normal authentication and authorization middleware.
+app.use("/api", healthRouter);
+
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
 // Transport overhead is allowed here; import-parsers enforces the 2 MiB limit
@@ -88,12 +94,16 @@ app.use((req, res, next) => {
 app.use(express.urlencoded({ extended: true }));
 
 app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY,
-    ),
-  })),
+  clerkMiddleware((req) => {
+    const host = getClerkProxyHost(req);
+    // The SDK rejects an empty host before considering its fallback key.
+    // Never replace an absent trusted host with arbitrary request headers.
+    return {
+      publishableKey: host
+        ? publishableKeyFromHost(host, process.env.CLERK_PUBLISHABLE_KEY)
+        : process.env.CLERK_PUBLISHABLE_KEY,
+    };
+  }),
 );
 
 app.use("/api", router);

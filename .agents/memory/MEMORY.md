@@ -34,3 +34,4 @@
 - [Precise test patches](precise-test-patches.md) — use unique surrounding context when tests repeat, then inspect the full diff before validation.
 - [Targeted API Vitest runs](vitest-targeted-api-tests.md) — use direct `vitest run <path>` execution to isolate one API test file.
 - [Catalog worker ownership](catalog-worker-ownership.md) — queued recovery needs startup ownership proof; use short transaction leases rather than extra long-lived pool clients.
+- [Internal publish probes](internal-publish-probes.md) — startup checks may lack a trusted public hostname; keep liveness independent of Clerk without weakening host validation.
