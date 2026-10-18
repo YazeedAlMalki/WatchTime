@@ -1231,7 +1231,7 @@ describe("admin alternate-title review", () => {
     );
   });
 
-  it("keeps a stale-edit warning when removing its correction fails", async () => {
+  it("keeps a stale-edit warning when removing its correction and refreshing the list both fail", async () => {
     const currentCorrection: AdminContentAlias = {
       ...initialAlias,
       alias: "Newer Admin Correction",
@@ -1256,7 +1256,11 @@ describe("admin alternate-title review", () => {
         _variables: unknown,
         options?: { onError?: (error: unknown) => Promise<void> },
       ) => {
-        void options?.onError?.(new Error("Removal unavailable"));
+        void options?.onError?.(
+          new Error(
+            "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
+          ),
+        );
       },
     );
     render();
@@ -1271,20 +1275,32 @@ describe("admin alternate-title review", () => {
     });
     await flushEffects();
     render([currentCorrection]);
+    setRefreshFailures(["aliases"]);
     confirmSpy.mockReturnValue(true);
 
     act(() => button(container, "Remove").click());
     await flushEffects();
 
-    const conflictNotice = container.querySelector('[role="alert"]');
+    const alerts = Array.from(container.querySelectorAll('[role="alert"]'));
+    const conflictNotice = alerts.find((alert) =>
+      alert.textContent?.includes("A newer correction is already saved"),
+    );
     expect(conflictNotice?.textContent).toContain(
       "A newer correction is already saved",
     );
     expect(conflictNotice?.textContent).toContain(currentCorrection.alias);
     expect(conflictNotice?.textContent).toContain("Current version");
+    const refreshNotice = alerts.find((alert) =>
+      alert.textContent?.includes("Alternate-title refresh failed"),
+    );
+    expect(refreshNotice?.textContent).toContain(
+      "Failed refresh request: alternate-title list (alias records).",
+    );
+    expect(button(container, "Retry refresh")).toBeTruthy();
     expect(mocks.toast).toHaveBeenCalledWith({
       title: "Could not remove alternate title",
-      description: "Removal unavailable",
+      description:
+        "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
       variant: "destructive",
     });
   });
