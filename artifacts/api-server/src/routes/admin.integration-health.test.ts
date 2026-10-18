@@ -316,6 +316,25 @@ describe("GET /api/admin/integrations", () => {
       malformedRefreshTimestampCount: 1,
     });
 
+    await db.execute(sql`
+      update safety_records
+      set updated_at = '294276-12-31 23:59:59.999999'::timestamp
+      where id = ${rating.id}
+    `);
+
+    const extremeFiniteResponse = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+    const extremeFiniteHealth = extremeFiniteResponse.body.find(
+      (row: { provider: string }) => row.provider === malformedProvider,
+    );
+
+    expect(extremeFiniteHealth).toMatchObject({
+      status: "healthy",
+      successRatePercent: 97,
+      malformedRefreshTimestampCount: 1,
+    });
+
     await db
       .update(safetyRecordsTable)
       .set({ updatedAt: new Date("2026-10-04T12:00:00.000Z") })
