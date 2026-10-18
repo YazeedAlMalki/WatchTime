@@ -270,30 +270,41 @@ describe("GET /api/admin/integrations", () => {
       .returning({ id: integrationHealthTable.id });
     insertedIds.push(...healthRows.map((row) => row.id));
 
-    const [title] = await db
+    const titles = await db
       .insert(titlesTable)
-      .values({
-        type: "movie",
-        name: "Malformed timestamp count regression",
-      })
+      .values([
+        {
+          type: "movie",
+          name: "Malformed timestamp count regression one",
+        },
+        {
+          type: "movie",
+          name: "Malformed timestamp count regression two",
+        },
+      ])
       .returning({ id: titlesTable.id });
-    insertedTitleIds.push(title.id);
+    insertedTitleIds.push(...titles.map((title) => title.id));
 
-    const [rating] = await db
+    const ratings = await db
       .insert(safetyRecordsTable)
-      .values({
-        titleId: title.id,
-        sourceName: malformedProvider,
-        tier: 2,
-        isCommunity: false,
-        status: "available",
-        items: [],
-      })
+      .values(
+        titles.map((title) => ({
+          titleId: title.id,
+          sourceName: malformedProvider,
+          tier: 2,
+          isCommunity: false,
+          status: "available",
+          items: [],
+        })),
+      )
       .returning({ id: safetyRecordsTable.id });
     await db.execute(sql`
       update safety_records
       set updated_at = 'infinity'::timestamp
-      where id = ${rating.id}
+      where ${inArray(
+        safetyRecordsTable.id,
+        ratings.map((rating) => rating.id),
+      )}
     `);
 
     const response = await request(app)
@@ -313,7 +324,7 @@ describe("GET /api/admin/integrations", () => {
     expect(malformedHealth).toMatchObject({
       status: "healthy",
       successRatePercent: 97,
-      malformedRefreshTimestampCount: 1,
+      malformedRefreshTimestampCount: 2,
     });
 
     await db.execute(sql`
@@ -338,7 +349,7 @@ describe("GET /api/admin/integrations", () => {
     await db
       .update(safetyRecordsTable)
       .set({ updatedAt: new Date("2026-10-04T12:00:00.000Z") })
-      .where(eq(safetyRecordsTable.id, rating.id));
+      .where(eq(safetyRecordsTable.id, ratings[0].id));
 
     const repairedResponse = await request(app)
       .get("/api/admin/integrations")
@@ -348,6 +359,24 @@ describe("GET /api/admin/integrations", () => {
     );
 
     expect(repairedHealth).toMatchObject({
+      status: malformedHealth.status,
+      successRatePercent: malformedHealth.successRatePercent,
+      malformedRefreshTimestampCount: 1,
+    });
+
+    await db
+      .update(safetyRecordsTable)
+      .set({ updatedAt: new Date("2026-10-05T12:00:00.000Z") })
+      .where(eq(safetyRecordsTable.id, ratings[1].id));
+
+    const fullyRepairedResponse = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+    const fullyRepairedHealth = fullyRepairedResponse.body.find(
+      (row: { provider: string }) => row.provider === malformedProvider,
+    );
+
+    expect(fullyRepairedHealth).toMatchObject({
       status: malformedHealth.status,
       successRatePercent: malformedHealth.successRatePercent,
       malformedRefreshTimestampCount: 0,
