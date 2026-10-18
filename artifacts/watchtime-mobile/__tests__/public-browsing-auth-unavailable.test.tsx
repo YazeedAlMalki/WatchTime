@@ -2,12 +2,33 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 
-const mockRouter = { push: jest.fn() };
+const mockRouter = {
+  push: jest.fn(),
+  replace: jest.fn(),
+  back: jest.fn(),
+  canGoBack: jest.fn(),
+};
+const mockRoute: { current: { id: string } } = { current: { id: '771' } };
 const mockTrendingEnabled: boolean[] = [];
 const mockPrivateQueryCalls: string[] = [];
+const mockTitleFetch = jest.fn();
+const mockPublicTitle = {
+  id: 771,
+  name: 'Public show while sign-in is down',
+  type: 'movie',
+  year: 2025,
+  genres: ['Drama'],
+  altTitles: [],
+  providers: [],
+  seasons: [],
+  inWatchlist: false,
+  watched: false,
+  overview: 'A public synopsis remains available while sign-in is down.',
+};
 
 jest.mock('expo-router', () => ({
   useRouter: () => mockRouter,
+  useLocalSearchParams: () => mockRoute.current,
 }));
 
 jest.mock('@clerk/expo', () => ({
@@ -51,20 +72,46 @@ jest.mock('@workspace/api-client-react', () => ({
     mockPrivateQueryCalls.push('recommendations');
     return {};
   },
+  useGetTitle: (id: number) => {
+    mockTitleFetch(id);
+    return { data: mockPublicTitle, isLoading: false, isError: false };
+  },
+  useGetSimilarTitles: () => ({ data: [] }),
+  useGetTitleSafety: () => ({ data: null, isLoading: false }),
+  useAddToWatchlist: () => ({ mutate: jest.fn(), isPending: false }),
+  useRemoveFromWatchlist: () => ({ mutate: jest.fn(), isPending: false }),
+  useMarkTitleWatched: () => ({ mutate: jest.fn(), isPending: false }),
+  useUnmarkTitleWatched: () => ({ mutate: jest.fn(), isPending: false }),
+  useMarkEpisodeWatched: () => ({ mutate: jest.fn(), isPending: false }),
+  useUnmarkEpisodeWatched: () => ({ mutate: jest.fn(), isPending: false }),
+  useCreateSafetyReport: () => ({ mutate: jest.fn(), isPending: false }),
+  useCreateSafetyContribution: () => ({ mutate: jest.fn(), isPending: false }),
 }));
 
 jest.mock('@/components/ui', () => {
   const React = require('react');
-  const { Pressable, Text: NativeText, View } = require('react-native');
+  const { Text: NativeText, View } = require('react-native');
+  const actualUi = jest.requireActual('@/components/ui');
 
   return {
     EmptyState: () => <View />,
     ErrorState: ({ message }: { message: string }) => <NativeText>{message}</NativeText>,
     Loading: () => <View testID="loading" />,
-    PosterCard: ({ title }: { title: { name: string } }) => <NativeText>{title.name}</NativeText>,
+    PosterCard: actualUi.PosterCard,
     SectionHeader: ({ title }: { title: string }) => <NativeText>{title}</NativeText>,
   };
 });
+
+jest.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ invalidateQueries: jest.fn() }),
+}));
+
+jest.mock('expo-image', () => ({ Image: () => null }));
+jest.mock('expo-haptics', () => ({
+  impactAsync: jest.fn(),
+  ImpactFeedbackStyle: { Light: 'light' },
+}));
+jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
 
 jest.mock('@/hooks/useColors', () => ({
   useColors: () => ({
@@ -74,14 +121,20 @@ jest.mock('@/hooks/useColors', () => ({
     mutedForeground: '#777777',
     primary: '#6633cc',
     primaryForeground: '#ffffff',
+    border: '#dddddd',
+    secondary: '#eeeeee',
+    muted: '#eeeeee',
   }),
 }));
+
+jest.mock('@/constants/colors', () => ({ __esModule: true, default: { radius: 8 } }));
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 import HomeScreen from '../app/(tabs)/index';
+import TitleDetailScreen from '../app/title/[id]';
 import { AppAuthUnavailableProvider } from '../lib/app-auth';
 
 describe('public browsing while authentication is unavailable', () => {
@@ -91,6 +144,8 @@ describe('public browsing while authentication is unavailable', () => {
     jest.clearAllMocks();
     mockTrendingEnabled.length = 0;
     mockPrivateQueryCalls.length = 0;
+    mockTitleFetch.mockClear();
+    mockRoute.current = { id: '771' };
   });
 
   it('loads public trending titles and keeps personal requests off in the unavailable auth context', async () => {
@@ -116,5 +171,39 @@ describe('public browsing while authentication is unavailable', () => {
       "WatchTime couldn't start its sign-in service. Check your connection and try again.",
     );
     expect(mockRouter.push).not.toHaveBeenCalled();
+  });
+
+  it('opens a trending title publicly without sign-in or personal-data requests', async () => {
+    const home = await render(
+      <AppAuthUnavailableProvider>
+        <HomeScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    await waitFor(() => {
+      expect(home.getByText('Public show while sign-in is down')).toBeTruthy();
+    });
+
+    fireEvent.press(home.getByTestId('poster-771'));
+    expect(mockRouter.push).toHaveBeenCalledWith('/title/771');
+    expect(mockRouter.push).not.toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: '/(auth)/sign-in' }),
+    );
+
+    const pushedPath = mockRouter.push.mock.calls[0][0];
+    mockRoute.current = { id: pushedPath.split('/').at(-1) };
+    const detail = await render(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(
+      detail.getByText('A public synopsis remains available while sign-in is down.'),
+    ).toBeTruthy();
+    expect(mockTitleFetch).toHaveBeenCalledWith(771);
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).toHaveBeenCalledTimes(1);
   });
 });
