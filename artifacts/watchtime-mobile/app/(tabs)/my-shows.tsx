@@ -343,7 +343,7 @@ export default function MyShowsScreen() {
   const inProgress = useInfiniteQuery({
     queryKey: [...getGetMyInProgressShowsQueryKey(), 'account', userId, 'infinite'],
     initialPageParam: undefined as number | undefined,
-    enabled: !!isSignedIn && !!userId && showFilter !== 'caught-up',
+    enabled: !!isSignedIn && !!userId && showFilter !== 'caught-up' && !debouncedShowSearch,
     queryFn: ({ pageParam, signal }) =>
       getMyInProgressShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
     getNextPageParam: (lastPage) =>
@@ -365,18 +365,19 @@ export default function MyShowsScreen() {
     } as any,
   });
 
-  // Client-side filter for the TV Shows tab
-  const allShows = mergeTrackedShows(shows.data?.pages.flat() ?? [], inProgress.data?.pages.flat() ?? []);
+  // The server searches canonical and alternate titles and applies status
+  // filters before pagination. Do not merge the independent in-progress feed
+  // into searched results: it has neither the search term nor the same page.
+  const allShows = debouncedShowSearch
+    ? shows.data?.pages.flat() ?? []
+    : mergeTrackedShows(shows.data?.pages.flat() ?? [], inProgress.data?.pages.flat() ?? []);
   const allMovies = movies.data?.pages.flat() ?? [];
-  const normalizedShowSearch = debouncedShowSearch.toLowerCase();
   const filteredShows = allShows.filter(show => {
-    const matchesSearch = !normalizedShowSearch ||
-      show.title.name.toLowerCase().includes(normalizedShowSearch);
     const matchesFilter =
       showFilter === 'all' ||
       (showFilter === 'up-next' && show.nextEpisode !== null) ||
       (showFilter === 'caught-up' && show.nextEpisode === null);
-    return matchesSearch && matchesFilter;
+    return matchesFilter;
   });
 
   const bottomPad = (Platform.OS === 'web' ? 34 : insets.bottom) + 90;
@@ -470,7 +471,7 @@ export default function MyShowsScreen() {
               placeholder="Search my shows…"
               placeholderTextColor={c.mutedForeground}
               accessibilityLabel="Search tracked shows"
-              accessibilityHint="Filters your tracked shows by title."
+              accessibilityHint="Filters your tracked shows by canonical, alternate, and local titles."
               value={showSearch}
               onChangeText={setShowSearch}
               returnKeyType="search"

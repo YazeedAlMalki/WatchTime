@@ -7,10 +7,12 @@ import {
   watchlistTable,
   watchedTitlesTable,
   watchedEpisodesTable,
+  titleAliasesTable,
 } from "@workspace/db";
 import {
   and,
   eq,
+  exists,
   desc,
   lt,
   gt,
@@ -291,7 +293,16 @@ for (const [path, inProgressOnly] of [
     .where(and(
       ne(titlesTable.type, "movie"),
       or(isNotNull(watchedCounts.titleId), isNotNull(followed.titleId)),
-      searchPattern ? ilike(titlesTable.name, searchPattern) : undefined,
+      searchPattern ? or(
+        ilike(titlesTable.name, searchPattern),
+        exists(db
+          .select({ id: titleAliasesTable.id })
+          .from(titleAliasesTable)
+          .where(and(
+            eq(titleAliasesTable.titleId, titlesTable.id),
+            ilike(titleAliasesTable.alias, searchPattern),
+          ))),
+      ) : undefined,
       status === "up-next"
         ? hasUnwatchedEpisode
         : status === "caught-up"

@@ -97,7 +97,15 @@ jest.mock('@workspace/api-client-react', () => {
     getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
     getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
     getGetTitleSafetyQueryKey: () => ['/api/safety'],
-    getMyShows: jest.fn(async () => {
+    getMyShows: jest.fn(async (params?: { q?: string }) => {
+      if (params?.q?.toLowerCase() === 'local title') {
+        return [{
+          title: { id: 43, name: 'Different Canonical Name' },
+          nextEpisode: null,
+          totalEpisodes: 1,
+          watchedEpisodes: 1,
+        }];
+      }
       const nextEpisode = mockEpisodes.find((episode) => !mockWatched.has(episode.id)) ?? null;
       return [{
         title: { id: 42, name: 'Example Show' },
@@ -227,8 +235,22 @@ it('keeps Up Next unchanged on failure and refreshes collection, history, and ti
   });
   expect(shows.getByTestId('show-row-42')).toBeTruthy();
 
+  fireEvent.changeText(shows.getByTestId('shows-search-input'), '  Local Title  ');
+  await waitFor(() => {
+    expect(api.getMyShows).toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'Local Title' }),
+      expect.anything(),
+    );
+    expect(shows.getByTestId('show-row-43')).toBeTruthy();
+  });
+  expect(shows.queryByTestId('show-row-42')).toBeNull();
+
   fireEvent.press(shows.getByTestId('shows-search-clear'));
-  await waitFor(() => expect(shows.getByTestId('shows-search-input').props.value).toBe(''));
+  await waitFor(() => {
+    expect(shows.getByTestId('shows-search-input').props.value).toBe('');
+    expect(shows.getByTestId('show-row-42')).toBeTruthy();
+    expect(shows.queryByTestId('show-row-43')).toBeNull();
+  });
 
   fireEvent.press(shows.getByTestId('filter-chip-caught-up'));
   await waitFor(() => {
