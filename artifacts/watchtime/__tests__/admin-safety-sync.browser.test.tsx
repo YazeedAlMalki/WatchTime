@@ -265,6 +265,72 @@ it("hides the Wikidata warning after an updated health response clears it", asyn
   }
 });
 
+it("hides a non-Wikidata warning after accumulated recovery while provider status stays healthy", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=integrations");
+  publishIntegrations([
+    {
+      provider: "Does the Dog Die?",
+      status: "healthy",
+      lastSyncAt: "2026-09-24T09:00:00.000Z",
+      lastSuccessAt: "2026-09-24T09:00:00.000Z",
+      lastError: null,
+      successRatePercent: 40,
+      refreshAttempts: 5,
+      successfulRefreshes: 2,
+      mappedTitles: 0,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: true,
+    },
+  ]);
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    const warning = page.getByText("Persistently low accumulated success rate");
+    await expect.element(warning).toBeVisible();
+
+    publishIntegrations([
+      {
+        provider: "Does the Dog Die?",
+        status: "healthy",
+        lastSyncAt: "2026-09-24T09:00:00.000Z",
+        lastSuccessAt: "2026-09-24T09:00:00.000Z",
+        lastError: null,
+        successRatePercent: 50,
+        refreshAttempts: 6,
+        successfulRefreshes: 3,
+        mappedTitles: 0,
+        missingMappings: 0,
+        malformedRefreshTimestampCount: 0,
+        sustainedFailureAlert: false,
+        lowAccumulatedSuccessRateAlert: false,
+      },
+    ]);
+
+    await expect.element(warning).not.toBeInTheDocument();
+    const providerCard = Array.from(
+      container.querySelectorAll<HTMLElement>("h3"),
+    ).find((heading) => heading.textContent === "Does the Dog Die?")
+      ?.closest("div.bg-card");
+    expect(providerCard?.textContent).toContain("healthy");
+    expect(providerCard?.textContent).not.toContain(
+      "Persistently low accumulated success rate",
+    );
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.integrations = [];
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("shows the active provider and offset and prevents starting another batch", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=integrations");

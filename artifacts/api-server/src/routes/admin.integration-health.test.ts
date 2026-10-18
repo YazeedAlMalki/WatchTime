@@ -228,6 +228,34 @@ describe("GET /api/admin/integrations", () => {
       }
 
       await db
+        .update(integrationHealthTable)
+        .set({
+          successRatePercent: 50,
+          refreshAttempts: 6,
+          successfulRefreshes: 3,
+        })
+        .where(eq(integrationHealthTable.provider, "Does the Dog Die?"));
+
+      const recoveredResponse = await request(app)
+        .get("/api/admin/integrations")
+        .expect(200);
+      const recoveredHealth = recoveredResponse.body.find(
+        (row: { provider: string }) => row.provider === "Does the Dog Die?",
+      );
+      const stillLowHealth = recoveredResponse.body.find(
+        (row: { provider: string }) => row.provider === "TVMaze",
+      );
+      expect(recoveredHealth).toMatchObject({
+        provider: "Does the Dog Die?",
+        status: "healthy",
+        successRatePercent: 50,
+        refreshAttempts: 6,
+        successfulRefreshes: 3,
+        lowAccumulatedSuccessRateAlert: false,
+      });
+      expect(stillLowHealth.lowAccumulatedSuccessRateAlert).toBe(true);
+
+      await db
         .delete(integrationHealthTable)
         .where(inArray(
           integrationHealthTable.id,
