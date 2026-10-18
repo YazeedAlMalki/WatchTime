@@ -162,9 +162,36 @@ describe("admin title aliases", () => {
   });
 
   it("shows provenance and collisions", async () => {
+    await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: "Shared Local Provider Title",
+      normalizedAlias: "sharedlocalprovidertitle",
+      language: "en",
+      sourceName: "TVMaze",
+      sourceUrl: "https://example.test/provider-title",
+      isEditorial: false,
+    });
+
+    const allAliasesResponse = await request(app)
+      .get("/api/admin/content-aliases?q=Shared%20Local");
     const response = await request(app).get("/api/admin/content-aliases?q=Shared%20Local%20Title");
     const providerResponse = await request(app)
       .get("/api/admin/content-aliases?ownership=provider");
+    expect(allAliasesResponse.status).toBe(200);
+    expect(allAliasesResponse.body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          alias: "Shared Local Provider Title",
+          sourceName: "TVMaze",
+          isEditorial: false,
+        }),
+        expect.objectContaining({
+          alias: "Shared Local Title",
+          sourceName: "Editorial test",
+          isEditorial: true,
+        }),
+      ]),
+    );
     expect(providerResponse.status).toBe(200);
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ total: 2, limit: 50, offset: 0 });
