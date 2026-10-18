@@ -7,6 +7,7 @@
  */
 
 export * from './adminContentAlias';
+export * from './adminContentAliasCitation';
 export * from './adminContentAliasConflict';
 export * from './adminContentAliasConflictCode';
 export * from './adminContentAliasDelete';

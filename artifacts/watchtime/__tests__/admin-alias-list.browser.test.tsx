@@ -138,6 +138,7 @@ it("keeps filtered alias continuation stable when matching records change betwee
     language: "fr",
     sourceName: "Editorial",
     sourceUrl: null,
+    providerCitations: [],
     isEditorial: true,
     collision: false,
     collisionTitleCount: 1,
@@ -333,6 +334,18 @@ it("shows both alias sources for All ownership and keeps filtered source labels 
       language: "en",
       sourceName: "TVMaze",
       sourceUrl: "https://example.test/provider",
+      providerCitations: [
+        {
+          provider: "tvmaze",
+          sourceName: "TVMaze",
+          sourceUrl: "https://example.test/provider",
+        },
+        {
+          provider: "wikipedia",
+          sourceName: "EN Wikipedia",
+          sourceUrl: "https://example.test/wikipedia",
+        },
+      ],
       isEditorial: false,
       collision: false,
       collisionTitleCount: 1,
@@ -348,6 +361,7 @@ it("shows both alias sources for All ownership and keeps filtered source labels 
       language: "fr",
       sourceName: "Wikipedia",
       sourceUrl: "https://example.test/editorial",
+      providerCitations: [],
       isEditorial: true,
       collision: false,
       collisionTitleCount: 1,
@@ -384,6 +398,15 @@ it("shows both alias sources for All ownership and keeps filtered source labels 
     const ownership = page.getByRole("combobox", { name: "Alias ownership" });
     await expect.element(page.getByText("Lighthouse Provider Alias")).toBeVisible();
     await expect.element(page.getByText("TVMaze", { exact: true })).toBeVisible();
+    await expect.element(page.getByRole("link", { name: "TVMaze" })).toHaveAttribute(
+      "href",
+      "https://example.test/provider",
+    );
+    await expect.element(page.getByRole("link", { name: "EN Wikipedia" })).toHaveAttribute(
+      "href",
+      "https://example.test/wikipedia",
+    );
+    await expect.element(page.getByRole("link", { name: "Wikipedia", exact: true })).not.toBeInTheDocument();
     expect(requests.filter((request) =>
       request.searchParams.get("ownership") === "provider",
     )).toHaveLength(1);
@@ -392,6 +415,10 @@ it("shows both alias sources for All ownership and keeps filtered source labels 
     await userEvent.click(page.getByRole("option", { name: "Editorial" }));
     await expect.element(page.getByText("Le Phare Editorial")).toBeVisible();
     await expect.element(page.getByText("Wikipedia", { exact: true })).toBeVisible();
+    await expect.element(page.getByRole("link", { name: "Wikipedia", exact: true })).toHaveAttribute(
+      "href",
+      "https://example.test/editorial",
+    );
     expect(requests.filter((request) =>
       request.searchParams.get("ownership") === "editorial",
     )).toHaveLength(1);

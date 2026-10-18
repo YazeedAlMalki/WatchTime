@@ -685,6 +685,13 @@ export const AdminContentAliasTitleType = {
   documentary: 'documentary',
 } as const;
 
+export interface AdminContentAliasCitation {
+  provider: string;
+  sourceName: string;
+  /** @nullable */
+  sourceUrl: string | null;
+}
+
 export interface AdminContentAlias {
   id: number;
   titleId: number;
@@ -698,6 +705,7 @@ export interface AdminContentAlias {
   sourceName: string;
   /** @nullable */
   sourceUrl?: string | null;
+  providerCitations: AdminContentAliasCitation[];
   isEditorial: boolean;
   collision: boolean;
   collisionTitleCount: number;

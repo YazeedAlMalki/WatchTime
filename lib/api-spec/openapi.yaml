@@ -1728,7 +1728,7 @@ components:
           default: does_the_dog_die
     AdminContentAlias:
       type: object
-      required: [id, titleId, titleName, titleType, alias, sourceName, isEditorial, collision, collisionTitleCount, updatedAt]
+      required: [id, titleId, titleName, titleType, alias, sourceName, providerCitations, isEditorial, collision, collisionTitleCount, updatedAt]
       properties:
         id: { type: integer }
         titleId: { type: integer }
@@ -1739,10 +1739,21 @@ components:
         language: { type: ["string", "null"] }
         sourceName: { type: string }
         sourceUrl: { type: ["string", "null"] }
+        providerCitations:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminContentAliasCitation"
         isEditorial: { type: boolean }
         collision: { type: boolean }
         collisionTitleCount: { type: integer }
         updatedAt: { type: string, format: date-time }
+    AdminContentAliasCitation:
+      type: object
+      required: [provider, sourceName, sourceUrl]
+      properties:
+        provider: { type: string }
+        sourceName: { type: string }
+        sourceUrl: { type: ["string", "null"] }
     AdminContentAliasPage:
       type: object
       required: [items, total, limit, offset, nextAfterId]

@@ -2733,6 +2733,26 @@ export function AliasReview({
                         className="min-w-56"
                         aria-label={`Source link for ${alias.alias}`}
                       />
+                    ) : !alias.isEditorial && (alias.providerCitations?.length ?? 0) > 0 ? (
+                      <div className="flex min-w-44 flex-col gap-1">
+                        {alias.providerCitations.map((citation) => (
+                          citation.sourceUrl ? (
+                            <a
+                              key={citation.provider}
+                              href={citation.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-primary hover:underline"
+                            >
+                              {citation.sourceName}
+                            </a>
+                          ) : (
+                            <span key={citation.provider} className="text-muted-foreground">
+                              {citation.sourceName}
+                            </span>
+                          )
+                        ))}
+                      </div>
                     ) : alias.sourceUrl ? (
                       <a
                         href={alias.sourceUrl}

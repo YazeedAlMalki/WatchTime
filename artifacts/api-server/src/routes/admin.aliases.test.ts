@@ -214,6 +214,7 @@ describe("admin title aliases", () => {
         expect.objectContaining({
           alias: "Shared Local Title",
           sourceName: "Editorial test",
+          providerCitations: [],
           isEditorial: true,
         }),
       ]),
@@ -244,6 +245,13 @@ describe("admin title aliases", () => {
       },
       isEditorial: false,
     });
+    const sharedReport = await request(app)
+      .get("/api/admin/content-aliases?q=Provider%20Shared%20Citation")
+      .expect(200);
+    expect(sharedReport.body.items[0].providerCitations).toEqual([
+      { provider: "tvmaze", ...tvMazeCitation },
+      { provider: "wikipedia", ...wikipediaCitation },
+    ]);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       extract: "A sourced test summary.",
     }), {
@@ -279,6 +287,10 @@ describe("admin title aliases", () => {
         alias: "Provider Shared Citation",
         sourceName: tvMazeCitation.sourceName,
         sourceUrl: tvMazeCitation.sourceUrl,
+        providerCitations: [{
+          provider: "tvmaze",
+          ...tvMazeCitation,
+        }],
         isEditorial: false,
       }),
     ]);

@@ -989,21 +989,33 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
     ? pageRows[pageRows.length - 1].alias.id
     : null;
   res.json(ListAdminContentAliasesResponse.parse({
-    items: pageRows.map(({ alias, titleName, titleType, titleYear }) => ({
-      id: alias.id,
-      titleId: alias.titleId,
-      titleName,
-      titleType,
-      titleYear,
-      alias: alias.alias,
-      language: alias.language,
-      sourceName: alias.sourceName,
-      sourceUrl: alias.sourceUrl,
-      isEditorial: Boolean(alias.isEditorial),
-      collision: (collisionCount.get(alias.normalizedAlias) ?? 0) > 1,
-      collisionTitleCount: collisionCount.get(alias.normalizedAlias) ?? 1,
-      updatedAt: alias.updatedAt.toISOString(),
-    })),
+    items: pageRows.map(({ alias, titleName, titleType, titleYear }) => {
+      const isEditorial = Boolean(alias.isEditorial);
+      const providerCitations = isEditorial
+        ? []
+        : (alias.providerSources ?? []).flatMap((provider) => {
+            const citation = alias.providerCitations?.[provider];
+            return citation
+              ? [{ provider, sourceName: citation.sourceName, sourceUrl: citation.sourceUrl }]
+              : [];
+          });
+      return {
+        id: alias.id,
+        titleId: alias.titleId,
+        titleName,
+        titleType,
+        titleYear,
+        alias: alias.alias,
+        language: alias.language,
+        sourceName: alias.sourceName,
+        sourceUrl: alias.sourceUrl,
+        providerCitations,
+        isEditorial,
+        collision: (collisionCount.get(alias.normalizedAlias) ?? 0) > 1,
+        collisionTitleCount: collisionCount.get(alias.normalizedAlias) ?? 1,
+        updatedAt: alias.updatedAt.toISOString(),
+      };
+    }),
     total,
     limit,
     offset,

@@ -1243,6 +1243,11 @@ export const ListAdminContentAliasesResponse = zod.object({
   "language": zod.string().nullish(),
   "sourceName": zod.string(),
   "sourceUrl": zod.string().nullish(),
+  "providerCitations": zod.array(zod.object({
+  "provider": zod.string(),
+  "sourceName": zod.string(),
+  "sourceUrl": zod.string().nullable()
+})),
   "isEditorial": zod.boolean(),
   "collision": zod.boolean(),
   "collisionTitleCount": zod.int(),

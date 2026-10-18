@@ -5,6 +5,7 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AdminContentAliasCitation } from './adminContentAliasCitation';
 import type { AdminContentAliasTitleType } from './adminContentAliasTitleType';
 
 export interface AdminContentAlias {
@@ -20,6 +21,7 @@ export interface AdminContentAlias {
   sourceName: string;
   /** @nullable */
   sourceUrl?: string | null;
+  providerCitations: AdminContentAliasCitation[];
   isEditorial: boolean;
   collision: boolean;
   collisionTitleCount: number;
