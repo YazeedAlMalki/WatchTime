@@ -17,5 +17,10 @@ A TV Time-style tracking app for movies, TV, anime, and documentaries with a dif
 - Wikidata classification refreshes use the official no-key SPARQL endpoint and only exact, verified catalog IMDb IDs. Supported source-attributed labels are MPAA (P1657), FSK (P1981), BBFC (P2629), and CNC (P2758); labels never become fabricated numeric scores. Admin content refresh accepts `provider: "wikidata"` and remains bounded/resumable via the existing batch `limit`/`offset`.
 - Poster/backdrop images live in `artifacts/watchtime/public/posters|backdrops`.
 
+## Rate-limit cleanup operations
+- Each API process logs one aggregate `rate_limit_cleanup` event per completed scheduled batch: duration, deleted rows, batch cap, and consecutive cap hits. Failures log duration and `outcome: failure`; deleted rows are unknown, not zero. Raw database errors and client keys are intentionally excluded.
+- Three consecutive full batches trigger a possible-backlog warning, repeated at most every 15 minutes while saturation continues. A partial/empty batch or failure breaks the streak; a failure does not prove the backlog cleared. Measurements are process-local and reset on restart, not exact database-wide backlog totals.
+- To adjust cleanup throughput, tune `RATE_LIMIT_CLEANUP_BATCH_SIZE` (currently 500) or `RATE_LIMIT_CLEANUP_INTERVAL_MS` (currently 60 seconds) in `artifacts/api-server/src/middlewares/rateLimitCleanup.ts` after checking duration and database load. Keep both `reset_time <= NOW()` predicates, the batch limit, and `FOR UPDATE SKIP LOCKED`; never delete active counters to clear a backlog. No full-table backlog count is performed.
+
 ## User preferences
 - Do not re-request a TMDB API key (declined).
