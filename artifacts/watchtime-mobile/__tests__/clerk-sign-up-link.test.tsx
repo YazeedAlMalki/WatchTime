@@ -367,6 +367,67 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(mockRouterReplace).not.toHaveBeenCalled();
   });
 
+  it('recovers when a resend promise is rejected and verifies at the requested destination', async () => {
+    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
+    const sendEmailCode = jest.fn()
+      .mockResolvedValueOnce({ error: null })
+      .mockRejectedValueOnce(new Error('Network request failed'))
+      .mockResolvedValueOnce({ error: null });
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: [] as string[],
+      missingFields: ['email_address', 'password'],
+      password: jest.fn(async () => {
+        signUp.unverifiedFields = ['email_address'];
+        signUp.missingFields = [];
+        return { error: null };
+      }),
+      verifications: {
+        sendEmailCode,
+        verifyEmailCode: jest.fn(async () => {
+          signUp.status = 'complete';
+          return { error: null };
+        }),
+      },
+      finalize: jest.fn(async ({ navigate }: { navigate: (args: unknown) => void }) => {
+        navigate({ session: { currentTask: null }, decorateUrl: (url: string) => url });
+      }),
+    };
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('email-input'), 'viewer@example.com');
+    await fireEvent.changeText(screen.getByTestId('password-input'), 'test-password');
+    await fireEvent.press(screen.getByTestId('sign-up-button'));
+    await waitFor(() => expect(screen.getByText('We sent a verification code to viewer@example.com')).toBeTruthy());
+
+    await fireEvent.press(screen.getByTestId('resend-code-button'));
+    await waitFor(() => expect(screen.getByTestId('resend-code-status').props.children)
+      .toBe('Could not send a new code. Please try again.'));
+
+    expect(screen.getByText('Check your email')).toBeTruthy();
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+    expect(screen.getByTestId('resend-code-button').props.accessibilityState.disabled).toBe(false);
+    expect(mockLinkHref).toHaveBeenCalledWith({
+      pathname: '/(auth)/sign-in',
+      params: { returnTo: '/title/456' },
+    });
+    expect(sendEmailCode).toHaveBeenCalledTimes(2);
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+
+    await fireEvent.press(screen.getByTestId('resend-code-button'));
+    await waitFor(() => expect(screen.getByTestId('resend-code-status').props.children)
+      .toBe('A new code is on its way. Check your email.'));
+    expect(sendEmailCode).toHaveBeenCalledTimes(3);
+    expect(screen.getByText('We sent a verification code to viewer@example.com')).toBeTruthy();
+
+    await fireEvent.changeText(screen.getByTestId('code-input'), '654321');
+    await fireEvent.press(screen.getByTestId('verify-button'));
+    await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith('/title/456'));
+    expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledWith({ code: '654321' });
+    expect(signUp.finalize).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts a resent email code on the same screen after a rejected attempt', async () => {
     mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
     const errors: { fields: { code?: { message: string } } } = { fields: {} };
