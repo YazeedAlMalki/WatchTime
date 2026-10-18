@@ -707,6 +707,16 @@ describe("Wikidata refresh persistence", () => {
         classifications: 0,
       });
 
+      const [mappingAfterEmptyRefresh] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, title.id),
+        eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
+      ));
+      expect(mappingAfterEmptyRefresh).toMatchObject({
+        externalId: "Q55",
+        provider: WIKIDATA_PROVIDER,
+        status: "mapped",
+      });
+
       const records = await db.select().from(safetyRecordsTable)
         .where(eq(safetyRecordsTable.titleId, title.id))
         .orderBy(asc(safetyRecordsTable.id));
@@ -716,6 +726,52 @@ describe("Wikidata refresh persistence", () => {
         record.episodeNumber === null,
       )).toHaveLength(0);
       expect(records).toEqual([...initialRows].sort((a, b) => a.id - b.id));
+
+      await expect(refreshWikidataTitle(title.id, {
+        queryByImdbId: async () => ({
+          itemId: "Q55",
+          itemUrl: "https://www.wikidata.org/wiki/Q55",
+          imdbId: "tt7654322",
+          classifications: [{
+            property: "P1657",
+            propertyName: "MPAA",
+            label: "PG-13",
+            valueId: "Q123",
+          }],
+        }),
+      })).resolves.toMatchObject({
+        ok: true,
+        externalId: "Q55",
+        classifications: 1,
+      });
+
+      const [mappingAfterClassifiedRefresh] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, title.id),
+        eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
+      ));
+      expect(mappingAfterClassifiedRefresh).toMatchObject({
+        id: mappingAfterEmptyRefresh.id,
+        externalId: "Q55",
+        provider: WIKIDATA_PROVIDER,
+        status: "mapped",
+      });
+
+      const classifiedRecords = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id))
+        .orderBy(asc(safetyRecordsTable.id));
+      const titleLevelWikidataRecords = classifiedRecords.filter((record) =>
+        record.sourceName === WIKIDATA_PROVIDER &&
+        record.seasonNumber === null &&
+        record.episodeNumber === null,
+      );
+      expect(titleLevelWikidataRecords).toHaveLength(1);
+      expect(titleLevelWikidataRecords[0]).toMatchObject({
+        url: "https://www.wikidata.org/wiki/Q55",
+        status: "available",
+        items: [{ category: "MPAA", label: "PG-13" }],
+      });
+      expect(classifiedRecords).toHaveLength(initialRows.length + 1);
+      expect(classifiedRecords).toEqual(expect.arrayContaining(initialRows));
     } finally {
       await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
     }
