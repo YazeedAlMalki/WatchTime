@@ -271,6 +271,90 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).not.toContain("2 titles");
   });
 
+  it("keeps a saved correction visible when a successful refresh removes it from the active search", async () => {
+    let updateFilteredAliases!: () => void;
+    function FilteredAliasReview() {
+      const [aliases, setAliases] = React.useState([initialAlias]);
+      const [total, setTotal] = React.useState(1);
+      updateFilteredAliases = () => {
+        setAliases([]);
+        setTotal(0);
+      };
+      return (
+        <AliasReview
+          aliases={aliases}
+          q={initialAlias.alias}
+          aliasTotal={total}
+          isLoading={false}
+          isError={false}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="all"
+          onOwnershipChange={() => {}}
+        />
+      );
+    }
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) => {
+        if (queryKey[0] === "/api/admin/content-aliases") {
+          updateFilteredAliases();
+        }
+        return Promise.resolve();
+      },
+    );
+    act(() => root.render(<FilteredAliasReview />));
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expectRefreshCalls(["aliases", "catalog"]);
+    expect(container.textContent).toContain("0 aliases");
+    expect(container.textContent).toContain(
+      "Saved correction: Updated Local Title is shown separately above the current page of filtered results. The result count and page navigation remain based on the filtered list.",
+    );
+    const rows = container.querySelectorAll("tbody tr");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("Updated Local Title");
+    expect(rows[0]?.textContent).not.toContain(initialAlias.alias);
+
+    const nextSearchAlias: AdminContentAlias = {
+      ...initialAlias,
+      id: 18,
+      titleId: 102,
+      titleName: "Second Title",
+      alias: "Different Search Result",
+    };
+    act(() =>
+      root.render(
+        <AliasReview
+          aliases={[nextSearchAlias]}
+          q={nextSearchAlias.alias}
+          aliasTotal={1}
+          isLoading={false}
+          isError={false}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="all"
+          onOwnershipChange={() => {}}
+        />,
+      ),
+    );
+    await flushEffects();
+    expect(container.textContent).not.toContain("Saved correction:");
+    expect(container.textContent).toContain("1 aliases");
+    expect(container.querySelector("tbody tr")?.textContent).toContain(
+      nextSearchAlias.alias,
+    );
+  });
+
   it("keeps duplicate and canonical-title conflicts visible to the admin", () => {
     const errors = [
       "That alternate title already belongs to another catalog title.",

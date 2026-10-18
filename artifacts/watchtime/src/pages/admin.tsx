@@ -2017,11 +2017,31 @@ export function AliasReview({
   const { toast } = useToast();
   const linkedRowRef = React.useRef<HTMLTableRowElement>(null);
   const [isExporting, setIsExporting] = useState(false);
-  const [savedAliasPreview, setSavedAliasPreview] =
-    useState<AdminContentAlias | null>(null);
+  const [savedAliasPreviewState, setSavedAliasPreviewState] = useState<{
+    alias: AdminContentAlias;
+    q: string;
+    ownership: ListAdminContentAliasesOwnership | "all";
+    refreshed: boolean;
+  } | null>(null);
+  const savedAliasPreview =
+    savedAliasPreviewState?.q === q.trim() &&
+    savedAliasPreviewState.ownership === ownership
+      ? savedAliasPreviewState.alias
+      : null;
+  const savedAliasRefreshSucceeded =
+    savedAliasPreview !== null && savedAliasPreviewState?.refreshed === true;
   const [removedAliasPreviews, setRemovedAliasPreviews] = useState<
     AdminContentAlias[]
   >([]);
+  React.useEffect(() => {
+    if (
+      savedAliasPreviewState &&
+      (savedAliasPreviewState.q !== q.trim() ||
+        savedAliasPreviewState.ownership !== ownership)
+    ) {
+      setSavedAliasPreviewState(null);
+    }
+  }, [q, ownership, savedAliasPreviewState]);
   React.useEffect(() => {
     if (linkedAlias) linkedRowRef.current?.scrollIntoView?.({ block: "center" });
   }, [linkedAlias?.id]);
@@ -2029,7 +2049,9 @@ export function AliasReview({
     removedAliasPreviews.map((alias) => alias.id),
   );
   const aliasesWithSavedPreview = aliases?.map((alias) =>
-    savedAliasPreview?.id === alias.id ? savedAliasPreview : alias,
+    savedAliasPreview?.id === alias.id && !savedAliasRefreshSucceeded
+      ? savedAliasPreview
+      : alias,
   );
   const savedPreviewOutsidePage =
     savedAliasPreview &&
@@ -2214,7 +2236,9 @@ export function AliasReview({
         requests.includes("aliases") &&
         !failedRequests.includes("aliases")
       ) {
-        setSavedAliasPreview(null);
+        setSavedAliasPreviewState((current) =>
+          current ? { ...current, refreshed: true } : current,
+        );
         setRemovedAliasPreviews([]);
       }
       return failedRequests;
@@ -2272,7 +2296,9 @@ export function AliasReview({
     const editedAlias =
       conflictAlias?.id === editingId
         ? conflictAlias
-        : aliases?.find((candidate) => candidate.id === editingId) ?? null;
+        : savedAliasPreview?.id === editingId
+          ? savedAliasPreview
+          : aliases?.find((candidate) => candidate.id === editingId) ?? null;
     updateAlias.mutate(
       {
         id: editingId,
@@ -2290,15 +2316,20 @@ export function AliasReview({
             current?.id === editingId ? null : current,
           );
           if (editedAlias) {
-            setSavedAliasPreview({
-              ...editedAlias,
-              alias: savedRecord?.alias ?? alias,
-              language: savedRecord?.language ?? (draft.language.trim() || null),
-              sourceName: savedRecord?.sourceName ?? editedAlias.sourceName,
-              sourceUrl:
-                savedRecord?.sourceUrl ?? (draft.sourceUrl.trim() || null),
-              isEditorial: savedRecord?.isEditorial ?? editedAlias.isEditorial,
-              updatedAt: savedRecord?.updatedAt ?? editedAlias.updatedAt,
+            setSavedAliasPreviewState({
+              alias: {
+                ...editedAlias,
+                alias: savedRecord?.alias ?? alias,
+                language: savedRecord?.language ?? (draft.language.trim() || null),
+                sourceName: savedRecord?.sourceName ?? editedAlias.sourceName,
+                sourceUrl:
+                  savedRecord?.sourceUrl ?? (draft.sourceUrl.trim() || null),
+                isEditorial: savedRecord?.isEditorial ?? editedAlias.isEditorial,
+                updatedAt: savedRecord?.updatedAt ?? editedAlias.updatedAt,
+              },
+              q: q.trim(),
+              ownership,
+              refreshed: false,
             });
           }
           const failedRequests = await refreshAliasViews();
@@ -2380,8 +2411,8 @@ export function AliasReview({
               ? current
               : [...current, alias],
           );
-          setSavedAliasPreview((current) =>
-            current?.id === alias.id ? null : current,
+          setSavedAliasPreviewState((current) =>
+            current?.alias.id === alias.id ? null : current,
           );
           setConflictAlias((current) =>
             current?.id === alias.id ? null : current,
@@ -2487,6 +2518,16 @@ export function AliasReview({
           )}
         </div>
       )}
+      {savedPreviewOutsidePage && (
+        <div
+          role="status"
+          className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm"
+        >
+          Saved correction: <strong>{savedPreviewOutsidePage.alias}</strong> is
+          shown separately above the current page of filtered results. The
+          result count and page navigation remain based on the filtered list.
+        </div>
+      )}
       {isError && linkedAlias && (
         <div role="alert" className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
           The linked title is available, but the filtered alternate titles could not load.{" "}
@@ -2509,7 +2550,7 @@ export function AliasReview({
               {isAliasRefreshTimedOut
                 ? "A previous refresh is still pending. Its results are not being treated as current; retry to start a new check. "
                 : ""}
-              {savedAliasPreview
+              {savedAliasPreview && refreshError.includes("aliases")
                 ? "Your saved correction is shown in the table below, but its review details may be out of date. "
                 : ""}
               {isAliasRefreshTimedOut
@@ -2740,7 +2781,13 @@ export function AliasReview({
                 <tr
                   key={alias.id}
                   ref={linkedAliasId === alias.id ? linkedRowRef : undefined}
-                  className={linkedAliasId === alias.id ? "bg-primary/10 ring-2 ring-inset ring-primary/50" : undefined}
+                  className={
+                    linkedAliasId === alias.id
+                      ? "bg-primary/10 ring-2 ring-inset ring-primary/50"
+                      : savedPreviewOutsidePage?.id === alias.id
+                        ? "bg-primary/5"
+                        : undefined
+                  }
                 >
                   <td className="px-4 py-3 font-medium text-foreground min-w-52">
                     {editingId === alias.id && conflictAlias?.id !== alias.id ? (
