@@ -358,6 +358,108 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).not.toContain("Save");
   });
 
+  it("keeps stale correction details available while another alias is edited", async () => {
+    const secondAlias: AdminContentAlias = {
+      ...initialAlias,
+      id: 18,
+      titleId: 102,
+      titleName: "The Harbor",
+      alias: "Second Local Title",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    let rejectFirstSave = true;
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: {
+          onError?: (error: unknown) => Promise<void>;
+          onSuccess?: () => Promise<void>;
+        },
+      ) => {
+        if (rejectFirstSave) {
+          rejectFirstSave = false;
+          void options?.onError?.({
+            data: {
+              code: "stale_alias",
+              error:
+                "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+              current: {
+                ...initialAlias,
+                alias: "Newer Admin Correction",
+                language: "de",
+                sourceName: "Admin editorial",
+                sourceUrl: "https://example.test/newer-correction",
+                updatedAt: "2026-09-18T00:00:00.000Z",
+              },
+            },
+          });
+          return;
+        }
+        void options?.onSuccess?.();
+      },
+    );
+    render([initialAlias, secondAlias]);
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale correction",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain(
+      "A newer correction is already saved",
+    );
+    expect(container.textContent).toContain("Newer Admin Correction");
+    expect(container.textContent).toContain("Admin editorial");
+
+    const secondRow = Array.from(container.querySelectorAll("tr")).find((row) =>
+      row.textContent?.includes("The Harbor"),
+    );
+    const secondEditButton = Array.from(
+      secondRow?.querySelectorAll("button") ?? [],
+    ).find((candidate) => candidate.textContent?.trim() === "Edit");
+    expect(secondEditButton).toBeTruthy();
+    act(() => secondEditButton?.click());
+
+    expect(container.textContent).toContain("Newer Admin Correction");
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for The Harbor"]',
+      )?.value,
+    ).toBe("Second Local Title");
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Harbor",
+        "Edited second title",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(mocks.updateMutation.mutate).toHaveBeenLastCalledWith(
+      {
+        id: secondAlias.id,
+        data: {
+          alias: "Edited second title",
+          language: secondAlias.language,
+          sourceUrl: secondAlias.sourceUrl,
+          expectedUpdatedAt: secondAlias.updatedAt,
+        },
+      },
+      expect.any(Object),
+    );
+    expect(container.textContent).toContain(
+      "A newer correction is already saved",
+    );
+    expect(container.textContent).toContain("Newer Admin Correction");
+    expect(container.textContent).toContain("The Harbor");
+  });
+
   it("shows newer values after stale-save refresh failure", async () => {
     const currentVersion = "2026-09-18T12:30:00.000Z";
     const currentAlias: AdminContentAlias = {

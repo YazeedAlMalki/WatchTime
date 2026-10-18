@@ -2171,7 +2171,6 @@ export function AliasReview({
   };
 
   const startEditing = (alias: AdminContentAlias) => {
-    setConflictAlias(null);
     setEditingId(alias.id);
     setDraft({
       alias: alias.alias,
@@ -2220,7 +2219,9 @@ export function AliasReview({
       {
         onSuccess: async (savedRecord?: AdminContentAliasRecord) => {
           setEditingId(null);
-          setConflictAlias(null);
+          setConflictAlias((current) =>
+            current?.id === editingId ? null : current,
+          );
           if (editedAlias) {
             setSavedAliasPreview({
               ...editedAlias,
@@ -2675,7 +2676,7 @@ export function AliasReview({
                   className={linkedAliasId === alias.id ? "bg-primary/10 ring-2 ring-inset ring-primary/50" : undefined}
                 >
                   <td className="px-4 py-3 font-medium text-foreground min-w-52">
-                    {editingId === alias.id && !conflictAlias ? (
+                    {editingId === alias.id && conflictAlias?.id !== alias.id ? (
                       <Input
                         value={draft.alias}
                         onChange={(event) =>
@@ -2701,7 +2702,7 @@ export function AliasReview({
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground min-w-36">
-                    {editingId === alias.id && !conflictAlias ? (
+                    {editingId === alias.id && conflictAlias?.id !== alias.id ? (
                       <Input
                         value={draft.language}
                         onChange={(event) =>
@@ -2718,7 +2719,7 @@ export function AliasReview({
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingId === alias.id && !conflictAlias ? (
+                    {editingId === alias.id && conflictAlias?.id !== alias.id ? (
                       <Input
                         value={draft.sourceUrl}
                         onChange={(event) =>
@@ -2792,7 +2793,7 @@ export function AliasReview({
                           <Link2 className="w-3.5 h-3.5" /> Copy link
                         </Button>
                       )}
-                      {editingId === alias.id && !conflictAlias ? (
+                      {editingId === alias.id && conflictAlias?.id !== alias.id ? (
                         <>
                           <Button
                             size="sm"
