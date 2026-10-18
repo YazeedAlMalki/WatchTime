@@ -955,6 +955,100 @@ describe("Wikidata refresh persistence", () => {
     expect(after).toEqual(before);
   });
 
+  it("keeps newer title data when an older successful lookup finishes last", async () => {
+    const previousHealthRows = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    await db.delete(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_out_of_order_title_test__",
+      year: 2020,
+      imdbId: "tt1234567",
+      popularity: 0,
+    }).returning();
+
+    const olderStartedAt = new Date("2026-10-05T10:00:00.000Z");
+    const newerStartedAt = new Date("2026-10-05T10:00:01.000Z");
+    const olderItem: WikidataItem = {
+      ...matchedItem,
+      itemId: "Q41",
+      itemUrl: "https://www.wikidata.org/wiki/Q41",
+      classifications: matchedItem.classifications.map((classification) => ({
+        ...classification,
+        label: "PG",
+      })),
+    };
+    let signalOlderQueryStarted!: () => void;
+    const olderQueryStarted = new Promise<void>((resolve) => {
+      signalOlderQueryStarted = resolve;
+    });
+    let resolveOlderQuery!: (item: WikidataItem) => void;
+    const olderQuery = new Promise<WikidataItem>((resolve) => {
+      resolveOlderQuery = resolve;
+    });
+    let olderRefresh: ReturnType<typeof refreshWikidataTitle> | undefined;
+    let olderRefreshCompleted = false;
+
+    try {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(olderStartedAt);
+      olderRefresh = refreshWikidataTitle(title.id, {
+        queryByImdbId: async () => {
+          signalOlderQueryStarted();
+          return olderQuery;
+        },
+      });
+      await olderQueryStarted;
+
+      vi.setSystemTime(newerStartedAt);
+      await expect(refreshWikidataTitle(title.id, {
+        queryByImdbId: async () => matchedItem,
+      })).resolves.toMatchObject({ ok: true });
+
+      resolveOlderQuery(olderItem);
+      await expect(olderRefresh).resolves.toMatchObject({ ok: true, externalId: "Q41" });
+      olderRefreshCompleted = true;
+
+      const [mapping] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, title.id),
+        eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
+      ));
+      expect(mapping).toMatchObject({
+        externalId: "Q42",
+        status: "mapped",
+        lastRefreshedAt: newerStartedAt,
+      });
+
+      const [record] = await db.select().from(safetyRecordsTable).where(and(
+        eq(safetyRecordsTable.titleId, title.id),
+        eq(safetyRecordsTable.sourceName, WIKIDATA_PROVIDER),
+        sql`${safetyRecordsTable.seasonNumber} is null`,
+        sql`${safetyRecordsTable.episodeNumber} is null`,
+      ));
+      expect(record).toMatchObject({
+        url: matchedItem.itemUrl,
+        updatedAt: newerStartedAt,
+        items: [{
+          category: "MPAA",
+          label: "PG-13",
+        }],
+      });
+    } finally {
+      if (olderRefresh && !olderRefreshCompleted) {
+        resolveOlderQuery(olderItem);
+        await olderRefresh.catch(() => undefined);
+      }
+      vi.useRealTimers();
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousHealthRows.length > 0) {
+        await db.insert(integrationHealthTable).values(previousHealthRows);
+      }
+    }
+  });
+
   it("accumulates persisted refresh outcomes and keeps the latest error state", async () => {
     const previousRows = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));

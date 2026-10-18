@@ -492,19 +492,6 @@ export async function refreshWikidataTitle(
           eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
         ))
         .limit(1);
-      if (lockedMapping) {
-        await tx.update(providerMappingsTable)
-          .set({ externalId: item.itemId, status: "mapped", lastRefreshedAt: now })
-          .where(eq(providerMappingsTable.id, lockedMapping.id));
-      } else {
-        await tx.insert(providerMappingsTable).values({
-          titleId,
-          provider: WIKIDATA_PROVIDER,
-          externalId: item.itemId,
-          status: "mapped",
-          lastRefreshedAt: now,
-        });
-      }
 
       // A title can have multiple independent safety sources. Only replace
       // Wikidata's own row, and retain it when the provider currently exposes
@@ -521,6 +508,30 @@ export async function refreshWikidataTitle(
         ))
         .orderBy(desc(safetyRecordsTable.updatedAt), asc(safetyRecordsTable.id));
       const [existingRecord] = existingRecords;
+
+      // Mapping timestamps also order empty-classification refreshes, which
+      // intentionally leave an existing safety row untouched. Keep equal
+      // timestamps in first-persisted order, matching integration health.
+      const hasNewerTitleData = Boolean(
+        (lockedMapping?.lastRefreshedAt && lockedMapping.lastRefreshedAt >= now)
+        || (existingRecord?.updatedAt && existingRecord.updatedAt >= now),
+      );
+      if (hasNewerTitleData) return;
+
+      if (lockedMapping) {
+        await tx.update(providerMappingsTable)
+          .set({ externalId: item.itemId, status: "mapped", lastRefreshedAt: now })
+          .where(eq(providerMappingsTable.id, lockedMapping.id));
+      } else {
+        await tx.insert(providerMappingsTable).values({
+          titleId,
+          provider: WIKIDATA_PROVIDER,
+          externalId: item.itemId,
+          status: "mapped",
+          lastRefreshedAt: now,
+        });
+      }
+
       if (items.length > 0) {
         const values = {
           titleId,
