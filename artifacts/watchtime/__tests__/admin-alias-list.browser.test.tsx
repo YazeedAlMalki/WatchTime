@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { getListAdminContentAliasesQueryKey } from "@workspace/api-client-react";
 import { Toaster } from "@/components/ui/toaster";
 
 // Keep the generated alias-list hook and HTTP client intact so retry and
@@ -212,6 +213,101 @@ it("keeps filtered alias continuation stable when matching records change betwee
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("provider");
     expect(requests.at(-1)?.searchParams.get("afterId")).toBeNull();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("keeps the selected alias page when an older page response finishes late", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  let resolveOlderPage!: (response: Response) => void;
+  let markOlderPageRequested!: () => void;
+  let markOlderPageCompleted!: () => void;
+  const olderPageResponse = new Promise<Response>((resolve) => {
+    resolveOlderPage = resolve;
+  });
+  const olderPageRequested = new Promise<void>((resolve) => {
+    markOlderPageRequested = resolve;
+  });
+  const olderPageCompleted = new Promise<void>((resolve) => {
+    markOlderPageCompleted = resolve;
+  });
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "en",
+    sourceName: "TVMaze",
+    sourceUrl: null,
+    isEditorial: false,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  const firstPage = {
+    items: [makeAlias(401, "First page alias")],
+    total: 2,
+    limit: 50,
+    offset: 0,
+    nextAfterId: 401,
+  };
+  const responseFor = (body: typeof firstPage) => new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+  window.fetch = vi.fn((input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    if (url.searchParams.get("afterId") === "401") {
+      return Promise.resolve(responseFor({
+        ...firstPage,
+        items: [makeAlias(402, "Second page alias")],
+        offset: 50,
+        nextAfterId: null,
+      }));
+    }
+    markOlderPageRequested();
+    return olderPageResponse.then((response) => {
+      markOlderPageCompleted();
+      return response;
+    });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(getListAdminContentAliasesQueryKey({ limit: 50 }), firstPage);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("First page alias")).toBeVisible();
+    await olderPageRequested;
+
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 2 matching aliases");
+    await expect.element(page.getByText("Second page alias")).toBeVisible();
+    expect(requests.at(-1)?.searchParams.get("afterId")).toBe("401");
+
+    resolveOlderPage(responseFor(firstPage));
+    await olderPageCompleted;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 2 matching aliases");
+    await expect.element(page.getByText("Second page alias")).toBeVisible();
+    await expect.element(page.getByText("First page alias")).not.toBeInTheDocument();
   } finally {
     root.unmount();
     container.remove();

@@ -2836,7 +2836,7 @@ export function AliasReview({
               variant="outline"
               size="sm"
               onClick={() => onAliasPageChange(Math.max(0, aliasOffset - aliasPageSize))}
-              disabled={aliasOffset === 0 || isFetching}
+              disabled={aliasOffset === 0}
             >
               Previous aliases
             </Button>
@@ -2845,7 +2845,7 @@ export function AliasReview({
               variant="outline"
               size="sm"
               onClick={() => onAliasPageChange(aliasOffset + aliasPageSize)}
-              disabled={nextAliasCursor == null || isFetching}
+              disabled={nextAliasCursor == null}
             >
               Next aliases
             </Button>
