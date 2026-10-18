@@ -122,6 +122,7 @@ import { eq, and, sql } from "drizzle-orm";
 import {
   mockMalformedSafetyTimestamp,
   mockMalformedSafetyTimestampDuplicate,
+  mockSafetyRecordQueryOrder,
 } from "../test-utils/malformedSafetyTimestamp";
 
 // ─── Global fixtures ──────────────────────────────────────────────────────────
@@ -343,6 +344,55 @@ describe("shared rating-region preference", () => {
       });
     } finally {
       restoreSelect();
+    }
+  });
+
+  it("selects the same official rating when equal refresh timestamps arrive in reverse order", async () => {
+    const updatedAt = new Date("2026-02-01T00:00:00.000Z");
+    const [rating] = await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      updatedAt,
+      url: "https://example.test/same-official-rating",
+      items: [{
+        category: "MPAA",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "Official rating",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+    const duplicateRecordId = rating.id + 1_000_000_000;
+    let restoreOrder = mockSafetyRecordQueryOrder(db, "forward", {
+      sourceRecordId: rating.id,
+      duplicateRecordId,
+    });
+    let firstResponse;
+    try {
+      firstResponse = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+    } finally {
+      restoreOrder();
+    }
+
+    restoreOrder = mockSafetyRecordQueryOrder(db, "reverse", {
+      sourceRecordId: rating.id,
+      duplicateRecordId,
+    });
+    try {
+      const reversedResponse = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+
+      expect(firstResponse.status).toBe(200);
+      expect(reversedResponse.status).toBe(200);
+      expect(firstResponse.body.preferredRating).toEqual(reversedResponse.body.preferredRating);
+      expect(reversedResponse.body.preferredRating).toMatchObject({
+        recordId: rating.id,
+        lastRefreshedAt: updatedAt.toISOString(),
+      });
+    } finally {
+      restoreOrder();
     }
   });
 

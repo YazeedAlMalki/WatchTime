@@ -67,10 +67,14 @@ export function resolvePreferredRating(records: RatingRecord[], region: RatingRe
       if (priority !== 0) return priority;
 
       // Equal timestamps and tiers still need an order that is independent of
-      // insertion/query order. The label and source URL are stable row content.
+      // insertion/query order. Stable row content comes first, then the record
+      // ID distinguishes otherwise identical rows.
       const leftKey = `${left.item.label}\u0000${left.record.url ?? ""}`;
       const rightKey = `${right.item.label}\u0000${right.record.url ?? ""}`;
-      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      if (leftKey !== rightKey) return leftKey < rightKey ? -1 : 1;
+      const leftId = left.record.id ?? Number.MAX_SAFE_INTEGER;
+      const rightId = right.record.id ?? Number.MAX_SAFE_INTEGER;
+      return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
     });
   const match = matches[0];
 

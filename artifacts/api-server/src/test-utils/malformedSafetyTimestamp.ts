@@ -82,6 +82,33 @@ export function mockMalformedSafetyTimestampDuplicate(
   return () => selectSpy.mockRestore();
 }
 
+export function mockSafetyRecordQueryOrder(
+  database: object,
+  order: "forward" | "reverse",
+  duplicate?: { sourceRecordId: number; duplicateRecordId: number },
+): () => void {
+  const db = database as any;
+  const originalSelect = db.select.bind(db);
+  const selectSpy = vi.spyOn(db, "select").mockImplementation((...args: any[]) => {
+    const query = originalSelect(...args);
+    if (!args[0] || !Object.prototype.hasOwnProperty.call(args[0], "rawUpdatedAt")) {
+      return query;
+    }
+
+    return mapQueryRows(query, (rows) => {
+      const sourceRecord = duplicate
+        ? rows.find((row) => row.id === duplicate.sourceRecordId)
+        : undefined;
+      const rowsToOrder = sourceRecord
+        ? [...rows, { ...sourceRecord, id: duplicate!.duplicateRecordId }]
+        : rows;
+      return order === "reverse" ? [...rowsToOrder].reverse() : rowsToOrder;
+    });
+  });
+
+  return () => selectSpy.mockRestore();
+}
+
 export function mockMalformedSafetyTimestamps(
   database: object,
   timestamps: ReadonlyMap<number, Date | string>,
