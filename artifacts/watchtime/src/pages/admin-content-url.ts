@@ -25,6 +25,8 @@ export function readAdminContentUrl(search: string): {
   malformedRefreshTimestampProvider: string;
   contentOffset: number;
   aliasId: number | null;
+  aliasPage: number;
+  aliasCursor: string | null;
 } {
   const params = new URLSearchParams(search);
   const rawRegion = params.get("region");
@@ -40,6 +42,19 @@ export function readAdminContentUrl(search: string): {
   const rawAliasId = params.get("aliasId");
   const aliasId = rawAliasId !== null && /^[1-9]\d*$/.test(rawAliasId) && Number.isSafeInteger(Number(rawAliasId))
     ? Number(rawAliasId)
+    : null;
+  const rawAliasCursor = params.get("aliasCursor");
+  const rawAliasPage = params.get("aliasPage");
+  const parsedAliasPage = rawAliasPage !== null &&
+      /^\d+$/.test(rawAliasPage) &&
+      Number.isSafeInteger(Number(rawAliasPage)) &&
+      Number(rawAliasPage) >= 2
+    ? Number(rawAliasPage)
+    : null;
+  const aliasCursor = rawAliasCursor &&
+      rawAliasCursor.length <= 4096 &&
+      parsedAliasPage !== null
+    ? rawAliasCursor
     : null;
   const malformedRefreshTimestamp = tab === "content" && params.get("malformedRefreshTimestamp") === "true";
   const malformedRefreshTimestampProvider =
@@ -60,6 +75,10 @@ export function readAdminContentUrl(search: string): {
     malformedRefreshTimestampProvider,
     contentOffset: malformedRefreshTimestamp ? parsedOffset : 0,
     aliasId: tab === "content" ? aliasId : null,
+    aliasPage: tab === "content" && aliasCursor && parsedAliasPage
+      ? parsedAliasPage
+      : 1,
+    aliasCursor: tab === "content" ? aliasCursor : null,
   };
 }
 
@@ -73,8 +92,11 @@ export function adminContentUrl(
   malformedRefreshTimestamp?: boolean,
   contentOffset?: number,
   malformedRefreshTimestampProvider?: string,
+  aliasPage?: number,
+  aliasCursor?: string | null,
 ): string {
   const params = new URLSearchParams(search);
+  const current = readAdminContentUrl(search);
   params.set("tab", tab);
   params.delete("aliasId");
   if (tab === "content") {
@@ -85,6 +107,19 @@ export function adminContentUrl(
     const selectedOwnership = ownership ?? readAdminContentUrl(search).ownership;
     if (selectedOwnership !== "all") params.set("ownership", selectedOwnership);
     else params.delete("ownership");
+    if (term !== current.q || selectedOwnership !== current.ownership) {
+      params.delete("aliasCursor");
+      params.delete("aliasPage");
+    }
+    if (aliasCursor !== undefined) {
+      if (aliasCursor && aliasPage != null && aliasPage > 1) {
+        params.set("aliasCursor", aliasCursor);
+        params.set("aliasPage", String(aliasPage));
+      } else {
+        params.delete("aliasCursor");
+        params.delete("aliasPage");
+      }
+    }
     if (aliasId !== undefined) params.set("aliasId", String(aliasId));
     const selectedMalformedRefreshTimestamp =
       malformedRefreshTimestamp ?? readAdminContentUrl(search).malformedRefreshTimestamp;
@@ -111,6 +146,8 @@ export function adminContentUrl(
     params.delete("malformedRefreshTimestamp");
     params.delete("malformedRefreshTimestampProvider");
     params.delete("offset");
+    params.delete("aliasCursor");
+    params.delete("aliasPage");
   }
   return `/admin?${params.toString()}`;
 }

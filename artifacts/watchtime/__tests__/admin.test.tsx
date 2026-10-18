@@ -1517,7 +1517,8 @@ describe("admin alternate-title review", () => {
       total: number;
       limit: number;
       offset: number;
-      nextAfterId: number | null;
+      nextCursor: string | null;
+      previousCursor: string | null;
     };
     const updateCachedPage = mocks.queryClient.setQueriesData.mock
       .calls[0][1] as (
@@ -1528,7 +1529,8 @@ describe("admin alternate-title review", () => {
       total: 1,
       limit: 50,
       offset: 0,
-      nextAfterId: null,
+      nextCursor: null,
+      previousCursor: null,
     };
     expect(updateCachedPage(stalePage)).toEqual({
       ...stalePage,

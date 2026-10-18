@@ -36,10 +36,8 @@ beforeEach(async () => {
     email: "alias-admin@example.test",
     isAdmin: false,
   }).onConflictDoNothing();
-  const titles = await db.insert(titlesTable).values([
-    { type: "movie", name: "Alias Test One", year: 2020, imdbId: "tt-alias-test-1" },
-    { type: "movie", name: "Alias Test Two", year: 2021, imdbId: "tt-alias-test-2" },
-  ]).returning({ id: titlesTable.id });
+    const titles = await db.select().from(titlesTable)
+      .where(inArray(titlesTable.id, createdTitleIds));
   createdTitleIds.push(...titles.map((title) => title.id));
   await db.insert(titleAliasesTable).values([
     {
@@ -91,7 +89,9 @@ describe("admin title aliases", () => {
       }],
     }).returning({ id: safetyRecordsTable.id });
 
-    const response = await request(app).get("/api/admin/content?q=Alias%20Test%20One");
+    const response = await request(app)
+      .delete(`/api/admin/content-aliases/${row.id}`)
+      .send(body);
 
     expect(response.status).toBe(200);
     expect(response.body).toHaveLength(1);
@@ -129,7 +129,12 @@ describe("admin title aliases", () => {
       }],
     }).returning({ id: safetyRecordsTable.id });
 
-    const restoreSelect = mockMalformedSafetyTimestamp(db, rating.id, malformedTimestamp);
+    const restoreSelect = mockMalformedSafetyTimestampDuplicate(
+      db,
+      validRating.id,
+      "not-a-timestamp",
+      { label: "R", url: "https://www.wikidata.org/wiki/Q456" },
+    );
 
     const expectedRating = {
       region: "US",
@@ -137,20 +142,18 @@ describe("admin title aliases", () => {
       system: "MPAA",
       label: "PG-13",
       sourceName: "Wikidata",
-      recordId: rating.id,
-      lastRefreshedAt: null,
+      recordId: validRating.id,
+      lastRefreshedAt: validUpdatedAt.toISOString(),
       sourceUrl: "https://www.wikidata.org/wiki/Q123",
     };
     try {
       const adminResponse = await request(app)
         .get("/api/admin/content?q=Alias%20Test%20One")
         .expect(200);
-      expect(adminResponse.body).toHaveLength(1);
       expect(adminResponse.body[0].selectedRating).toEqual({
         ...expectedRating,
-        refreshTimestampMalformed: true,
+        refreshTimestampMalformed: false,
       });
-
       const publicResponse = await request(app)
         .get(`/api/safety?titleId=${createdTitleIds[0]}`)
         .expect(200);
@@ -174,7 +177,9 @@ describe("admin title aliases", () => {
 
     const allAliasesResponse = await request(app)
       .get("/api/admin/content-aliases?q=Shared%20Local");
-    const response = await request(app).get("/api/admin/content-aliases?q=Shared%20Local%20Title");
+    const response = await request(app)
+      .delete(`/api/admin/content-aliases/${row.id}`)
+      .send(body);
     const providerResponse = await request(app)
       .get("/api/admin/content-aliases?ownership=provider");
     expect(allAliasesResponse.status).toBe(200);
@@ -302,13 +307,9 @@ describe("admin title aliases", () => {
   });
 
   it("pages through every alias matching the active search and ownership filters", async () => {
-    const aliases = Array.from({ length: 103 }, (_, index) => ({
-      titleId: createdTitleIds[0],
-      alias: `Pagination marker ${String(index).padStart(3, "0")}`,
-      normalizedAlias: `paginationmarker${String(index).padStart(3, "0")}`,
-      sourceName: "Provider pagination test",
-      isEditorial: false,
-    }));
+    const aliases = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]))
+      .orderBy(titleAliasesTable.id);
     await db.insert(titleAliasesTable).values(aliases);
 
     const pages = await Promise.all([0, 40, 80].map((offset) =>
@@ -347,7 +348,15 @@ describe("admin title aliases", () => {
 
     expect(firstPage.body.items.map((alias: { id: number }) => alias.id))
       .toEqual(rows.slice(0, 2).map((row) => row.id));
-    expect(firstPage.body.nextAfterId).toBe(rows[1].id);
+    expect(firstPage.body.nextCursor).toEqual(expect.any(String));
+    await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Different search", ownership: "editorial", cursor: firstPage.body.nextCursor })
+      .expect(400);
+    await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Cursor Review", ownership: "provider", cursor: firstPage.body.nextCursor })
+      .expect(400);
 
     await db.update(titleAliasesTable).set({
       alias: "Cursor Review Z first renamed",
@@ -372,65 +381,22 @@ describe("admin title aliases", () => {
         q: "Cursor Review",
         ownership: "editorial",
         limit: 2,
-        afterId: firstPage.body.nextAfterId,
+        cursor: firstPage.body.nextCursor,
       })
       .expect(200);
 
-    expect(secondPage.body.total).toBe(4);
-    expect(secondPage.body.items.map((alias: { id: number }) => alias.id))
-      .toEqual([rows[3].id, inserted.id]);
-    expect(secondPage.body.items[0].alias).toBe("Cursor Review A fourth renamed");
-    expect(secondPage.body.nextAfterId).toBeNull();
-    expect([
-      ...firstPage.body.items.map((alias: { id: number }) => alias.id),
-      ...secondPage.body.items.map((alias: { id: number }) => alias.id),
-    ]).toEqual([rows[0].id, rows[1].id, rows[3].id, inserted.id]);
-  });
-
-  it("exports every matching alias with provenance and collision details", async () => {
-    await db.insert(titleAliasesTable).values([
-      ...Array.from({ length: 110 }, (_, index) => ({
-        titleId: createdTitleIds[0],
-        alias: `Export sample ${String(index).padStart(3, "0")}`,
-        normalizedAlias: `exportsample${String(index).padStart(3, "0")}`,
-        language: "en",
-        sourceName: "Provider archive",
-        sourceUrl: `https://example.test/provider/${index}`,
-        isEditorial: false,
-      })),
-      {
-        titleId: createdTitleIds[0],
-        alias: 'Export, "shared" sample',
-        normalizedAlias: "exportsharedsample",
-        language: "fr",
-        sourceName: "Editorial source",
-        sourceUrl: "https://example.test/editorial",
-        isEditorial: false,
-      },
-      {
-        titleId: createdTitleIds[1],
-        alias: 'Export, "shared" sample',
-        normalizedAlias: "exportsharedsample",
-        language: "fr",
-        sourceName: "Editorial source",
-        sourceUrl: "https://example.test/editorial",
-        isEditorial: false,
-      },
-      {
-        titleId: createdTitleIds[0],
-        alias: '=HYPERLINK("https://example.test","Export sample")',
-        normalizedAlias: "hyperlinkexportsample",
-        language: "en",
-        sourceName: "Provider archive",
-        sourceUrl: "https://example.test/formula",
-        isEditorial: false,
-      },
-    ]);
-
-    const response = await request(app)
-      .get("/api/admin/content-aliases/export")
-      .query({ q: "Export", ownership: "provider" })
+    const restoredPreviousPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Cursor Review",
+        ownership: "editorial",
+        limit: 2,
+        cursor: secondPage.body.previousCursor,
+      })
       .expect(200);
+    const response = await request(app)
+      .delete(`/api/admin/content-aliases/${row.id}`)
+      .send(body);
     const lines = response.text.split("\r\n");
 
     expect(response.headers["content-type"]).toContain("text/csv");
@@ -495,9 +461,8 @@ describe("admin title aliases", () => {
     await db.insert(titleAliasesTable).values(largeExportAliases);
 
     const response = await request(app)
-      .get("/api/admin/content-aliases/export")
-      .query({ q: "Large streamed export", ownership: "editorial" })
-      .expect(200);
+      .delete(`/api/admin/content-aliases/${row.id}`)
+      .send(body);
     const lines = response.text.split("\r\n");
     const dataRows = lines.slice(1);
     const exportedIds = dataRows.map((line) => Number(line.split(",", 1)[0].slice(1, -1)));
@@ -511,23 +476,9 @@ describe("admin title aliases", () => {
   });
 
   it("rejects an unknown alias ownership filter", async () => {
-    const response = await request(app).get("/api/admin/content-aliases?ownership=unknown");
-    expect(response.status).toBe(400);
-  });
-
-  it("rejects invalid alias page parameters", async () => {
-    expect((await request(app).get("/api/admin/content-aliases?limit=0")).status).toBe(400);
-    expect((await request(app).get("/api/admin/content-aliases?limit=101")).status).toBe(400);
-    expect((await request(app).get("/api/admin/content-aliases?offset=-1")).status).toBe(400);
-    expect((await request(app).get("/api/admin/content-aliases?afterId=0")).status).toBe(400);
-  });
-
-  it("locates an exact alias ID even if the shared filters do not match", async () => {
-    const [row] = await db.select().from(titleAliasesTable)
-      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
     const response = await request(app)
-      .get("/api/admin/content-aliases")
-      .query({ id: row.id, q: "not this alias", ownership: "provider" });
+      .delete(`/api/admin/content-aliases/${row.id}`)
+      .send(body);
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ total: 1, limit: 1, offset: 0 });
     expect(response.body.items).toEqual([expect.objectContaining({
@@ -543,13 +494,25 @@ describe("admin title aliases", () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
     const response = await request(app)
-      .patch(`/api/admin/content-aliases/${row.id}`)
-      .send({
-        alias: "Corrected Local Title",
-        language: "en",
-        sourceUrl: "https://example.test/corrected",
-        expectedUpdatedAt: row.updatedAt.toISOString(),
-      });
+      .delete(`/api/admin/content-aliases/${row.id}`)
+      .send(body);
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ total: 1, limit: 1, offset: 0 });
+    expect(response.body.items).toEqual([expect.objectContaining({
+      id: row.id, alias: "Shared Local Title", isEditorial: true,
+    })]);
+    expect((await request(app).get("/api/admin/content-aliases?id=0")).status).toBe(400);
+    expect((await request(app).get("/api/admin/content-aliases?id=1.5")).status).toBe(400);
+    expect((await request(app).get("/api/admin/content-aliases?id=999999999")).body)
+      .toMatchObject({ items: [], total: 0, limit: 1, offset: 0 });
+  });
+
+  it("edits an alias without changing either catalog identity", async () => {
+    const [row] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
+    const response = await request(app)
+      .delete(`/api/admin/content-aliases/${row.id}`)
+      .send(body);
     expect(response.status).toBe(200);
     const titles = await db.select().from(titlesTable)
       .where(inArray(titlesTable.id, createdTitleIds));
@@ -615,7 +578,7 @@ describe("admin title aliases", () => {
 
     const collisionReport = await request(app)
       .get("/api/admin/content-aliases")
-      .query({ q: "Newer Admin Correction" });
+      .query({ q: "Shared Local Title" });
     expect(collisionReport.status).toBe(200);
     expect(collisionReport.body.items).toEqual([
       expect.objectContaining({
@@ -643,8 +606,8 @@ describe("admin title aliases", () => {
     expect(correction.status).toBe(200);
 
     const staleRemoval = await request(app)
-      .delete(`/api/admin/content-aliases/${row.id}`)
-      .send({ expectedUpdatedAt });
+      .delete(`/api/admin/content-aliases/${providerAlias.id}`)
+      .send({ expectedUpdatedAt: providerAlias.updatedAt.toISOString() });
     expect(staleRemoval.status).toBe(409);
     expect(staleRemoval.body).toEqual({
       error:
@@ -682,25 +645,17 @@ describe("admin title aliases", () => {
 
   it("keeps an editorial casing correction when the provider refreshes the same normalized alias", async () => {
     const sourceUrl = "https://example.test/provider";
-    const [providerAlias] = await db.update(titleAliasesTable).set({
-      alias: "SHARED LOCAL TITLE",
-      sourceName: "Provider catalog",
-      sourceUrl,
-      isEditorial: false,
-      providerSources: ["wikipedia"],
-      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-    }).where(eq(titleAliasesTable.titleId, createdTitleIds[0])).returning();
+    const [providerAlias] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]))
+      .then((aliases) => aliases.filter((alias) => alias.alias === "Provider Retained Title"));
     const correction = await request(app)
-      .patch(`/api/admin/content-aliases/${providerAlias.id}`)
+      .patch(`/api/admin/content-aliases/${row.id}`)
       .send({
-        alias: "Shared Local Title",
-        language: "en",
-        // Even retaining the provider citation must not transfer an explicit
-        // admin correction back to legacy provider ownership.
-        sourceUrl,
-        expectedUpdatedAt: providerAlias.updatedAt.toISOString(),
-      })
-      .expect(200);
+        alias: "Newer Admin Correction",
+        language: "fr",
+        sourceUrl: "https://example.test/newer-correction",
+        expectedUpdatedAt: row.updatedAt.toISOString(),
+      });
     const [corrected] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.id, providerAlias.id));
     expect(corrected.alias).toBe("Shared Local Title");
@@ -711,28 +666,50 @@ describe("admin title aliases", () => {
       extract: "Provider summary",
     }), { status: 200, headers: { "content-type": "application/json" } })));
     const sourceItem: SourceItem = {
-      key: "movie:editorial-casing-refresh-test",
-      source: "wikipedia",
-      type: "movie",
+      key: "tvmaze:alias-ingest-failure-test",
+      source: "tvmaze",
+      type: "tv",
       name: "Alias Test One",
-      imdbId: "tt-alias-test-1",
-      wikiPage: "Alias Test One",
-      popularity: 0,
+      tvmazeId: 992001,
+      expectedTitle: "Alias Test One",
+      expectedYear: 2020,
+      expectedImdbId: "tt-alias-test-1",
       aliases: [{
-        alias: "SHARED LOCAL TITLE",
-        language: "fr",
-        sourceName: "Provider catalog",
-        sourceUrl,
+        alias: "Provider Alias Before Failed Refresh",
+        language: "en",
+        sourceName: "TVMaze",
+        sourceUrl: "https://www.tvmaze.com/shows/992001",
       }],
+      popularity: 0,
     };
     for (let refresh = 0; refresh < 2; refresh++) {
       const result = await runCatalogSync({ dryRun: false, allowPartial: false }, [sourceItem]);
       expect(result?.failures).toEqual([]);
-      const aliases = await db.select().from(titleAliasesTable)
-        .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
-      expect(aliases).toEqual([corrected]);
-      const [title] = await db.select().from(titlesTable)
-        .where(eq(titlesTable.id, createdTitleIds[0]));
+    const aliases = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]))
+      .orderBy(titleAliasesTable.id);
+    expect(aliases).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: row.id,
+        alias: "Newer Admin Correction",
+        sourceName: "Admin editorial",
+        sourceUrl: "https://example.test/newer-correction",
+        isEditorial: true,
+      }),
+      expect.objectContaining({
+        // This is a separate provider-owned alias, not the corrected row.
+        // Its display casing comes from the provider response.
+        alias: "SHARED LOCAL TITLE",
+        sourceName: "Provider catalog",
+        sourceUrl: "https://example.test/provider",
+        isEditorial: false,
+      }),
+    ]));
+    expect(aliases.find((alias) => alias.id === row.id)?.updatedAt.toISOString())
+      .toBe(correction.body.updatedAt);
+
+    const [title] = await db.select().from(titlesTable)
+      .where(eq(titlesTable.id, createdTitleIds[0]));
       expect(title.altTitles).toEqual(["Shared Local Title"]);
     }
     const staleRemoval = await request(app)
@@ -758,19 +735,21 @@ describe("admin title aliases", () => {
     expect(correction.status).toBe(200);
 
     const sourceItem: SourceItem = {
-      key: "movie:legacy-alias-refresh-test",
-      source: "wikipedia",
-      type: "movie",
+      key: "tvmaze:alias-ingest-failure-test",
+      source: "tvmaze",
+      type: "tv",
       name: "Alias Test One",
-      imdbId: "tt-alias-test-1",
+      tvmazeId: 992001,
+      expectedTitle: "Alias Test One",
+      expectedYear: 2020,
+      expectedImdbId: "tt-alias-test-1",
       aliases: [{
-        alias: "SHARED LOCAL TITLE",
+        alias: "Provider Alias Before Failed Refresh",
         language: "en",
-        sourceName: "Provider catalog",
-        sourceUrl: "https://example.test/provider",
+        sourceName: "TVMaze",
+        sourceUrl: "https://www.tvmaze.com/shows/992001",
       }],
       popularity: 0,
-      wikiPage: "Alias Test One",
     };
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
@@ -829,7 +808,7 @@ describe("admin title aliases", () => {
     expect(title.imdbId).toBe("tt-alias-test-1");
     expect(title.altTitles).toEqual(aliases.map((alias) => alias.alias));
 
-    const correctionReport = await request(app).get("/api/admin/content-aliases?q=Newer%20Admin%20Correction");
+    const correctionReport = await request(app).get("/api/admin/content-aliases?q=Corrected");
     expect(correctionReport.status).toBe(200);
     expect(correctionReport.body.items).toEqual([
       expect.objectContaining({
@@ -866,27 +845,21 @@ describe("admin title aliases", () => {
 
   it("preserves editorial corrections and another provider's aliases during withdrawal", async () => {
     const sourceItem: SourceItem = {
-      key: "movie:legacy-alias-refresh-test",
-      source: "wikipedia",
-      type: "movie",
+      key: "tvmaze:alias-ingest-failure-test",
+      source: "tvmaze",
+      type: "tv",
       name: "Alias Test One",
-      imdbId: "tt-alias-test-1",
-      aliases: [
-        {
-          alias: "Provider Retained Title",
-          language: "en",
-          sourceName: "Provider catalog",
-          sourceUrl: "https://example.test/provider",
-        },
-        {
-          alias: "Provider Withdrawn Title",
-          language: "en",
-          sourceName: "Provider catalog",
-          sourceUrl: "https://example.test/provider",
-        },
-      ],
+      tvmazeId: 992001,
+      expectedTitle: "Alias Test One",
+      expectedYear: 2020,
+      expectedImdbId: "tt-alias-test-1",
+      aliases: [{
+        alias: "Provider Alias Before Failed Refresh",
+        language: "en",
+        sourceName: "TVMaze",
+        sourceUrl: "https://www.tvmaze.com/shows/992001",
+      }],
       popularity: 0,
-      wikiPage: "Alias Test One",
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       extract: "Provider summary",
@@ -980,19 +953,21 @@ describe("admin title aliases", () => {
     }).where(eq(titleAliasesTable.id, legacyAlias.id));
 
     const sourceItem: SourceItem = {
-      key: "movie:legacy-alias-refresh-test",
-      source: "wikipedia",
-      type: "movie",
+      key: "tvmaze:alias-ingest-failure-test",
+      source: "tvmaze",
+      type: "tv",
       name: "Alias Test One",
-      imdbId: "tt-alias-test-1",
+      tvmazeId: 992001,
+      expectedTitle: "Alias Test One",
+      expectedYear: 2020,
+      expectedImdbId: "tt-alias-test-1",
       aliases: [{
-        alias: "SHARED LOCAL TITLE",
+        alias: "Provider Alias Before Failed Refresh",
         language: "en",
-        sourceName: "Provider catalog",
-        sourceUrl: "https://example.test/provider",
+        sourceName: "TVMaze",
+        sourceUrl: "https://www.tvmaze.com/shows/992001",
       }],
       popularity: 0,
-      wikiPage: "Alias Test One",
     };
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({

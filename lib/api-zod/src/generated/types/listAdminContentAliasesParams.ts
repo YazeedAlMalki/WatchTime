@@ -25,12 +25,13 @@ id?: number;
  */
 limit?: number;
 /**
- * Return aliases with a greater record ID, preserving continuation when alias text changes
- * @minimum 1
+ * Filter-bound continuation token returned by the preceding page
+ * @minLength 1
+ * @maxLength 4096
  */
-afterId?: number;
+cursor?: string;
 /**
- * Legacy page offset; cursor-based clients should use afterId
+ * Legacy page offset; cursor-based clients should use cursor
  * @minimum 0
  */
 offset?: number;

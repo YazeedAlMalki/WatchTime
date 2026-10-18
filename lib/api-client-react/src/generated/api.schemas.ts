@@ -723,11 +723,10 @@ export interface AdminContentAliasPage {
   limit: number;
   /** @minimum 0 */
   offset: number;
-  /**
-     * @minimum 1
-     * @nullable
-     */
-  nextAfterId: number | null;
+  /** @nullable */
+  nextCursor: string | null;
+  /** @nullable */
+  previousCursor: string | null;
 }
 
 export interface AdminContentAliasUpdate {
@@ -1270,12 +1269,13 @@ id?: number;
  */
 limit?: number;
 /**
- * Return aliases with a greater record ID, preserving continuation when alias text changes
- * @minimum 1
+ * Filter-bound continuation token returned by the preceding page
+ * @minLength 1
+ * @maxLength 4096
  */
-afterId?: number;
+cursor?: string;
 /**
- * Legacy page offset; cursor-based clients should use afterId
+ * Legacy page offset; cursor-based clients should use cursor
  * @minimum 0
  */
 offset?: number;

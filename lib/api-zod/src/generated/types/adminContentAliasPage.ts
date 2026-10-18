@@ -18,9 +18,8 @@ export interface AdminContentAliasPage {
   limit: number;
   /** @minimum 0 */
   offset: number;
-  /**
-     * @minimum 1
-     * @nullable
-     */
-  nextAfterId: number | null;
+  /** @nullable */
+  nextCursor: string | null;
+  /** @nullable */
+  previousCursor: string | null;
 }

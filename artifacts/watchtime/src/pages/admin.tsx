@@ -105,6 +105,8 @@ export default function AdminPage() {
     malformedRefreshTimestampProvider,
     contentOffset,
     aliasId,
+    aliasPage,
+    aliasCursor,
   } = readAdminContentUrl(search);
   const selectTab = (nextTab: string) => {
     setLocation(adminContentUrl(search, nextTab as AdminTab, region));
@@ -123,6 +125,21 @@ export default function AdminPage() {
   };
   const selectContentPage = (offset: number) => {
     setLocation(adminContentUrl(search, "content", region, undefined, undefined, undefined, undefined, offset));
+  };
+  const selectAliasPage = (page: number, cursor: string | null) => {
+    setLocation(adminContentUrl(
+      search,
+      "content",
+      region,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      page,
+      cursor,
+    ));
   };
   const { data: me, isLoading: meLoading } = useGetMe();
   const { data: dashboard } = useGetAdminDashboard({
@@ -303,6 +320,9 @@ export default function AdminPage() {
               malformedRefreshTimestampProvider,
             )}
             aliasId={aliasId}
+            aliasPage={aliasPage}
+            aliasCursor={aliasCursor}
+            onAliasPageChange={selectAliasPage}
           />
         </TabsContent>
 
@@ -1023,6 +1043,9 @@ function ContentTab({
   onContentOffsetChange,
   reviewUrl,
   aliasId,
+  aliasPage,
+  aliasCursor,
+  onAliasPageChange,
 }: {
   ratingRegion: RatingRegion;
   onRatingRegionChange: (region: RatingRegion) => void;
@@ -1037,6 +1060,9 @@ function ContentTab({
   onContentOffsetChange: (offset: number) => void;
   reviewUrl: string;
   aliasId: number | null;
+  aliasPage: number;
+  aliasCursor: string | null;
+  onAliasPageChange: (page: number, cursor: string | null) => void;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -1057,22 +1083,6 @@ function ContentTab({
   const [debouncedQ, setDebouncedQ] = useState(q);
   const contentPageSize = 50;
   const aliasPageSize = 50;
-  const aliasFilterKey = JSON.stringify([debouncedQ, aliasOwnership]);
-  const [aliasPagination, setAliasPagination] = useState<{
-    filterKey: string;
-    offset: number;
-    cursors: Record<number, number | undefined>;
-  }>(() => ({
-    filterKey: aliasFilterKey,
-    offset: 0,
-    cursors: { 0: undefined },
-  }));
-  const aliasOffset = aliasPagination.filterKey === aliasFilterKey
-    ? aliasPagination.offset
-    : 0;
-  const aliasAfterId = aliasPagination.filterKey === aliasFilterKey
-    ? aliasPagination.cursors[aliasOffset]
-    : undefined;
   const [batchProvider, setBatchProvider] = useState<
     "does_the_dog_die" | "wikidata"
   >("does_the_dog_die");
@@ -1084,12 +1094,6 @@ function ContentTab({
     const t = setTimeout(() => setDebouncedQ(q), 400);
     return () => clearTimeout(t);
   }, [q]);
-
-  React.useEffect(() => {
-    setAliasPagination((current) => current.filterKey === aliasFilterKey
-      ? current
-      : { filterKey: aliasFilterKey, offset: 0, cursors: { 0: undefined } });
-  }, [aliasFilterKey]);
 
   const {
     data: content,
@@ -1121,25 +1125,8 @@ function ContentTab({
       ...(debouncedQ ? { q: debouncedQ } : {}),
       ...(aliasOwnership !== "all" ? { ownership: aliasOwnership } : {}),
       limit: aliasPageSize,
-      ...(aliasAfterId !== undefined ? { afterId: aliasAfterId } : {}),
+      ...(aliasCursor ? { cursor: aliasCursor } : {}),
     });
-  const changeAliasPage = (offset: number) => {
-    setAliasPagination((current) => {
-      const base = current.filterKey === aliasFilterKey
-        ? current
-        : { filterKey: aliasFilterKey, offset: 0, cursors: { 0: undefined } };
-      if (offset > aliasOffset) {
-        const nextAfterId = aliasesPage?.nextAfterId;
-        if (nextAfterId == null) return base;
-        return {
-          ...base,
-          offset,
-          cursors: { ...base.cursors, [offset]: nextAfterId },
-        };
-      }
-      return { ...base, offset };
-    });
-  };
   const linkedAliasQuery = useListAdminContentAliases(
     { id: aliasId ?? undefined },
     {
@@ -1890,10 +1877,11 @@ function ContentTab({
         q={debouncedQ}
         getToken={getToken}
         aliasTotal={aliasesPage?.total}
-        aliasPageSize={aliasPageSize}
-        aliasOffset={aliasOffset}
-        nextAliasCursor={aliasesPage?.nextAfterId}
-        onAliasPageChange={changeAliasPage}
+        aliasPage={aliasPage}
+        nextAliasCursor={aliasesPage?.nextCursor}
+        previousAliasCursor={aliasesPage?.previousCursor}
+        onAliasPageChange={onAliasPageChange}
+        hasAliasCursor={aliasCursor !== null}
         isLoading={aliasesLoading}
         isError={aliasesError}
         isFetching={aliasesFetching}
@@ -1916,10 +1904,11 @@ export function AliasReview({
   q = "",
   getToken = async () => null,
   aliasTotal = aliases?.length ?? 0,
-  aliasPageSize = 50,
-  aliasOffset = 0,
+  aliasPage = 1,
   nextAliasCursor,
+  previousAliasCursor,
   onAliasPageChange = () => {},
+  hasAliasCursor = false,
   isLoading,
   isError,
   isFetching,
@@ -1937,10 +1926,11 @@ export function AliasReview({
   q?: string;
   getToken?: () => Promise<string | null>;
   aliasTotal?: number;
-  aliasPageSize?: number;
-  aliasOffset?: number;
-  nextAliasCursor?: number | null;
-  onAliasPageChange?: (offset: number) => void;
+  aliasPage?: number;
+  nextAliasCursor?: string | null;
+  previousAliasCursor?: string | null;
+  onAliasPageChange?: (page: number, cursor: string | null) => void;
+  hasAliasCursor?: boolean;
   isLoading: boolean;
   isError: boolean;
   isFetching: boolean;
@@ -1998,7 +1988,6 @@ export function AliasReview({
     aliasTotal -
       (aliases?.filter((alias) => removedAliasIds.has(alias.id)).length ?? 0),
   );
-  const aliasPageNumber = Math.floor(aliasOffset / aliasPageSize) + 1;
   const copyAliasLink = async (alias: AdminContentAlias) => {
     if (!reviewUrl) return;
     try {
@@ -2638,6 +2627,16 @@ export function AliasReview({
           <p className="mt-1 text-sm text-muted-foreground">
             The alternate-title request failed. Try again to review these aliases.
           </p>
+          {hasAliasCursor && (
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3 mr-2 rounded-xl"
+              onClick={() => onAliasPageChange(1, null)}
+            >
+              Restart alternate-title review
+            </Button>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -2842,21 +2841,25 @@ export function AliasReview({
           </table>
         </div>
       )}
-      {(aliasOffset > 0 || nextAliasCursor != null) && (
+      {(aliasPage > 1 || nextAliasCursor != null) && (
         <nav
           aria-label="Alternate title pages"
           className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
         >
           <p role="status" className="text-sm text-muted-foreground">
-            Page {aliasPageNumber} · {visibleAliasTotal} matching aliases
+            Page {aliasPage} · {visibleAliasTotal} matching aliases
           </p>
           <div className="flex items-center gap-2">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => onAliasPageChange(Math.max(0, aliasOffset - aliasPageSize))}
-              disabled={aliasOffset === 0}
+              onClick={() => {
+                if (previousAliasCursor != null) {
+                  onAliasPageChange(Math.max(1, aliasPage - 1), previousAliasCursor);
+                }
+              }}
+              disabled={previousAliasCursor == null}
             >
               Previous aliases
             </Button>
@@ -2864,7 +2867,11 @@ export function AliasReview({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => onAliasPageChange(aliasOffset + aliasPageSize)}
+              onClick={() => {
+                if (nextAliasCursor != null) {
+                  onAliasPageChange(aliasPage + 1, nextAliasCursor);
+                }
+              }}
               disabled={nextAliasCursor == null}
             >
               Next aliases

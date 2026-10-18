@@ -124,6 +124,115 @@ it("restores a shared alias ownership filter and clears it without losing search
   }
 });
 
+it("restores the saved alias page and keeps its cursor with the saved filters", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=2&aliasCursor=after-149",
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") throw new Error(`Unexpected request: ${url}`);
+    requests.push(url);
+    return new Response(JSON.stringify({
+      items: [{
+        id: 150,
+        titleId: 101,
+        titleName: "The Lighthouse",
+        titleType: "movie",
+        titleYear: 2019,
+        alias: "Lighthouse resumed page alias",
+        language: "fr",
+        sourceName: "Editorial",
+        sourceUrl: null,
+        isEditorial: true,
+        collision: false,
+        collisionTitleCount: 1,
+        updatedAt: "2026-09-16T00:00:00.000Z",
+      }],
+      total: 51,
+      limit: 50,
+      offset: 0,
+      nextCursor: null,
+      previousCursor: "before-150",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 51 matching aliases");
+    await expect.element(page.getByText("Lighthouse resumed page alias")).toBeVisible();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("after-149");
+    expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("restarts from page one when a saved alias continuation is invalid or stale", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=4&aliasCursor=stale-cursor",
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") throw new Error(`Unexpected request: ${url}`);
+    requests.push(url);
+    const cursor = url.searchParams.get("cursor");
+    if (cursor) {
+      return new Response(JSON.stringify({ error: "Invalid or stale alias continuation" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+      nextCursor: null,
+      previousCursor: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load alternate titles.");
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("stale-cursor");
+    await userEvent.click(page.getByRole("button", { name: "Restart alternate-title review" }));
+    await expect.element(page.getByText("No alternate titles found")).toBeVisible();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBeNull();
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBeNull();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("keeps filtered alias continuation stable when matching records change between pages", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial");
@@ -153,7 +262,8 @@ it("keeps filtered alias continuation stable when matching records change betwee
     const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
     if (url.pathname !== "/api/admin/content-aliases") throw new Error(`Unexpected request: ${url}`);
     requests.push(url);
-    if (url.searchParams.get("afterId") === "149" && !changedDuringReview) {
+    const cursor = url.searchParams.get("cursor");
+    if (cursor === "after-149" && !changedDuringReview) {
       changedDuringReview = true;
       liveAliases = [
         makeAlias(50, "Lighthouse inserted before this cursor"),
@@ -162,8 +272,9 @@ it("keeps filtered alias continuation stable when matching records change betwee
         makeAlias(151, "Lighthouse inserted after this cursor"),
       ];
     }
-    const afterId = Number(url.searchParams.get("afterId") ?? 0);
-    const matching = liveAliases.filter((alias) => alias.id > afterId);
+    const matching = cursor === "before-150"
+      ? liveAliases.filter((alias) => alias.id < 150).slice(-50)
+      : liveAliases.filter((alias) => alias.id > (cursor === "after-149" ? 149 : 0));
     const items = matching.slice(0, 50).map((alias) => ({
       ...alias,
       isEditorial: url.searchParams.get("ownership") !== "provider",
@@ -173,7 +284,14 @@ it("keeps filtered alias continuation stable when matching records change betwee
       total: liveAliases.length,
       limit: 50,
       offset: 0,
-      nextAfterId: matching.length > items.length ? items.at(-1)?.id ?? null : null,
+      nextCursor: cursor === "before-150"
+        ? `after-${items.at(-1)?.id}`
+        : matching.length > items.length
+          ? `after-${items.at(-1)?.id}`
+          : null,
+      previousCursor: cursor === "after-149" && items.length
+        ? `before-${items[0].id}`
+        : null,
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
 
@@ -184,7 +302,7 @@ it("keeps filtered alias continuation stable when matching records change betwee
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
     await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 51 matching aliases");
-    expect(requests.at(-1)?.searchParams.get("afterId")).toBeNull();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
     expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
     await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 52 matching aliases");
@@ -193,15 +311,17 @@ it("keeps filtered alias continuation stable when matching records change betwee
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
     expect(requests.at(-1)?.searchParams.get("limit")).toBe("50");
-    expect(requests.at(-1)?.searchParams.get("afterId")).toBe("149");
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("after-149");
     expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe("after-149");
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
 
     await userEvent.click(page.getByRole("button", { name: "Previous aliases" }));
     await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 52 matching aliases");
     await expect.element(page.getByText("Lighthouse inserted before this cursor")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
-    expect(requests.at(-1)?.searchParams.get("afterId")).toBeNull();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
     expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
 
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
@@ -213,7 +333,7 @@ it("keeps filtered alias continuation stable when matching records change betwee
     await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 52 matching aliases");
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("provider");
-    expect(requests.at(-1)?.searchParams.get("afterId")).toBeNull();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
   } finally {
     root.unmount();
     container.remove();
@@ -260,7 +380,8 @@ it("keeps the selected alias page when an older page response finishes late", as
     total: 2,
     limit: 50,
     offset: 0,
-    nextAfterId: 401,
+    nextCursor: "after-401",
+    previousCursor: null,
   };
   const responseFor = (body: typeof firstPage) => new Response(JSON.stringify(body), {
     status: 200,
@@ -272,12 +393,13 @@ it("keeps the selected alias page when an older page response finishes late", as
       throw new Error(`Unexpected browser test request: ${url}`);
     }
     requests.push(url);
-    if (url.searchParams.get("afterId") === "401") {
+    if (url.searchParams.get("cursor") === "after-401") {
       return Promise.resolve(responseFor({
         ...firstPage,
         items: [makeAlias(402, "Second page alias")],
         offset: 50,
-        nextAfterId: null,
+        nextCursor: null,
+        previousCursor: "before-402",
       }));
     }
     markOlderPageRequested();
@@ -300,7 +422,7 @@ it("keeps the selected alias page when an older page response finishes late", as
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
     await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 2 matching aliases");
     await expect.element(page.getByText("Second page alias")).toBeVisible();
-    expect(requests.at(-1)?.searchParams.get("afterId")).toBe("401");
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("after-401");
 
     resolveOlderPage(responseFor(firstPage));
     await olderPageCompleted;

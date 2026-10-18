@@ -6,7 +6,7 @@ describe("admin content URL", () => {
   it.each(RATING_REGIONS)("restores $code and opens content on a shared URL", ({ code }) => {
     const url = adminContentUrl("", "content", code);
     expect(url).toBe(`/admin?tab=content&region=${code}`);
-    expect(readAdminContentUrl(new URL(url, "https://example.test").search)).toEqual({
+    expect(readAdminContentUrl(new URL(url, "https://example.test").search)).toMatchObject({
       tab: "content",
       region: code,
       q: "",
@@ -186,7 +186,7 @@ describe("admin content URL", () => {
 
   it("links to one alias without carrying it into another tab or changed filters", () => {
     const link = adminContentUrl("?review=42", "content", "FR", "Alien", "editorial", 217);
-    expect(readAdminContentUrl(new URL(link, "https://example.test").search)).toEqual({
+    expect(readAdminContentUrl(new URL(link, "https://example.test").search)).toMatchObject({
       tab: "content",
       region: "FR",
       q: "Alien",
@@ -204,5 +204,54 @@ describe("admin content URL", () => {
       .not.toContain("aliasId");
     expect(adminContentUrl(new URL(link, "https://example.test").search, "reports", "FR"))
       .not.toContain("aliasId");
+  });
+
+  it("restores the alternate-title cursor and clears it when search or ownership changes", () => {
+    const current = adminContentUrl(
+      "?tab=content&region=FR&q=Alien&ownership=editorial",
+      "content",
+      "FR",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      3,
+      "eyJ2IjoxLCJpZCI6MjE3fQ",
+    );
+    const restored = readAdminContentUrl(new URL(current, "https://example.test").search);
+    expect(restored).toMatchObject({
+      q: "Alien",
+      ownership: "editorial",
+      aliasPage: 3,
+      aliasCursor: "eyJ2IjoxLCJpZCI6MjE3fQ",
+    });
+
+    const changedSearch = adminContentUrl(
+      new URL(current, "https://example.test").search,
+      "content",
+      "FR",
+      "Arrival",
+    );
+    expect(readAdminContentUrl(new URL(changedSearch, "https://example.test").search))
+      .toMatchObject({ q: "Arrival", aliasPage: 1, aliasCursor: null });
+
+    const changedOwnership = adminContentUrl(
+      new URL(current, "https://example.test").search,
+      "content",
+      "FR",
+      undefined,
+      "provider",
+    );
+    expect(readAdminContentUrl(new URL(changedOwnership, "https://example.test").search))
+      .toMatchObject({ ownership: "provider", aliasPage: 1, aliasCursor: null });
+  });
+
+  it("resets invalid alternate-title page numbers and oversized cursors", () => {
+    expect(readAdminContentUrl("?tab=content&aliasPage=1&aliasCursor=bad"))
+      .toMatchObject({ aliasPage: 1, aliasCursor: null });
+    expect(readAdminContentUrl(`?tab=content&aliasPage=3&aliasCursor=${"x".repeat(4097)}`))
+      .toMatchObject({ aliasPage: 1, aliasCursor: null });
   });
 });

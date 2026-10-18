@@ -1208,6 +1208,7 @@ export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseIt
 export const listAdminContentAliasesQueryLimitDefault = 50;
 export const listAdminContentAliasesQueryLimitMax = 100;
 
+export const listAdminContentAliasesQueryCursorMax = 4096;
 
 export const listAdminContentAliasesQueryOffsetDefault = 0;
 export const listAdminContentAliasesQueryOffsetMin = 0;
@@ -1219,8 +1220,8 @@ export const ListAdminContentAliasesQueryParams = zod.object({
   "ownership": zod.enum(['provider', 'editorial']).optional().describe('Filter aliases by their source ownership'),
   "id": zod.coerce.number().int().min(1).optional().describe('Find one alias by record ID regardless of search or ownership filters'),
   "limit": zod.coerce.number().int().min(1).max(listAdminContentAliasesQueryLimitMax).default(listAdminContentAliasesQueryLimitDefault).describe('Maximum number of aliases to return'),
-  "afterId": zod.coerce.number().int().min(1).optional().describe('Return aliases with a greater record ID, preserving continuation when alias text changes'),
-  "offset": zod.coerce.number().int().min(listAdminContentAliasesQueryOffsetMin).default(listAdminContentAliasesQueryOffsetDefault).describe('Legacy page offset; cursor-based clients should use afterId')
+  "cursor": zod.coerce.string().min(1).max(listAdminContentAliasesQueryCursorMax).optional().describe('Filter-bound continuation token returned by the preceding page'),
+  "offset": zod.coerce.number().int().min(listAdminContentAliasesQueryOffsetMin).default(listAdminContentAliasesQueryOffsetDefault).describe('Legacy page offset; cursor-based clients should use cursor')
 })
 
 export const listAdminContentAliasesResponseTotalMin = 0;
@@ -1228,7 +1229,6 @@ export const listAdminContentAliasesResponseTotalMin = 0;
 export const listAdminContentAliasesResponseLimitMax = 100;
 
 export const listAdminContentAliasesResponseOffsetMin = 0;
-
 
 
 
@@ -1256,7 +1256,8 @@ export const ListAdminContentAliasesResponse = zod.object({
   "total": zod.int().min(listAdminContentAliasesResponseTotalMin),
   "limit": zod.int().min(1).max(listAdminContentAliasesResponseLimitMax),
   "offset": zod.int().min(listAdminContentAliasesResponseOffsetMin),
-  "nextAfterId": zod.int().min(1).nullable()
+  "nextCursor": zod.string().nullable(),
+  "previousCursor": zod.string().nullable()
 })
 
 
