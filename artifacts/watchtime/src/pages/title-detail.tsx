@@ -14,6 +14,7 @@ import {
   useCreateSafetyContribution,
   useCreateSafetyReport,
   getGetSeasonQueryKey,
+  getGetMyRecentActivityQueryKey,
   getGetTitleSafetyQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -497,6 +498,7 @@ export default function TitleDetailPage() {
                                     const action = checked ? "mark" : "unmark";
                                     const onSuccess = () => {
                                       invalidateSeason(season.seasonNumber);
+                                      queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
                                       trackEvent("episode_watch_changed", {
                                         action,
                                         title_id: titleId,

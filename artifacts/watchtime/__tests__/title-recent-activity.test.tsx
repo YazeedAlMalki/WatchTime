@@ -1,0 +1,146 @@
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";
+import { getGetMyRecentActivityQueryKey } from "@workspace/api-client-react";
+import TitleDetailPage from "../src/pages/title-detail";
+import MyShowsPage from "../src/pages/my-shows";
+
+const server = vi.hoisted(() => ({
+  watched: false,
+  activityFetch: vi.fn(),
+  mark: vi.fn(),
+  unmark: vi.fn(),
+}));
+const activity = () => server.watched ? [{
+  titleId: 42, titleName: "Example Show", kind: "episode",
+  episodeLabel: "S1E1 — Pilot", watchedAt: "2026-10-18T00:00:00.000Z",
+}] : [];
+
+vi.mock("wouter", () => ({
+  useParams: () => ({ id: "42" }),
+  Link: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
+}));
+vi.mock("@clerk/react", () => ({
+  useUser: () => ({ isSignedIn: true }),
+  Show: ({ when, children }: { when: string; children: React.ReactNode }) =>
+    when === "signed-in" ? children : null,
+}));
+vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
+vi.mock("@/lib/analytics", () => ({ trackEvent: vi.fn() }));
+vi.mock("@workspace/api-client-react", async (importOriginal) => {
+  const api = await importOriginal<typeof import("@workspace/api-client-react")>();
+  return {
+    ...api,
+    useGetTitle: () => ({
+      data: {
+        id: 42, name: "Example Show", type: "series", genres: [], providers: [],
+        altTitles: [], seasons: [{ seasonNumber: 1, name: "Season 1", episodeCount: 1 }],
+      },
+      isLoading: false,
+    }),
+    useGetTitleSafety: () => ({ data: null, isLoading: false }),
+    useGetSimilarTitles: () => ({ data: [] }),
+    useGetSeason: (id: number, season: number, options: { query: { enabled: boolean } }) =>
+      useQuery({
+        queryKey: api.getGetSeasonQueryKey(id, season),
+        enabled: options.query.enabled,
+        queryFn: async () => ({ episodes: [{
+          id: 101, episodeNumber: 1, name: "Pilot", watched: server.watched,
+        }] }),
+      }),
+    useMarkEpisodeWatched: () => useMutation({
+      mutationFn: async (request: unknown) => {
+        server.mark(request);
+        server.watched = true;
+        return { ok: true };
+      },
+    }),
+    useUnmarkEpisodeWatched: () => useMutation({
+      mutationFn: async (request: unknown) => {
+        server.unmark(request);
+        server.watched = false;
+        return { ok: true };
+      },
+    }),
+    getMyShows: async () => [],
+    getMyInProgressShows: async () => [],
+    getMyMovies: async () => [],
+    useGetMyRecentActivity: () => useQuery({
+      queryKey: api.getGetMyRecentActivityQueryKey(),
+      queryFn: async () => {
+        server.activityFetch();
+        return activity();
+      },
+    }),
+  };
+});
+
+async function until(assertion: () => void) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    try { assertion(); return; } catch (error) {
+      if (attempt === 49) throw error;
+    }
+  }
+}
+
+afterEach(() => vi.clearAllMocks());
+
+it.each([false, true])("refreshes cached web History when initially watched is %s", async (initiallyWatched) => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  server.watched = initiallyWatched;
+  const client = new QueryClient({
+    defaultOptions: { queries: { staleTime: Infinity, retry: false }, mutations: { retry: false } },
+  });
+  const key = getGetMyRecentActivityQueryKey();
+  client.setQueryData(key, activity());
+  const oldActivity = client.getQueryData(key);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={client}><TitleDetailPage /></QueryClientProvider>,
+    ));
+    const season = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find(button => button.textContent?.includes("Season 1"))!;
+    expect(season).toBeTruthy();
+    await act(async () => season.click());
+    await until(() => expect(container.querySelector('[role="checkbox"]')).not.toBeNull());
+    await act(async () => (container.querySelector('[role="checkbox"]') as HTMLButtonElement).click());
+    await until(() => {
+      expect(server.watched).toBe(!initiallyWatched);
+      expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    });
+    expect(initiallyWatched ? server.unmark : server.mark).toHaveBeenCalledWith(
+      initiallyWatched ? { episodeId: 101 } : { episodeId: 101, data: { includePrevious: false } },
+    );
+    expect(server.activityFetch).not.toHaveBeenCalled();
+    expect(client.getQueryData(key)).toEqual(oldActivity);
+
+    await act(async () => root.render(
+      <QueryClientProvider client={client}><MyShowsPage /></QueryClientProvider>,
+    ));
+    await until(() => {
+      expect(server.activityFetch).toHaveBeenCalledTimes(1);
+      expect(client.getQueryData(key)).toEqual(activity());
+    });
+    const history = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find(tab => tab.textContent === "History")!;
+    await act(async () => history.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })));
+    await until(() => {
+      if (initiallyWatched) {
+        expect(container.textContent).toContain("No recent activity.");
+        expect(container.textContent).not.toContain("S1E1 — Pilot");
+      } else {
+        expect(container.textContent).toContain("S1E1 — Pilot");
+        expect(container.textContent).not.toContain("No recent activity.");
+      }
+    });
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    client.clear();
+  }
+});
