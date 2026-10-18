@@ -179,6 +179,16 @@ function SeasonRows({ season }: { season: number }) {
   );
 }
 
+function deferredMarkResponse() {
+  let resolve!: (response: { ok: boolean }) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<{ ok: boolean }>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 it('keeps Up Next unchanged on failure and refreshes collection, history, and title caches after retry', async () => {
   mockWatched.clear();
   mockWatched.add(101);
@@ -253,7 +263,7 @@ it('keeps Up Next unchanged on failure and refreshes collection, history, and ti
   const invalidate = jest.spyOn(client, 'invalidateQueries');
   mockMarkRequest.mockRejectedValueOnce(new Error('Network unavailable'));
   const stopPropagation = jest.fn();
-  fireEvent.press(shows.getByTestId('mark-watched-201'), { stopPropagation });
+  await fireEvent.press(shows.getByTestId('mark-watched-201'), { stopPropagation });
   await waitFor(() => {
     expect(shows.getByRole('alert').props.children).toBe(
       "Couldn't mark this episode as watched. Please try again.",
@@ -271,7 +281,45 @@ it('keeps Up Next unchanged on failure and refreshes collection, history, and ti
   expect(invalidate).not.toHaveBeenCalled();
   expect(mockMarkRequest).toHaveBeenCalledTimes(1);
 
-  fireEvent.press(shows.getByTestId('mark-watched-201'));
+  const expectPendingRetry = async (requestCount: number) => {
+    await waitFor(() => {
+      expect(shows.getByTestId('mark-watched-201')).toBeDisabled();
+      expect(shows.queryByRole('alert')).toBeNull();
+      expect(shows.queryByText('Retry')).toBeNull();
+      expect(mockMarkRequest).toHaveBeenCalledTimes(requestCount);
+    });
+    await fireEvent.press(shows.getByTestId('mark-watched-201'));
+    await fireEvent.press(shows.getByTestId('mark-watched-201'));
+    expect(mockMarkRequest).toHaveBeenCalledTimes(requestCount);
+    expect([...mockWatched].sort()).toEqual([101, 102]);
+    expect(shows.getByText('2 / 4 episodes')).toBeTruthy();
+    expect(shows.getByText('S2 E1 · Third')).toBeTruthy();
+    expect(shows.queryByTestId('mark-watched-202')).toBeNull();
+    expect(api.getMyShows.mock.calls.length).toBe(showsFetchesBeforeWatch);
+    expect(mockRecentActivityFetch.mock.calls.length).toBe(historyFetchesBeforeWatch);
+    expect(invalidate).not.toHaveBeenCalled();
+  };
+
+  const failedRetry = deferredMarkResponse();
+  mockMarkRequest.mockImplementationOnce(() => failedRetry.promise);
+  await fireEvent.press(shows.getByTestId('mark-watched-201'));
+  await expectPendingRetry(2);
+  await act(async () => failedRetry.reject(new Error('Still offline')));
+  await waitFor(() => {
+    expect(shows.getByTestId('mark-watched-201')).toBeEnabled();
+    expect(shows.getByRole('alert').props.children).toBe(
+      "Couldn't mark this episode as watched. Please try again.",
+    );
+    expect(shows.getByText('Retry')).toBeTruthy();
+  });
+  expect([...mockWatched].sort()).toEqual([101, 102]);
+  expect(invalidate).not.toHaveBeenCalled();
+
+  const successfulRetry = deferredMarkResponse();
+  mockMarkRequest.mockImplementationOnce(() => successfulRetry.promise);
+  await fireEvent.press(shows.getByTestId('mark-watched-201'));
+  await expectPendingRetry(3);
+  await act(async () => successfulRetry.resolve({ ok: true }));
   await waitFor(() => {
     expect([...mockWatched].sort()).toEqual([101, 102, 201]);
     expect(api.getMyShows.mock.calls.length).toBeGreaterThan(showsFetchesBeforeWatch);
@@ -282,13 +330,17 @@ it('keeps Up Next unchanged on failure and refreshes collection, history, and ti
     expect(client.getQueryState(getGetSeasonQueryKey(42, 1))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetSeasonQueryKey(42, 2))?.isInvalidated).toBe(true);
   });
-  expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+  expect(mockMarkRequest).toHaveBeenCalledTimes(3);
   expect(mockMarkRequest).toHaveBeenNthCalledWith(1, {
     episodeId: 201, data: { includePrevious: true },
   });
   expect(mockMarkRequest).toHaveBeenNthCalledWith(2, {
     episodeId: 201, data: { includePrevious: true },
   });
+  expect(mockMarkRequest).toHaveBeenNthCalledWith(3, {
+    episodeId: 201, data: { includePrevious: true },
+  });
+  expect(shows.getByTestId('mark-watched-202')).toBeEnabled();
   expect(shows.queryByRole('alert')).toBeNull();
   expect(shows.queryByText('Retry')).toBeNull();
   expect(client.getQueryState(getGetSeasonQueryKey(420, 1))?.isInvalidated).toBe(false);
