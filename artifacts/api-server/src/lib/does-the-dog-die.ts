@@ -380,11 +380,20 @@ async function updateIntegrationHealth(values: {
     }
     refreshAttempts += 1;
     if (values.refreshSucceeded) successfulRefreshes += 1;
+    // Use the refresh start time as the authority for current health so a
+    // slower older request cannot overwrite a newer refresh that has persisted.
+    // Equal timestamps keep the first persisted status because their order is
+    // otherwise ambiguous.
+    const isLatestRefresh = !existing?.lastSyncAt || values.lastSyncAt > existing.lastSyncAt;
+    const isLatestSuccess = values.lastSuccessAt
+      && (!existing?.lastSuccessAt || values.lastSuccessAt > existing.lastSuccessAt);
     const healthValues = {
-      status: values.status,
-      lastSyncAt: values.lastSyncAt,
-      ...(values.lastSuccessAt ? { lastSuccessAt: values.lastSuccessAt } : {}),
-      lastError: values.lastError,
+      ...(isLatestRefresh ? {
+        status: values.status,
+        lastSyncAt: values.lastSyncAt,
+        lastError: values.lastError,
+      } : {}),
+      ...(isLatestSuccess ? { lastSuccessAt: values.lastSuccessAt } : {}),
       refreshAttempts,
       successfulRefreshes,
       successRatePercent: (successfulRefreshes / refreshAttempts) * 100,

@@ -302,6 +302,71 @@ describe("Does the Dog Die refresh persistence", () => {
     expect(afterRecovery.successRatePercent).toBeCloseTo((2 / 3) * 100);
   });
 
+  it("keeps health from a newer refresh when an older failed check finishes late", async () => {
+    let releaseOlderSearch!: () => void;
+    let signalOlderSearchStarted!: () => void;
+    const olderSearchGate = new Promise<void>((resolve) => {
+      releaseOlderSearch = resolve;
+    });
+    const olderSearchStarted = new Promise<void>((resolve) => {
+      signalOlderSearchStarted = resolve;
+    });
+    let olderRefresh: ReturnType<typeof refreshDoesTheDogDieTitle> | undefined;
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      await db.delete(integrationHealthTable).where(eq(integrationHealthTable.provider, provider));
+
+      olderRefresh = refreshDoesTheDogDieTitle(titleId, {
+        searchItems: async () => {
+          signalOlderSearchStarted();
+          await olderSearchGate;
+          throw new DoesTheDogDieError("late older failure", "rate_limited", 429);
+        },
+        getItem: async () => {
+          throw new Error("should not fetch details after search fails");
+        },
+      });
+      await olderSearchStarted;
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+      await expect(refreshDoesTheDogDieTitle(titleId, {
+        searchItems: async () => [item({ id: 10752 })],
+        getItem: async () => ({
+          ...item({ id: 10752 }),
+          topicItemStats: [],
+        }),
+      })).resolves.toMatchObject({ ok: true });
+      const [afterNewerRefresh] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, provider));
+      expect(afterNewerRefresh.lastSyncAt).toEqual(new Date("2026-01-01T00:00:01.000Z"));
+      expect(afterNewerRefresh.lastSuccessAt).toEqual(new Date("2026-01-01T00:00:01.000Z"));
+
+      releaseOlderSearch();
+      await expect(olderRefresh).resolves.toMatchObject({
+        ok: false,
+        error: "late older failure",
+      });
+
+      const [afterOlderRefresh] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, provider));
+      expect(afterOlderRefresh).toMatchObject({
+        status: "healthy",
+        lastError: null,
+        refreshAttempts: 2,
+        successfulRefreshes: 1,
+        successRatePercent: 50,
+      });
+      expect(afterOlderRefresh.lastSyncAt).toEqual(afterNewerRefresh.lastSyncAt);
+      expect(afterOlderRefresh.lastSuccessAt).toEqual(afterNewerRefresh.lastSuccessAt);
+    } finally {
+      releaseOlderSearch();
+      if (olderRefresh) await olderRefresh.catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps attempt counters bounded while preserving their success ratio", async () => {
     await db.update(integrationHealthTable)
       .set({
