@@ -208,7 +208,7 @@ describe("private, idempotent watch-history imports", () => {
   });
 
   it.each([
-    { name: "keeps a reviewed regional match after a refresh moves its alias to another title", freshImport: false },
+    { name: "keeps shared regional episode titles ambiguous and preserves reviewed matches after alias refresh", freshImport: false },
     { name: "matches a fresh regional import to the current alias owner after a refresh", freshImport: true },
   ])("$name", async ({ freshImport }) => {
     // Catalog-refresh scenarios must not consume the quota of later import tests.
@@ -266,9 +266,7 @@ describe("private, idempotent watch-history imports", () => {
         externals: { imdb: fixture.expectedImdbId },
         _embedded: {
           cast: [],
-          episodes: fixture.tvmazeId === 990091
-            ? [{ season: 2, number: 3, name: "Regional fixture episode", airdate: "2020-02-03" }]
-            : [],
+          episodes: [{ season: 2, number: 3, name: "Regional fixture episode", airdate: "2020-02-03" }],
         },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }));
@@ -298,6 +296,13 @@ describe("private, idempotent watch-history imports", () => {
         eq(episodesTable.episodeNumber, 3),
       ));
       expect(regionalEpisode).toBeDefined();
+      const matchingEpisodes = await db.select().from(episodesTable).where(and(
+        inArray(episodesTable.titleId, [primaryId, secondaryId]),
+        eq(episodesTable.seasonNumber, 2),
+        eq(episodesTable.episodeNumber, 3),
+      ));
+      expect(matchingEpisodes.map((episode) => episode.titleId).sort((a, b) => a - b))
+        .toEqual([primaryId, secondaryId].sort((a, b) => a - b));
 
       const created = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
         source: "generic",
@@ -307,11 +312,13 @@ describe("private, idempotent watch-history imports", () => {
           "watchlist,地域限定タイトル,tv,2020,,",
           "watchlist,共通タイトル,tv,2020,,",
           "watched_episode,地域限定タイトル,tv,2020,2,3",
+          "watched_episode,共通タイトル,tv,2020,2,3",
         ].join("\n"),
       });
       expect(created.status).toBe(201);
       importId = created.body.id;
       expect(created.body.summary.matched).toBe(2);
+      expect(created.body.summary.ambiguous).toBe(2);
       expect(created.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId, selected: true });
       expect(created.body.items[1]).toMatchObject({
         classification: "ambiguous",
@@ -328,6 +335,22 @@ describe("private, idempotent watch-history imports", () => {
         episodeId: regionalEpisode.id,
         selected: true,
       });
+      const ambiguousEpisode = {
+        kind: "watched_episode",
+        classification: "ambiguous",
+        titleId: null,
+        episodeId: null,
+        selected: false,
+        errorCode: "multiple_titles",
+      };
+      expect(created.body.items[3]).toMatchObject(ambiguousEpisode);
+      expect(created.body.items[3].candidates.map((candidate: { titleId: number }) => candidate.titleId).sort((a: number, b: number) => a - b))
+        .toEqual([primaryId, secondaryId].sort((a, b) => a - b));
+      const previewHistory = await db.select().from(watchedEpisodesTable).where(and(
+        eq(watchedEpisodesTable.userId, USER_A),
+        inArray(watchedEpisodesTable.titleId, [primaryId, secondaryId]),
+      ));
+      expect(previewHistory).toHaveLength(0);
 
       // The source now assigns the import's original regional name to a different
       // title. Confirmation must honor the title IDs selected at preview time.
@@ -349,8 +372,11 @@ describe("private, idempotent watch-history imports", () => {
         .toEqual([secondaryId]);
       const persistedPreview = await supertest(app).get(`/api/imports/${importId}`).set("x-test-user", USER_A);
       expect(persistedPreview.status).toBe(200);
+      // Database reads do not guarantee the original CSV row order.
+      persistedPreview.body.items.sort((a: { rowNumber: number }, b: { rowNumber: number }) => a.rowNumber - b.rowNumber);
       expect(persistedPreview.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId, selected: true });
       expect(persistedPreview.body.items[2]).toMatchObject({ classification: "matched", titleId: primaryId, episodeId: regionalEpisode.id, selected: true });
+      expect(persistedPreview.body.items[3]).toMatchObject(ambiguousEpisode);
 
       if (freshImport) {
         // Different content creates a new job for the same user instead of
@@ -396,9 +422,11 @@ describe("private, idempotent watch-history imports", () => {
 
       const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
       expect(confirmed.status).toBe(200);
-      expect(confirmed.body.summary).toMatchObject({ selected: 2, applied: 2 });
+      confirmed.body.items.sort((a: { rowNumber: number }, b: { rowNumber: number }) => a.rowNumber - b.rowNumber);
+      expect(confirmed.body.summary).toMatchObject({ selected: 2, applied: 2, skipped: 2, ambiguous: 2 });
       expect(confirmed.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId });
       expect(confirmed.body.items[2]).toMatchObject({ classification: "matched", titleId: primaryId, episodeId: regionalEpisode.id });
+      expect(confirmed.body.items[3]).toMatchObject(ambiguousEpisode);
       const tracked = await db.select().from(watchlistTable).where(and(
         eq(watchlistTable.userId, USER_A),
         inArray(watchlistTable.titleId, [primaryId, secondaryId]),
@@ -408,7 +436,8 @@ describe("private, idempotent watch-history imports", () => {
         eq(watchedEpisodesTable.userId, USER_A),
         inArray(watchedEpisodesTable.titleId, [primaryId, secondaryId]),
       ));
-      expect(watched).toMatchObject([{ titleId: primaryId, episodeId: regionalEpisode.id }]);
+      expect(watched).toHaveLength(1);
+      expect(watched[0]).toMatchObject({ titleId: primaryId, episodeId: regionalEpisode.id });
     } finally {
       vi.unstubAllGlobals();
       await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
