@@ -1565,7 +1565,14 @@ describe("admin alternate-title review", () => {
     },
   );
 
-  it("removes an alias from the refreshed table after a failed removal refresh is retried", async () => {
+  it("keeps multiple removed aliases hidden until a failed removal refresh is retried", async () => {
+    const secondAlias: AdminContentAlias = {
+      ...initialAlias,
+      id: 19,
+      alias: "Second Shared Local Title",
+      sourceUrl: "https://example.test/source-two",
+    };
+    const initialAliases = [initialAlias, secondAlias];
     const latestServerAliases: AdminContentAlias[] = [
       {
         ...initialAlias,
@@ -1577,7 +1584,7 @@ describe("admin alternate-title review", () => {
     ];
     let updateServerAliases!: (aliases: AdminContentAlias[]) => void;
     function ReviewWithServerData() {
-      const [aliases, setAliases] = React.useState([initialAlias]);
+      const [aliases, setAliases] = React.useState(initialAliases);
       updateServerAliases = setAliases;
       return (
         <AliasReview
@@ -1596,7 +1603,7 @@ describe("admin alternate-title review", () => {
       ({ queryKey }: { queryKey: string[] }) => {
         if (queryKey[0] === "/api/admin/content-aliases") {
           aliasRefreshCount += 1;
-          if (aliasRefreshCount === 1) {
+          if (aliasRefreshCount <= 2) {
             return Promise.reject(new Error("Alias refresh unavailable"));
           }
           updateServerAliases(latestServerAliases);
@@ -1607,13 +1614,31 @@ describe("admin alternate-title review", () => {
     act(() => root.render(<ReviewWithServerData />));
     confirmSpy.mockReturnValue(true);
 
-    act(() => button(container, "Remove").click());
+    const removeAliasButton = (aliasName: string) => {
+      const row = Array.from(container.querySelectorAll("tbody tr")).find(
+        (candidate) => candidate.textContent?.includes(aliasName),
+      );
+      const removeButton = row
+        ? Array.from(row.querySelectorAll("button")).find(
+            (candidate) => candidate.textContent?.trim() === "Remove",
+          )
+        : undefined;
+      if (!removeButton) {
+        throw new Error(`Remove button not found for ${aliasName}`);
+      }
+      return removeButton;
+    };
+
+    act(() => removeAliasButton(initialAlias.alias).click());
+    await flushEffects();
+    act(() => removeAliasButton(secondAlias.alias).click());
     await flushEffects();
 
-    expect(mocks.queryClient.setQueriesData).toHaveBeenCalledWith(
-      { queryKey: ["/api/admin/content-aliases"] },
-      expect.any(Function),
-    );
+    expect(mocks.queryClient.setQueriesData).toHaveBeenCalledTimes(2);
+    for (const [filters, update] of mocks.queryClient.setQueriesData.mock.calls) {
+      expect(filters).toEqual({ queryKey: ["/api/admin/content-aliases"] });
+      expect(update).toEqual(expect.any(Function));
+    }
     type AliasPageSnapshot = {
       items: AdminContentAlias[];
       total: number;
@@ -1622,19 +1647,27 @@ describe("admin alternate-title review", () => {
       nextCursor: string | null;
       previousCursor: string | null;
     };
-    const updateCachedPage = mocks.queryClient.setQueriesData.mock
-      .calls[0][1] as (
-      current: AliasPageSnapshot | undefined,
-    ) => AliasPageSnapshot | undefined;
     const stalePage: AliasPageSnapshot = {
-      items: [initialAlias],
-      total: 1,
+      items: initialAliases,
+      total: initialAliases.length,
       limit: 50,
       offset: 0,
       nextCursor: null,
       previousCursor: null,
     };
-    expect(updateCachedPage(stalePage)).toEqual({
+    const updateCachedPages = mocks.queryClient.setQueriesData.mock.calls.map(
+      ([, update]) =>
+        update as (
+          current: AliasPageSnapshot | undefined,
+        ) => AliasPageSnapshot | undefined,
+    );
+    const afterFirstRemoval = updateCachedPages[0](stalePage);
+    expect(afterFirstRemoval).toEqual({
+      ...stalePage,
+      items: [secondAlias],
+      total: 1,
+    });
+    expect(updateCachedPages[1](afterFirstRemoval)).toEqual({
       ...stalePage,
       items: [],
       total: 0,
@@ -1643,10 +1676,11 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).toContain("Alternate-title refresh failed");
     expect(container.textContent).toContain("Retry refresh");
     expect(container.textContent).toContain(
-      "Removed alternate title: Shared Local Title. It is hidden until the list refresh succeeds.",
+      "2 alternate titles were removed. They are hidden until the list refresh succeeds.",
     );
     expect(container.textContent).toContain("0 aliases");
-    expect(container.textContent).not.toContain("2 titles");
+    expect(container.textContent).not.toContain(initialAlias.alias);
+    expect(container.textContent).not.toContain(secondAlias.alias);
     expect(container.querySelector("tbody tr")).toBeNull();
     expect(mocks.toast).toHaveBeenCalledWith({
       title: "Alternate title removed, but refresh failed",
@@ -1657,11 +1691,15 @@ describe("admin alternate-title review", () => {
 
     act(() => button(container, "Retry refresh").click());
     await flushEffects();
-    expect(aliasRefreshCount).toBe(2);
+    expect(aliasRefreshCount).toBe(3);
     expect(container.textContent).not.toContain("Alternate-title refresh failed");
     expect(container.textContent).not.toContain("Removed alternate title:");
+    expect(container.textContent).not.toContain(
+      "2 alternate titles were removed",
+    );
     expect(container.textContent).toContain("Latest server alternate title");
-    expect(container.textContent).not.toContain("Shared Local Title");
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(3);
+    expect(container.textContent).not.toContain(initialAlias.alias);
+    expect(container.textContent).not.toContain(secondAlias.alias);
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(5);
   });
 });
