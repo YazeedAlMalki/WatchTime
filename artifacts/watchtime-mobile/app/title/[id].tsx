@@ -815,10 +815,12 @@ export default function TitleDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const titleId = Number(id);
-  const { isSignedIn, isAuthAvailable } = useAppAuth();
+  const { isSignedIn, isAuthAvailable, userId } = useAppAuth();
   const queryClient = useQueryClient();
 
-  const title = useGetTitle(titleId);
+  const title = useGetTitle(titleId, {
+    query: { queryKey: [...getGetTitleQueryKey(titleId), 'account', userId] },
+  });
   const similar = useGetSimilarTitles(titleId);
 
   const invalidateTitle = () => {
