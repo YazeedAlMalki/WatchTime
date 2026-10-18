@@ -462,6 +462,54 @@ describe("admin title aliases", () => {
       .get("/api/admin/content-aliases/export?ownership=unknown")).status).toBe(400);
   });
 
+  it("streams a large filtered export with every row ordered and collision counts intact", async () => {
+    const largeExportAliases = [
+      {
+        titleId: createdTitleIds[0],
+        alias: "Large streamed export shared collision",
+        normalizedAlias: "largestreamedexportsharedcollision",
+        language: "en",
+        sourceName: "Large export test",
+        sourceUrl: "https://example.test/large-export/first",
+        isEditorial: true,
+      },
+      ...Array.from({ length: 1_000 }, (_, index) => ({
+        titleId: createdTitleIds[0],
+        alias: `Large streamed export ${String(index).padStart(4, "0")}`,
+        normalizedAlias: `largestreamedexport${String(index).padStart(4, "0")}`,
+        language: "en",
+        sourceName: "Large export test",
+        sourceUrl: `https://example.test/large-export/${index}`,
+        isEditorial: true,
+      })),
+      {
+        titleId: createdTitleIds[1],
+        alias: "Large streamed export shared collision",
+        normalizedAlias: "largestreamedexportsharedcollision",
+        language: "en",
+        sourceName: "Large export test",
+        sourceUrl: "https://example.test/large-export/second",
+        isEditorial: true,
+      },
+    ];
+    await db.insert(titleAliasesTable).values(largeExportAliases);
+
+    const response = await request(app)
+      .get("/api/admin/content-aliases/export")
+      .query({ q: "Large streamed export", ownership: "editorial" })
+      .expect(200);
+    const lines = response.text.split("\r\n");
+    const dataRows = lines.slice(1);
+    const exportedIds = dataRows.map((line) => Number(line.split(",", 1)[0].slice(1, -1)));
+    const collisionRows = dataRows.filter((line) => line.split(",").slice(11, 13)
+      .join(",") === '"Yes","2"');
+
+    expect(response.headers["x-export-count"]).toBe("1002");
+    expect(dataRows).toHaveLength(1002);
+    expect(exportedIds.every((id, index) => index === 0 || exportedIds[index - 1] < id)).toBe(true);
+    expect(collisionRows).toHaveLength(2);
+  });
+
   it("rejects an unknown alias ownership filter", async () => {
     const response = await request(app).get("/api/admin/content-aliases?ownership=unknown");
     expect(response.status).toBe(400);

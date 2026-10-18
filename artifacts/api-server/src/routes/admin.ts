@@ -62,6 +62,7 @@ const LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS = new Set([
 ]);
 const CONTENT_REVIEW_PAGE_SIZE = 50;
 const CONTENT_REVIEW_CANDIDATE_BATCH_SIZE = 250;
+const CONTENT_ALIAS_EXPORT_BATCH_SIZE = 500;
 const activeSafetySyncRunIds = new Set<number>();
 const activeSafetySyncUniqueIndex =
   "safety_sync_runs_active_provider_offset_unique_idx";
@@ -1031,50 +1032,102 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
   }
 
   const q = parsedParams.data.q?.trim() ?? "";
-  const where = buildAuditLogWhere(req.query as Record<string, string>);
-  const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
-  const collisionCount = await getAliasCollisionCounts([
-    ...new Set(rows.map((row) => row.alias.normalizedAlias)),
-  ]);
+  const where = buildContentAliasWhere(q, parsedParams.data.ownership);
+  const [{ total }] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(titleAliasesTable)
+    .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+    .where(where);
 
-  const header = ["ID", "Timestamp", "Admin", "Action", "Entity Type", "Entity ID", "Details"];
+  const header = [
+    "ID",
+    "Title ID",
+    "Title",
+    "Type",
+    "Year",
+    "Alternate title",
+    "Language",
+    "Source",
+    "Source URL",
+    "Ownership",
+    "Editorial",
+    "Collision",
+    "Collision title count",
+    "Last updated",
+  ];
   const escapeCsv = (value: unknown) => {
     const text = String(value ?? "");
     const safeText = /^[\u0000-\u0020]*[=+\-@]/.test(text) ? `'${text}` : text;
     return `"${safeText.replace(/"/g, '""')}"`;
   };
-  const csvRows = rows.map(({ alias, titleName, titleType, titleYear }) => {
-    const titleCount = collisionCount.get(alias.normalizedAlias) ?? 1;
-    return [
-      alias.id,
-      alias.titleId,
-      titleName,
-      titleType,
-      titleYear,
-      alias.alias,
-      alias.language,
-      alias.sourceName,
-      alias.sourceUrl,
-      alias.isEditorial ? "Editorial" : "Provider-owned",
-      alias.isEditorial ? "Yes" : "No",
-      titleCount > 1 ? "Yes" : "No",
-      titleCount,
-      alias.updatedAt.toISOString(),
-    ];
-  });
-  const csv = [header, ...dataRows]
-    .map(row => row.map(escape).join(","))
-    .join("\n");
-
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="alternate-title-review.csv"');
-  res.setHeader("X-Export-Count", String(rows.length));
-  res.send(csv);
+  res.setHeader("X-Export-Count", String(total));
+  res.write(header.map(escapeCsv).join(","));
+
+  let afterId = 0;
+  while (!res.destroyed) {
+    const rows = await db
+      .select({
+        alias: titleAliasesTable,
+        titleName: titlesTable.name,
+        titleType: titlesTable.type,
+        titleYear: titlesTable.year,
+      })
+      .from(titleAliasesTable)
+      .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+      .where(and(where, gt(titleAliasesTable.id, afterId)))
+      .orderBy(asc(titleAliasesTable.id))
+      .limit(CONTENT_ALIAS_EXPORT_BATCH_SIZE);
+    if (!rows.length) break;
+
+    const collisionCount = await getAliasCollisionCounts([
+      ...new Set(rows.map((row) => row.alias.normalizedAlias)),
+    ]);
+    for (const { alias, titleName, titleType, titleYear } of rows) {
+      const titleCount = collisionCount.get(alias.normalizedAlias) ?? 1;
+      const csvRow = [
+        alias.id,
+        alias.titleId,
+        titleName,
+        titleType,
+        titleYear,
+        alias.alias,
+        alias.language,
+        alias.sourceName,
+        alias.sourceUrl,
+        alias.isEditorial ? "Editorial" : "Provider-owned",
+        alias.isEditorial ? "Yes" : "No",
+        titleCount > 1 ? "Yes" : "No",
+        titleCount,
+        alias.updatedAt.toISOString(),
+      ].map(escapeCsv).join(",");
+      if (!res.write(`\r\n${csvRow}`)) {
+        await new Promise<void>((resolve) => {
+          const cleanup = () => {
+            res.off("drain", onDrain);
+            res.off("close", onClose);
+          };
+          const onDrain = () => {
+            cleanup();
+            resolve();
+          };
+          const onClose = () => {
+            cleanup();
+            resolve();
+          };
+          res.once("drain", onDrain);
+          res.once("close", onClose);
+        });
+        if (res.destroyed) return;
+      }
+    }
+    afterId = rows[rows.length - 1].alias.id;
+  }
+
+  if (!res.destroyed) {
+    res.end();
+  }
 });
 
 router.patch("/content-aliases/:id", async (req, res) => {
