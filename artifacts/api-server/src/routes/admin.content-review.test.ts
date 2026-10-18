@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { db, safetyRecordsTable, titlesTable } from "@workspace/db";
-import { inArray } from "drizzle-orm";
-import { mockMalformedSafetyTimestamps } from "../test-utils/malformedSafetyTimestamp";
+import { inArray, sql } from "drizzle-orm";
 
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
@@ -19,14 +18,18 @@ vi.mock("../middlewares/auth", () => ({
 import app from "../app";
 
 const titleIds: number[] = [];
-const restoreTimestampMocks: Array<() => void> = [];
 
 afterEach(async () => {
-  restoreTimestampMocks.splice(0).forEach((restore) => restore());
   if (titleIds.length) {
     await db.delete(titlesTable).where(inArray(titlesTable.id, titleIds.splice(0)));
   }
 });
+
+async function markMalformedTimestamp(recordIds: number[]) {
+  await db.update(safetyRecordsTable)
+    .set({ updatedAt: sql`'infinity'::timestamp` })
+    .where(inArray(safetyRecordsTable.id, recordIds));
+}
 
 describe("admin Content review timestamp filter", () => {
   it("returns only titles whose selected regional rating has a malformed refresh timestamp", async () => {
@@ -76,10 +79,7 @@ describe("admin Content review timestamp filter", () => {
       },
     ]).returning({ id: safetyRecordsTable.id });
 
-    restoreTimestampMocks.push(mockMalformedSafetyTimestamps(db, new Map([
-      [records[0].id, "not-a-timestamp"],
-      [records[1].id, "not-a-timestamp"],
-    ])));
+    await markMalformedTimestamp([records[0].id, records[1].id]);
 
     const usResponse = await request(app)
       .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true`)
@@ -127,7 +127,7 @@ describe("admin Content review timestamp filter", () => {
   it("continues through malformed-timestamp matches beyond the first 50 results", async () => {
     const fixturePrefix = "timestamp-pagination-fixture-20261004";
     const titles = await db.insert(titlesTable).values(
-      Array.from({ length: 52 }, (_, index) => ({
+      Array.from({ length: 602 }, (_, index) => ({
         name: `${fixturePrefix}-${String(index + 1).padStart(2, "0")}`,
         type: "movie" as const,
         popularity: 100 - index,
@@ -146,10 +146,7 @@ describe("admin Content review timestamp filter", () => {
         items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
       })),
     ).returning({ id: safetyRecordsTable.id });
-    restoreTimestampMocks.push(mockMalformedSafetyTimestamps(
-      db,
-      new Map(records.map(({ id }) => [id, "not-a-timestamp"])),
-    ));
+    await markMalformedTimestamp(records.map(({ id }) => id));
 
     const firstPage = await request(app)
       .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&offset=0`)
@@ -160,17 +157,28 @@ describe("admin Content review timestamp filter", () => {
     );
     expect(firstPage.body[50].name).toBe(`${fixturePrefix}-51`);
 
-    const secondPage = await request(app)
-      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&offset=50`)
+    const laterPage = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&offset=550`)
       .expect(200);
-    expect(secondPage.body.map((item: any) => item.name)).toEqual([
-      `${fixturePrefix}-51`,
-      `${fixturePrefix}-52`,
-    ]);
-    expect(secondPage.body.every((item: any) =>
+    expect(laterPage.body).toHaveLength(51);
+    expect(laterPage.body.slice(0, 50).map((item: any) => item.name)).toEqual(
+      titles.slice(550, 600).map((_, index) =>
+        `${fixturePrefix}-${String(551 + index).padStart(3, "0")}`,
+      ),
+    );
+    expect(laterPage.body[50].name).toBe(`${fixturePrefix}-601`);
+    expect(laterPage.body.every((item: any) =>
       item.selectedRating.region === "US" &&
       item.selectedRating.refreshTimestampMalformed,
     )).toBe(true);
+
+    const lastPage = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&offset=600`)
+      .expect(200);
+    expect(lastPage.body.map((item: any) => item.name)).toEqual([
+      `${fixturePrefix}-601`,
+      `${fixturePrefix}-602`,
+    ]);
   });
 
   it("finds a late malformed-timestamp match in a large catalog", async () => {
@@ -194,10 +202,7 @@ describe("admin Content review timestamp filter", () => {
       updatedAt: new Date("2026-10-01T00:00:00.000Z"),
       items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
     }).returning({ id: safetyRecordsTable.id });
-    restoreTimestampMocks.push(mockMalformedSafetyTimestamps(
-      db,
-      new Map([[record.id, "not-a-timestamp"]]),
-    ));
+    await markMalformedTimestamp([record.id]);
 
     const startedAt = performance.now();
     const response = await request(app)

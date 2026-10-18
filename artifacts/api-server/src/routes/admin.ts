@@ -61,7 +61,6 @@ const LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS = new Set([
   "Wikipedia",
 ]);
 const CONTENT_REVIEW_PAGE_SIZE = 50;
-const CONTENT_REVIEW_CANDIDATE_BATCH_SIZE = 250;
 const CONTENT_ALIAS_EXPORT_BATCH_SIZE = 500;
 const activeSafetySyncRunIds = new Set<number>();
 const activeSafetySyncUniqueIndex =
@@ -845,9 +844,26 @@ router.get("/content", async (req, res) => {
   ) {
     return res.status(400).json({ error: "Invalid malformed refresh timestamp filter" });
   }
+  const malformedRefreshTimestampProviderParam = req.query.malformedRefreshTimestampProvider;
+  if (
+    malformedRefreshTimestampProviderParam !== undefined &&
+    typeof malformedRefreshTimestampProviderParam !== "string"
+  ) {
+    return res.status(400).json({ error: "Invalid malformed refresh timestamp provider" });
+  }
+  const offsetParam = req.query.offset;
+  const offset = offsetParam === undefined ? 0 : Number(offsetParam);
+  if (
+    offsetParam !== undefined &&
+    (typeof offsetParam !== "string" ||
+      !/^\d+$/.test(offsetParam) ||
+      !Number.isSafeInteger(offset))
+  ) {
+    return res.status(400).json({ error: "Invalid content offset" });
+  }
   const parsedParams = ExportAdminContentAliasesQueryParams.safeParse(req.query);
 
-  const { q: rawQ, ownership, id: requestedId, cursor: rawCursor, limit: requestedLimit, offset } =
+  const { q: rawQ, ownership, id: requestedId, cursor: rawCursor, limit: requestedLimit } =
     parsedParams.data;
   if (!parsedParams.success) {
     res.status(400).json({ error: "Invalid alias export parameters" });
@@ -857,25 +873,17 @@ router.get("/content", async (req, res) => {
   const q = parsedParams.data.q?.trim() ?? "";
 
   const cursorOwnership = ownership ?? null;
-  const region = parsedParams.data.region as RatingRegion;
-  const malformedRefreshTimestamp = parsedParams.data.malformedRefreshTimestamp;
+  const region = (typeof regionParam === "string" ? regionParam : "US") as RatingRegion;
+  const malformedRefreshTimestamp = malformedRefreshTimestampParam === "true";
   const malformedRefreshTimestampProvider =
-    parsedParams.data.malformedRefreshTimestampProvider?.trim() ?? "";
-  const offset = parseInt(String(req.query.offset ?? "0"), 10) || 0;
-  const makeTitleQuery = (after?: { popularity: number; id: number }) => db
+    typeof malformedRefreshTimestampProviderParam === "string"
+      ? malformedRefreshTimestampProviderParam.trim()
+      : "";
+  const makeTitleQuery = () => db
     .select()
     .from(titlesTable)
     .where(and(
       q ? ilike(titlesTable.name, `%${q}%`) : undefined,
-      after
-        ? or(
-            lt(titlesTable.popularity, after.popularity),
-            and(
-              eq(titlesTable.popularity, after.popularity),
-              gt(titlesTable.id, after.id),
-            ),
-          )
-        : undefined,
     ))
     .orderBy(desc(titlesTable.popularity), asc(titlesTable.id));
   const buildContent = async (titles: (typeof titlesTable.$inferSelect)[]) => {
@@ -955,31 +963,61 @@ router.get("/content", async (req, res) => {
     return res.json(await buildContent(titles));
   }
 
-  const filteredContent: Awaited<ReturnType<typeof buildContent>> = [];
-  let matchingOffset = 0;
-  let afterCandidate: { popularity: number; id: number } | undefined;
-  while (filteredContent.length < CONTENT_REVIEW_PAGE_SIZE + 1) {
-    const titleBatch = await makeTitleQuery(afterCandidate)
-      .limit(CONTENT_REVIEW_CANDIDATE_BATCH_SIZE);
-    if (!titleBatch.length) break;
-    const lastCandidate = titleBatch[titleBatch.length - 1];
-    afterCandidate = { popularity: lastCandidate.popularity, id: lastCandidate.id };
-
-    const contentBatch = await buildContent(titleBatch);
-    for (const item of contentBatch) {
-      if (!item.selectedRating?.refreshTimestampMalformed) continue;
-      if (
-        malformedRefreshTimestampProvider &&
-        item.selectedRating.sourceName !== malformedRefreshTimestampProvider
-      ) {
-        continue;
-      }
-      if (matchingOffset++ < offset) continue;
-      filteredContent.push(item);
-      if (filteredContent.length >= CONTENT_REVIEW_PAGE_SIZE + 1) break;
-    }
+  // resolvePreferredRating only selects official Wikidata records for the
+  // region's classification system. Rank those ratings in SQL, then apply the
+  // result-page offset before loading full title content. This avoids rebuilding
+  // every earlier matching title just to serve a later page.
+  if (malformedRefreshTimestampProvider && malformedRefreshTimestampProvider !== "Wikidata") {
+    return res.json([]);
   }
-  return res.json(filteredContent);
+  const preferredSystem = RATING_REGIONS_BY_CODE[region].system;
+  const matchingTitles = await db.execute<{ id: number }>(sql`
+    WITH ranked_ratings AS (
+      SELECT
+        rating.title_id,
+        rating.updated_at::text AS raw_updated_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY rating.title_id
+          ORDER BY
+            CASE
+              WHEN rating.updated_at IN ('infinity'::timestamp, '-infinity'::timestamp) THEN NULL
+              ELSE floor(extract(epoch FROM (rating.updated_at AT TIME ZONE 'UTC')) * 1000)
+            END DESC NULLS LAST,
+            rating.tier ASC,
+            item.value->>'label' COLLATE "C" ASC,
+            COALESCE(rating.url, '') COLLATE "C" ASC,
+            rating.id ASC
+        ) AS rating_rank
+      FROM safety_records AS rating
+      INNER JOIN titles AS title ON title.id = rating.title_id
+      CROSS JOIN LATERAL jsonb_array_elements(rating.items) AS item(value)
+      WHERE rating.season_number IS NULL
+        AND rating.episode_number IS NULL
+        AND rating.status = 'available'
+        AND rating.is_community = false
+        AND rating.source_name = 'Wikidata'
+        AND item.value->>'category' = ${preferredSystem}
+        AND (${q} = '' OR title.name ILIKE ${`%${q}%`})
+    )
+    SELECT title.id
+    FROM titles AS title
+    INNER JOIN ranked_ratings AS selected
+      ON selected.title_id = title.id
+      AND selected.rating_rank = 1
+      AND selected.raw_updated_at IN ('infinity', '-infinity')
+    ORDER BY title.popularity DESC, title.id ASC
+    LIMIT ${CONTENT_REVIEW_PAGE_SIZE + 1}
+    OFFSET ${offset}
+  `);
+  const matchingIds = matchingTitles.rows.map(({ id }) => id);
+  if (!matchingIds.length) return res.json([]);
+
+  const titles = await db.select().from(titlesTable).where(inArray(titlesTable.id, matchingIds));
+  const titlesById = new Map(titles.map((title) => [title.id, title]));
+  const pageTitles = matchingIds
+    .map((id) => titlesById.get(id))
+    .filter((title): title is (typeof titles)[number] => title !== undefined);
+  return res.json(await buildContent(pageTitles));
 });
 
 const normalizeAlias = (value: string) =>
@@ -1035,7 +1073,7 @@ async function refreshTitleAliasSearchList(tx: any, titleId: number) {
 router.get("/content-aliases", async (req, res): Promise<void> => {
   const parsedParams = ExportAdminContentAliasesQueryParams.safeParse(req.query);
 
-  const { q: rawQ, ownership, id: requestedId, cursor: rawCursor, limit: requestedLimit, offset } =
+  const { q: rawQ, ownership, id: requestedId, cursor: rawCursor, limit: requestedLimit } =
     parsedParams.data;
   const q = parsedParams.data.q?.trim() ?? "";
 
@@ -1861,14 +1899,6 @@ function encodeAliasCursor(
   };
   return Buffer.from(JSON.stringify(payload)).toString("base64url");
 }
-
-  const cursor = rawCursor === undefined
-    ? null
-    : parseAliasCursor(rawCursor, q, cursorOwnership);
-
-  const previousCursor = pageRows.length > 0 && cursor !== null
-    ? encodeAliasCursor(pageRows[0].alias.id, "before", q, cursorOwnership)
-    : null;
 
 function aliasCursorFilterHash(
   q: string,
