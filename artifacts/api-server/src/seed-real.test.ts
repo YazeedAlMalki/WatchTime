@@ -634,6 +634,74 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("leaves existing catalog records unchanged during a successful dry run", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(showPayload));
+    vi.stubGlobal("fetch", fetchMock);
+    await runCatalogSync({ dryRun: false, allowPartial: false }, [testItem]);
+
+    const [title] = await db.select().from(titlesTable).where(eq(titlesTable.imdbId, testImdb));
+    expect(title).toBeTruthy();
+    await db.update(titlesTable).set({
+      name: "Saved title override",
+      overview: "Saved title overview",
+      altTitles: ["Saved title alias"],
+    }).where(eq(titlesTable.id, title.id));
+    await db.update(titleAliasesTable).set({
+      alias: "Saved alternate title",
+      language: "fr",
+      sourceName: "Saved catalog metadata",
+      sourceUrl: "https://example.test/saved-alias",
+    }).where(and(
+      eq(titleAliasesTable.titleId, title.id),
+      eq(titleAliasesTable.normalizedAlias, "alternatetesttitle"),
+    ));
+    await db.update(providerMappingsTable).set({
+      externalId: "999999",
+      status: "error",
+    }).where(and(
+      eq(providerMappingsTable.titleId, title.id),
+      eq(providerMappingsTable.provider, "TVMaze"),
+    ));
+    await db.update(episodesTable).set({
+      name: "Saved episode title",
+      overview: "Saved episode overview",
+      runtimeMinutes: 99,
+      airDate: "1999-09-09",
+      stillUrl: "https://example.test/saved-still.jpg",
+    }).where(and(
+      eq(episodesTable.titleId, title.id),
+      eq(episodesTable.seasonNumber, 1),
+      eq(episodesTable.episodeNumber, 1),
+    ));
+
+    const rowsById = <T extends { id: number }>(rows: T[]) =>
+      [...rows].sort((left, right) => left.id - right.id);
+    const before = {
+      title: (await db.select().from(titlesTable).where(eq(titlesTable.id, title.id)))[0],
+      aliases: rowsById(await db.select().from(titleAliasesTable)
+        .where(eq(titleAliasesTable.titleId, title.id))),
+      mappings: rowsById(await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.titleId, title.id))),
+      episodes: rowsById(await db.select().from(episodesTable)
+        .where(eq(episodesTable.titleId, title.id))),
+    };
+
+    const result = await runCatalogSync({ dryRun: true, allowPartial: false }, [testItem]);
+
+    expect(result).toMatchObject({ selected: 1, succeeded: 1, episodes: 0, failures: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const after = {
+      title: (await db.select().from(titlesTable).where(eq(titlesTable.id, title.id)))[0],
+      aliases: rowsById(await db.select().from(titleAliasesTable)
+        .where(eq(titleAliasesTable.titleId, title.id))),
+      mappings: rowsById(await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.titleId, title.id))),
+      episodes: rowsById(await db.select().from(episodesTable)
+        .where(eq(episodesTable.titleId, title.id))),
+    };
+    expect(after).toEqual(before);
+  });
+
   it("leaves live safety integration health unchanged", async () => {
     await db.delete(integrationHealthTable).where(eq(integrationHealthTable.provider, "Does the Dog Die?"));
     const expected = {
