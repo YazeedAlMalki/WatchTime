@@ -777,7 +777,7 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
-  it("refreshes classifications and removes duplicate title-level rows without changing other ratings", async () => {
+  it("breaks equal duplicate timestamps by ID when refreshing classifications without changing other ratings", async () => {
     const [title] = await db.insert(titlesTable).values({
       type: "movie",
       name: "__wikidata_classified_duplicates_test__",
@@ -792,6 +792,7 @@ describe("Wikidata refresh persistence", () => {
 
         const officialRows = await tx.insert(safetyRecordsTable).values([
           {
+            id: -203,
             titleId: title.id,
             sourceName: WIKIDATA_PROVIDER,
             tier: 2,
@@ -802,6 +803,7 @@ describe("Wikidata refresh persistence", () => {
             updatedAt: new Date("2024-01-01T00:00:00.000Z"),
           },
           {
+            id: -201,
             titleId: title.id,
             sourceName: WIKIDATA_PROVIDER,
             tier: 2,
@@ -811,7 +813,22 @@ describe("Wikidata refresh persistence", () => {
             items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: "old rating" }],
             updatedAt: new Date("2025-01-01T00:00:00.000Z"),
           },
+          {
+            id: -202,
+            titleId: title.id,
+            sourceName: WIKIDATA_PROVIDER,
+            tier: 2,
+            isCommunity: false,
+            url: "https://www.wikidata.org/wiki/Q53",
+            status: "available",
+            items: [{ category: "MPAA", label: "R", score: null, maxScore: null, description: "old rating" }],
+            updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+          },
         ]).returning();
+        const tiedRows = officialRows
+          .filter((record) => record.updatedAt?.getTime() === new Date("2025-01-01T00:00:00.000Z").getTime())
+          .sort((left, right) => left.id - right.id);
+        expect(tiedRows).toHaveLength(2);
 
         const untouchedRows = await tx.insert(safetyRecordsTable).values([
           {
@@ -877,7 +894,7 @@ describe("Wikidata refresh persistence", () => {
         );
         expect(remainingOfficialRows).toHaveLength(1);
         expect(remainingOfficialRows[0]).toMatchObject({
-          id: officialRows[1].id,
+          id: tiedRows[0].id,
           url: "https://www.wikidata.org/wiki/Q54",
           items: [
             {
