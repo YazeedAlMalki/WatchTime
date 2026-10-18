@@ -2168,6 +2168,7 @@ export function AliasReview({
   const [refreshError, setRefreshError] = useState<
     ReviewRefreshRequest[] | null
   >(null);
+  const [isCollisionResultsStale, setIsCollisionResultsStale] = useState(false);
   const [isRefreshingAliasViews, setIsRefreshingAliasViews] = useState(false);
   const [isAliasRefreshTimedOut, setIsAliasRefreshTimedOut] = useState(false);
   const aliasRefreshAttempt = useRef(0);
@@ -2208,6 +2209,9 @@ export function AliasReview({
       if (aliasRefreshAttempt.current !== attempt) return;
       setIsAliasRefreshTimedOut(true);
       setRefreshError(requests);
+      if (requests.includes("catalog")) {
+        setIsCollisionResultsStale(true);
+      }
       setIsRefreshingAliasViews(false);
     }, ALIAS_REFRESH_RECOVERY_TIMEOUT_MS);
     try {
@@ -2231,6 +2235,9 @@ export function AliasReview({
       );
       if (aliasRefreshAttempt.current !== attempt) return null;
       setRefreshError(failedRequests.length > 0 ? failedRequests : null);
+      if (requests.includes("catalog")) {
+        setIsCollisionResultsStale(failedRequests.includes("catalog"));
+      }
       setIsAliasRefreshTimedOut(false);
       if (
         requests.includes("aliases") &&
@@ -2883,7 +2890,22 @@ export function AliasReview({
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {alias.collision ? (
+                    {isCollisionResultsStale ? (
+                      <span
+                        aria-label={`Collision results may be stale: ${
+                          alias.collision
+                            ? `${alias.collisionTitleCount} titles`
+                            : "unique"
+                        }`}
+                        className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2.5 py-1 text-xs font-bold text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+                      >
+                        <AlertTriangle className="w-3 h-3" />{" "}
+                        {alias.collision
+                          ? `${alias.collisionTitleCount} titles`
+                          : "Unique"}{" "}
+                        · may be stale
+                      </span>
+                    ) : alias.collision ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 px-2.5 py-1 text-xs font-bold">
                         <AlertTriangle className="w-3 h-3" />{" "}
                         {alias.collisionTitleCount} titles

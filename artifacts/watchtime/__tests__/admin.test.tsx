@@ -830,6 +830,47 @@ describe("admin alternate-title review", () => {
     );
   });
 
+  it("marks collision statuses stale after a failed catalog refresh and clears them after recovery", async () => {
+    const currentUniqueAlias: AdminContentAlias = {
+      ...uniqueAlias(),
+      id: 18,
+      titleName: "The Other Lighthouse",
+      alias: "Unique Local Title",
+    };
+    setRefreshFailures(["catalog"]);
+    render([initialAlias, currentUniqueAlias]);
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    const getReviewCell = (row: Element | undefined) =>
+      row?.querySelectorAll("td")[4]?.textContent ?? "";
+    let rows = Array.from(container.querySelectorAll("tbody tr"));
+    expect(getReviewCell(rows[0])).toContain("2 titles · may be stale");
+    expect(getReviewCell(rows[1])).toContain("Unique · may be stale");
+    expect(rows[0]?.querySelector('[aria-label*="Collision results may be stale"]'))
+      .not.toBeNull();
+
+    setRefreshFailures([]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+
+    rows = Array.from(container.querySelectorAll("tbody tr"));
+    expect(getReviewCell(rows[0])).toContain("2 titles");
+    expect(getReviewCell(rows[0])).not.toContain("may be stale");
+    expect(getReviewCell(rows[1])).toContain("Unique");
+    expect(getReviewCell(rows[1])).not.toContain("may be stale");
+    expect(rows[0]?.querySelector('[aria-label*="Collision results may be stale"]'))
+      .toBeNull();
+  });
+
   it("narrows simultaneous failures to only the request still failing", async () => {
     await saveAliasToTriggerRefresh(["aliases", "catalog"]);
     expectRefreshCalls(["aliases", "catalog"]);
