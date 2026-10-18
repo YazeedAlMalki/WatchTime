@@ -91,7 +91,9 @@ describe("admin title aliases", () => {
       }],
     }).returning({ id: safetyRecordsTable.id });
 
-    const response = await request(app).get("/api/admin/content?q=Alias%20Test%20One");
+    const response = await request(app)
+      .get("/api/admin/content?q=Alias%20Test%20One")
+      .expect(200);
 
     expect(response.status).toBe(200);
     expect(response.body).toHaveLength(1);
@@ -186,7 +188,9 @@ describe("admin title aliases", () => {
 
     const allAliasesResponse = await request(app)
       .get("/api/admin/content-aliases?q=Shared%20Local");
-    const response = await request(app).get("/api/admin/content-aliases?q=Shared%20Local%20Title");
+    const response = await request(app)
+      .get("/api/admin/content-aliases?ownership=editorial&q=Shared%20Local%20Title")
+      .expect(200);
     const providerResponse = await request(app)
       .get("/api/admin/content-aliases?ownership=provider");
     expect(allAliasesResponse.status).toBe(200);
@@ -341,123 +345,151 @@ describe("admin title aliases", () => {
     expect(new Set(pageIds).size).toBe(103);
   });
 
-  it("continues by stable alias ID when matching aliases are added, removed, or renamed", async () => {
+  it("continues through a stable alphabetical snapshot when aliases change between pages", async () => {
+    const aliases = [
+      "Snapshot Review Zulu",
+      "Snapshot Review Alpha",
+      "Snapshot Review Charlie",
+      "Snapshot Review Bravo",
+      "Snapshot Review Delta",
+    ];
     const rows = await db.insert(titleAliasesTable).values(
-      Array.from({ length: 4 }, (_, index) => ({
+      aliases.map((alias) => ({
         titleId: createdTitleIds[0],
-        alias: `Cursor Review ${String(index + 1).padStart(2, "0")}`,
-        normalizedAlias: `cursorreview${String(index + 1).padStart(2, "0")}`,
-        sourceName: "Cursor test",
+        alias,
+        normalizedAlias: alias.toLowerCase().replaceAll(" ", ""),
+        sourceName: "Snapshot test",
         isEditorial: true,
       })),
     ).returning({ id: titleAliasesTable.id });
 
     const firstPage = await request(app)
       .get("/api/admin/content-aliases")
-      .query({ q: "Cursor Review", ownership: "editorial", limit: 2 })
+      .query({ q: "Snapshot Review", ownership: "editorial", limit: 2 })
       .expect(200);
-
     expect(firstPage.body.items.map((alias: { id: number }) => alias.id))
-      .toEqual(rows.slice(0, 2).map((row) => row.id));
-    expect(firstPage.body.nextCursor).toEqual(expect.any(String));
+      .toEqual([rows[1].id, rows[3].id]);
+    expect(firstPage.body.items.map((alias: { alias: string }) => alias.alias))
+      .toEqual(["Snapshot Review Alpha", "Snapshot Review Bravo"]);
+    expect(firstPage.body.nextCursor).toMatch(/^[0-9a-f-]{36}:2:0$/i);
     await request(app)
       .get("/api/admin/content-aliases")
-      .query({ q: "Different search", ownership: "editorial", cursor: firstPage.body.nextCursor })
+      .query({
+        q: "Snapshot Review",
+        ownership: "provider",
+        limit: 2,
+        cursor: firstPage.body.nextCursor,
+      })
       .expect(400);
     await request(app)
       .get("/api/admin/content-aliases")
-      .query({ q: "Cursor Review", ownership: "provider", cursor: firstPage.body.nextCursor })
+      .query({ q: "Snapshot Review", limit: 2, cursor: "not-a-snapshot" })
       .expect(400);
 
-    await db.update(titleAliasesTable).set({
-      alias: "Cursor Review Z first renamed",
-      normalizedAlias: "cursorreviewzfirstrenamed",
-    }).where(eq(titleAliasesTable.id, rows[0].id));
-    await db.update(titleAliasesTable).set({
-      alias: "Cursor Review A fourth renamed",
-      normalizedAlias: "cursorreviewafourthrenamed",
-    }).where(eq(titleAliasesTable.id, rows[3].id));
     await db.delete(titleAliasesTable).where(eq(titleAliasesTable.id, rows[2].id));
+    await db.update(titleAliasesTable).set({
+      alias: "Snapshot Review Aardvark",
+      normalizedAlias: "snapshotreviewaardvark",
+    }).where(eq(titleAliasesTable.id, rows[4].id));
     const [inserted] = await db.insert(titleAliasesTable).values({
       titleId: createdTitleIds[0],
-      alias: "Cursor Review 00 inserted during review",
-      normalizedAlias: "cursorreview00insertedduringreview",
-      sourceName: "Cursor test",
+      alias: "Snapshot Review A0 inserted",
+      normalizedAlias: "snapshotreviewa0inserted",
+      sourceName: "Snapshot test",
       isEditorial: true,
     }).returning({ id: titleAliasesTable.id });
 
     const secondPage = await request(app)
       .get("/api/admin/content-aliases")
       .query({
-        q: "Cursor Review",
+        q: "Snapshot Review",
         ownership: "editorial",
         limit: 2,
         cursor: firstPage.body.nextCursor,
       })
       .expect(200);
+    expect(secondPage.body.items.map((alias: { id: number }) => alias.id))
+      .toEqual([rows[4].id]);
+    expect(secondPage.body.items.map((alias: { alias: string }) => alias.alias))
+      .toEqual(["Snapshot Review Aardvark"]);
+    expect(secondPage.body.items.some((alias: { id: number }) => alias.id === inserted.id)).toBe(false);
+    expect(secondPage.body.nextCursor).toMatch(/^[0-9a-f-]{36}:4:2$/i);
+    expect(secondPage.body.previousCursor).toMatch(/^[0-9a-f-]{36}:0$/i);
 
-    const restoredPreviousPage = await request(app)
+    const thirdPage = await request(app)
       .get("/api/admin/content-aliases")
       .query({
-        q: "Cursor Review",
+        q: "Snapshot Review",
+        ownership: "editorial",
+        limit: 2,
+        cursor: secondPage.body.nextCursor,
+      })
+      .expect(200);
+    expect(thirdPage.body.items.map((alias: { id: number }) => alias.id)).toEqual([rows[0].id]);
+    expect(thirdPage.body.items.some((alias: { id: number }) => alias.id === inserted.id)).toBe(false);
+    expect(thirdPage.body.nextCursor).toBeNull();
+    expect(thirdPage.body.previousCursor).toMatch(/^[0-9a-f-]{36}:2$/i);
+
+    const restoredFirstPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Snapshot Review",
         ownership: "editorial",
         limit: 2,
         cursor: secondPage.body.previousCursor,
       })
       .expect(200);
-
-    expect(secondPage.body.total).toBe(4);
-    expect(secondPage.body.items.map((alias: { id: number }) => alias.id))
-      .toEqual([rows[3].id, inserted.id]);
-    expect(secondPage.body.items[0].alias).toBe("Cursor Review A fourth renamed");
-    expect(secondPage.body.nextCursor).toBeNull();
-    expect(restoredPreviousPage.body.items.map((alias: { id: number }) => alias.id))
-      .toEqual([rows[0].id, rows[1].id]);
-    expect([
+    expect(restoredFirstPage.body.items.map((alias: { id: number }) => alias.id))
+      .toEqual([rows[1].id, rows[3].id]);
+    const restoredSecondPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Snapshot Review",
+        ownership: "editorial",
+        limit: 2,
+        cursor: thirdPage.body.previousCursor,
+      })
+      .expect(200);
+    expect(restoredSecondPage.body.items.map((alias: { id: number }) => alias.id))
+      .toEqual([rows[4].id]);
+    expect(new Set([
       ...firstPage.body.items.map((alias: { id: number }) => alias.id),
       ...secondPage.body.items.map((alias: { id: number }) => alias.id),
-    ]).toEqual([rows[0].id, rows[1].id, rows[3].id, inserted.id]);
+      ...thirdPage.body.items.map((alias: { id: number }) => alias.id),
+    ]).size).toBe(4);
   });
 
-  it("exports every matching alias with provenance and collision details", async () => {
-    await db.insert(titleAliasesTable).values([
+  it("exports all matching alternate titles as safely escaped CSV", async () => {
+    const exportRows = [
       ...Array.from({ length: 110 }, (_, index) => ({
         titleId: createdTitleIds[0],
         alias: `Export sample ${String(index).padStart(3, "0")}`,
         normalizedAlias: `exportsample${String(index).padStart(3, "0")}`,
         language: "en",
-        sourceName: "Provider archive",
-        sourceUrl: `https://example.test/provider/${index}`,
+        sourceName: "Export source",
+        sourceUrl: `https://example.test/export/${index}`,
         isEditorial: false,
       })),
       {
         titleId: createdTitleIds[0],
-        alias: 'Export, "shared" sample',
-        normalizedAlias: "exportsharedsample",
-        language: "fr",
-        sourceName: "Editorial source",
-        sourceUrl: "https://example.test/editorial",
-        isEditorial: false,
-      },
-      {
-        titleId: createdTitleIds[1],
-        alias: 'Export, "shared" sample',
-        normalizedAlias: "exportsharedsample",
-        language: "fr",
-        sourceName: "Editorial source",
-        sourceUrl: "https://example.test/editorial",
-        isEditorial: false,
-      },
-      {
-        titleId: createdTitleIds[0],
         alias: '=HYPERLINK("https://example.test","Export sample")',
-        normalizedAlias: "hyperlinkexportsample",
+        normalizedAlias: "exportsampleformula",
         language: "en",
-        sourceName: "Provider archive",
-        sourceUrl: "https://example.test/formula",
+        sourceName: "Export source",
+        sourceUrl: null,
         isEditorial: false,
       },
-    ]);
+      ...createdTitleIds.map((titleId) => ({
+        titleId,
+        alias: "Export, \"shared\" sample",
+        normalizedAlias: "exportsharedsample",
+        language: "fr",
+        sourceName: "Editorial source",
+        sourceUrl: "https://example.test/editorial",
+        isEditorial: false,
+      })),
+    ];
+    await db.insert(titleAliasesTable).values(exportRows);
 
     const response = await request(app)
       .get("/api/admin/content-aliases/export")

@@ -25,11 +25,16 @@ id?: number;
  */
 limit?: number;
 /**
- * Filter-bound continuation token returned by the preceding page
+ * Snapshot-bound continuation token for forward or backward alternate-title review pages
  * @minLength 1
- * @maxLength 4096
+ * @maxLength 64
  */
 cursor?: string;
+/**
+ * Legacy continuation by immutable record ID
+ * @minimum 1
+ */
+afterId?: number;
 /**
  * Legacy page offset; cursor-based clients should use cursor
  * @minimum 0

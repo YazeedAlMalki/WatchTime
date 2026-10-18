@@ -237,6 +237,7 @@ it("keeps filtered alias continuation stable when matching records change betwee
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial");
   const requests: URL[] = [];
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174000";
   const makeAlias = (id: number, alias: string) => ({
     id,
     titleId: 101,
@@ -253,9 +254,10 @@ it("keeps filtered alias continuation stable when matching records change betwee
     collisionTitleCount: 1,
     updatedAt: "2026-09-16T00:00:00.000Z",
   });
-  let liveAliases = Array.from({ length: 51 }, (_, index) =>
-    makeAlias(100 + index, `Lighthouse alias ${index + 1}`),
-  );
+  const snapshotIds = Array.from({ length: 51 }, (_, index) => 100 + index);
+  let liveAliases = new Map(snapshotIds.map((id, index) =>
+    [id, makeAlias(id, `Lighthouse alias ${String(index + 1).padStart(3, "0")}`)],
+  ));
   let changedDuringReview = false;
   const originalFetch = window.fetch;
   window.fetch = vi.fn(async (input: RequestInfo | URL) => {
@@ -263,34 +265,33 @@ it("keeps filtered alias continuation stable when matching records change betwee
     if (url.pathname !== "/api/admin/content-aliases") throw new Error(`Unexpected request: ${url}`);
     requests.push(url);
     const cursor = url.searchParams.get("cursor");
-    if (cursor === "after-149" && !changedDuringReview) {
+    const cursorParts = cursor?.split(":");
+    const snapshotOffset = cursorParts ? Number(cursorParts[1]) : 0;
+    if (snapshotOffset > 0 && !changedDuringReview) {
       changedDuringReview = true;
-      liveAliases = [
-        makeAlias(50, "Lighthouse inserted before this cursor"),
-        ...liveAliases.filter((alias) => alias.id !== 100 && alias.id !== 150),
-        makeAlias(150, "Lighthouse alias renamed ahead of the current page"),
-        makeAlias(151, "Lighthouse inserted after this cursor"),
-      ];
+      liveAliases.delete(100);
+      liveAliases.set(150, makeAlias(150, "Lighthouse alias renamed ahead of the current page"));
+      liveAliases.set(50, makeAlias(50, "Lighthouse inserted before this cursor"));
+      liveAliases.set(151, makeAlias(151, "Lighthouse inserted after this cursor"));
     }
-    const matching = cursor === "before-150"
-      ? liveAliases.filter((alias) => alias.id < 150).slice(-50)
-      : liveAliases.filter((alias) => alias.id > (cursor === "after-149" ? 149 : 0));
-    const items = matching.slice(0, 50).map((alias) => ({
-      ...alias,
-      isEditorial: url.searchParams.get("ownership") !== "provider",
-    }));
+    const items = snapshotIds
+      .slice(snapshotOffset, snapshotOffset + 50)
+      .flatMap((id) => liveAliases.has(id) ? [liveAliases.get(id)!] : [])
+      .map((alias) => ({
+        ...alias,
+        isEditorial: url.searchParams.get("ownership") !== "provider",
+      }));
+    const nextOffset = snapshotOffset + 50;
     return new Response(JSON.stringify({
       items,
-      total: liveAliases.length,
+      total: liveAliases.size,
       limit: 50,
-      offset: 0,
-      nextCursor: cursor === "before-150"
-        ? `after-${items.at(-1)?.id}`
-        : matching.length > items.length
-          ? `after-${items.at(-1)?.id}`
-          : null,
-      previousCursor: cursor === "after-149" && items.length
-        ? `before-${items[0].id}`
+      offset: snapshotOffset,
+      nextCursor: nextOffset < snapshotIds.length
+        ? `${snapshotId}:${nextOffset}:${snapshotOffset}`
+        : null,
+      previousCursor: snapshotOffset > 0
+        ? `${snapshotId}:${Math.max(0, snapshotOffset - 50)}`
         : null,
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -307,21 +308,22 @@ it("keeps filtered alias continuation stable when matching records change betwee
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
     await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 52 matching aliases");
     await expect.element(page.getByText("Lighthouse alias renamed ahead of the current page")).toBeVisible();
-    await expect.element(page.getByText("Lighthouse inserted after this cursor")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse inserted after this cursor")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Lighthouse inserted before this cursor")).not.toBeInTheDocument();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
     expect(requests.at(-1)?.searchParams.get("limit")).toBe("50");
-    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("after-149");
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(`${snapshotId}:50:0`);
     expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
-    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe("after-149");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(`${snapshotId}:50:0`);
     expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
 
     await userEvent.click(page.getByRole("button", { name: "Previous aliases" }));
     await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 52 matching aliases");
-    await expect.element(page.getByText("Lighthouse inserted before this cursor")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse inserted before this cursor")).not.toBeInTheDocument();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
-    expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(`${snapshotId}:0`);
     expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
 
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));

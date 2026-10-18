@@ -45,12 +45,13 @@ export function readAdminContentUrl(search: string): {
     : null;
   const rawAliasCursor = params.get("aliasCursor");
   const rawAliasPage = params.get("aliasPage");
-  const parsedAliasPage = rawAliasPage !== null &&
-      /^\d+$/.test(rawAliasPage) &&
-      Number.isSafeInteger(Number(rawAliasPage)) &&
-      Number(rawAliasPage) >= 2
-    ? Number(rawAliasPage)
-    : null;
+  const parsedAliasPage = rawAliasPage === null
+    ? 1
+    : /^\d+$/.test(rawAliasPage) &&
+        Number.isSafeInteger(Number(rawAliasPage)) &&
+        Number(rawAliasPage) >= 1
+      ? Number(rawAliasPage)
+      : null;
   const aliasCursor = rawAliasCursor &&
       rawAliasCursor.length <= 4096 &&
       parsedAliasPage !== null
@@ -75,7 +76,7 @@ export function readAdminContentUrl(search: string): {
     malformedRefreshTimestampProvider,
     contentOffset: malformedRefreshTimestamp ? parsedOffset : 0,
     aliasId: tab === "content" ? aliasId : null,
-    aliasPage: tab === "content" && aliasCursor && parsedAliasPage
+    aliasPage: tab === "content" && aliasCursor && parsedAliasPage !== null
       ? parsedAliasPage
       : 1,
     aliasCursor: tab === "content" ? aliasCursor : null,
@@ -112,9 +113,10 @@ export function adminContentUrl(
       params.delete("aliasPage");
     }
     if (aliasCursor !== undefined) {
-      if (aliasCursor && aliasPage != null && aliasPage > 1) {
+      if (aliasCursor && aliasPage != null && aliasPage >= 1) {
         params.set("aliasCursor", aliasCursor);
-        params.set("aliasPage", String(aliasPage));
+        if (aliasPage > 1) params.set("aliasPage", String(aliasPage));
+        else params.delete("aliasPage");
       } else {
         params.delete("aliasCursor");
         params.delete("aliasPage");
