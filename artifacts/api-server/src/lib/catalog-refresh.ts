@@ -10,6 +10,7 @@ import { runCatalogSync, sourceItems, type SourceItem } from "../seed-real";
 import { logger } from "./logger";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const SCHEDULED_START_RETRY_MS = 5 * 60 * 1000;
 const SUSTAINED_FAILURE_MS = 3 * 24 * 60 * 60 * 1000;
 export const STALE_QUEUED_REFRESH_MS = 5 * 60 * 1000;
 export const CATALOG_REFRESH_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
@@ -185,13 +186,17 @@ export async function scheduleCatalogRefresh(delayOverride?: number) {
   // the replacement is ready (including when two initializations overlap).
   if (timer) clearTimeout(timer);
   const scheduledTimer = setTimeout(() => {
+    let nextDelay = WEEK_MS;
     startCatalogRefresh("scheduled")
-      .catch((err) => logger.error({ err }, "unable to start scheduled catalog refresh"))
+      .catch((err) => {
+        nextDelay = SCHEDULED_START_RETRY_MS;
+        logger.error({ err }, "unable to start scheduled catalog refresh");
+      })
       .finally(() => {
         // A newer initialization owns the schedule if it replaced this timer
         // while the scheduled run was starting.
         if (timer !== scheduledTimer) return;
-        void scheduleCatalogRefresh(WEEK_MS)
+        void scheduleCatalogRefresh(nextDelay)
           .catch((err) => logger.error({ err }, "unable to reschedule catalog refresh"));
       });
   }, delay);

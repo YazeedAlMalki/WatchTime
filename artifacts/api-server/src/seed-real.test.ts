@@ -824,6 +824,61 @@ describe("real catalog sync", () => {
     expect(delay).toBeLessThanOrEqual(WEEK_MS);
   });
 
+  it.each(["successful", "failed"] as const)(
+    "reschedules a %s scheduled start with the appropriate delay",
+    async (outcome) => {
+      const originalItems = [...sourceItems];
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      const retryDelay = 5 * 60 * 1000;
+      const expectedDelay = outcome === "failed" ? retryDelay : WEEK_MS;
+      const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+        delay === WEEK_MS || delay === retryDelay
+          ? [{
+              fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+              delay,
+              timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+            }]
+          : []);
+      const [previous] = await db.select({ id: catalogSyncRunsTable.id })
+        .from(catalogSyncRunsTable).orderBy(desc(catalogSyncRunsTable.id)).limit(1);
+      try {
+        // No provider calls are needed to confirm that a start was enqueued.
+        sourceItems.splice(0, sourceItems.length);
+        await scheduleCatalogRefresh(WEEK_MS);
+        if (outcome === "failed") {
+          vi.spyOn(db, "insert").mockImplementation(() => {
+            throw new Error("temporary enqueue failure");
+          });
+        }
+
+        // Invoke captured callbacks, never advance or wait for a week-long timer.
+        const attempts = outcome === "failed" ? 2 : 1;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          refreshTimers().at(-1)!.fire();
+          await vi.waitFor(() => {
+            expect(refreshTimers()).toHaveLength(attempt + 2);
+          });
+          expect(refreshTimers().at(-1)?.delay).toBe(expectedDelay);
+        }
+
+        if (outcome === "successful") {
+          const [run] = await db.select().from(catalogSyncRunsTable)
+            .orderBy(desc(catalogSyncRunsTable.id)).limit(1);
+          expect(run.id).toBeGreaterThan(previous?.id ?? 0);
+          catalogRunIds.push(run.id);
+          expect(run.trigger).toBe("scheduled");
+          await waitForCatalogRun(run.id, (result) => result.status === "succeeded");
+        } else {
+          expect(db.insert).toHaveBeenCalledTimes(2);
+        }
+      } finally {
+        scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+        sourceItems.splice(0, sourceItems.length, ...originalItems);
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
   it("keeps only one pending refresh when scheduling is initialized twice", async () => {
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
