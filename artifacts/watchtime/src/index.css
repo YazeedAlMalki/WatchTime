@@ -5,6 +5,17 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.public-navbar-content {
+  container-name: public-navbar-content;
+  container-type: inline-size;
+}
+
+@container public-navbar-content (max-width: 326px) {
+  .public-navbar-brand-label {
+    display: none;
+  }
+}
+
 @theme inline {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));

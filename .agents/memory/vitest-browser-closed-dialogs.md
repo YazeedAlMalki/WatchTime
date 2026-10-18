@@ -3,8 +3,8 @@ name: Vitest browser closed dialogs
 description: How to assert native dialog closed state in Vitest browser mode
 ---
 
-Closed native `<dialog>` elements are excluded from accessible-role queries in Vitest browser mode; a negative `toBeVisible()` assertion against a role locator can fail because the locator cannot find the element at all. Vitest's browser `page` also does not expose Playwright's general `locator()` method.
+Closed native `<dialog>` elements are excluded from accessible-role queries in Vitest browser mode; a negative `toBeVisible()` assertion against a role locator can fail because the locator cannot find the element at all. Vitest's browser `page` also does not expose Playwright's general `locator()` method, and its role/test-id locator wrappers do not implement Playwright's `evaluate()` method.
 
-**Why:** Attempts to locate a closed dialog with either a role query or `page.locator()` failed even though the element remained in the DOM.
+**Why:** Attempts to locate a closed dialog with either a role query or `page.locator()` failed even though the element remained in the DOM. A direct call to `evaluate()` on a browser locator also failed, despite that method being present on Playwright locators.
 
-**How to apply:** Use role and accessible-name locators while a dialog is open, and inspect the DOM element's `open` property when verifying it closed; after navigation unmounts it, verify absence from the document.
+**How to apply:** Use role and accessible-name locators while a dialog is open, and inspect the DOM element's `open` property when verifying it closed; after navigation unmounts it, verify absence from the document. For geometry or other DOM-only assertions, query the native element from `document` and inspect it directly.
