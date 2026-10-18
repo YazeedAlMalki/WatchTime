@@ -37,3 +37,4 @@
 - [Catalog worker ownership](catalog-worker-ownership.md) — queued recovery needs startup ownership proof; use short transaction leases rather than extra long-lived pool clients.
 - [Internal publish probes](internal-publish-probes.md) — startup checks may lack a trusted public hostname; keep liveness independent of Clerk without weakening host validation.
 - [React Native event simulation](react-native-event-simulation.md) — await version 14 fireEvent calls; disabled nested controls can make simulators target different handlers.
+- [React Query retry test timers](react-query-retry-test-timers.md) — failed mutations replaced by retries can leave garbage-collection timers; use infinite test cache lifetimes.

@@ -110,8 +110,11 @@ function UpNextCard({ show }: { show: TrackedShow }) {
           {ep ? (
             <Pressable
               testID={`mark-watched-${ep.id}`}
+              accessibilityRole="button"
+              accessibilityLabel={markWatched.isError ? 'Retry marking episode as watched' : 'Mark episode as watched'}
               disabled={markWatched.isPending}
-              onPress={() => {
+              onPress={(event) => {
+                event.stopPropagation?.();
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 markWatched.mutate({ episodeId: ep.id, data: { includePrevious: true } });
               }}
@@ -129,13 +132,21 @@ function UpNextCard({ show }: { show: TrackedShow }) {
                 },
               ]}
             >
-              <Feather name="check" size={14} color={c.primaryForeground} />
+              <Feather name={markWatched.isError ? 'refresh-cw' : 'check'} size={14} color={c.primaryForeground} />
               <Text style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>
-                Watched
+                {markWatched.isPending ? 'Saving…' : markWatched.isError ? 'Retry' : 'Watched'}
               </Text>
             </Pressable>
           ) : null}
         </View>
+        {ep && markWatched.isError ? (
+          <Text
+            accessibilityRole="alert"
+            style={{ color: c.destructive, fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 8 }}
+          >
+            Couldn't mark this episode as watched. Please try again.
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );

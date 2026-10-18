@@ -19,6 +19,7 @@ const mockEpisodes = [
 const mockSeasonFetch = jest.fn();
 const mockTitleFetch = jest.fn();
 const mockActivityFetch = jest.fn();
+const mockMarkRequest = jest.fn();
 
 const mockTitleData = () => ({
   id: 42,
@@ -157,6 +158,7 @@ jest.mock('@workspace/api-client-react', () => {
     useMarkEpisodeWatched: (options: { mutation: { onSuccess: () => void } }) =>
       useMutation({
         mutationFn: async ({ episodeId, data }: { episodeId: number; data: { includePrevious?: boolean } }) => {
+          await mockMarkRequest({ episodeId, data });
           if (data.includePrevious) {
             const target = mockEpisodes.find((ep) => ep.id === episodeId)!;
             mockEpisodes
@@ -198,13 +200,18 @@ function SeasonRows({ season }: { season: number }) {
   );
 }
 
-it('refreshes title, seasons, and My Shows activity after marking on Home', async () => {
+it('shows a failed Home mark and refreshes title, seasons, and activity after a successful retry', async () => {
   mockWatched.clear();
+  mockMarkRequest.mockReset();
+  mockMarkRequest.mockRejectedValueOnce(new Error('Network unavailable'));
   mockSeasonFetch.mockClear();
   mockTitleFetch.mockClear();
   mockRouter.push.mockClear();
   const client = new QueryClient({
-    defaultOptions: { queries: { staleTime: Infinity, retry: false }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
   });
   const { getGetSeasonQueryKey, getGetTitleQueryKey, getGetMyRecentActivityQueryKey } = require('@workspace/api-client-react');
   const activityKey = getGetMyRecentActivityQueryKey();
@@ -222,13 +229,52 @@ it('refreshes title, seasons, and My Shows activity after marking on Home', asyn
     <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
   );
   await waitFor(() => expect(home.getByTestId('mark-watched-201')).toBeTruthy());
-  fireEvent.press(home.getByTestId('mark-watched-201'));
+  const stopPropagation = jest.fn();
+  fireEvent.press(home.getByTestId('mark-watched-201'), { stopPropagation });
+  await waitFor(() => {
+    expect(home.getByRole('alert').props.children).toBe(
+      "Couldn't mark this episode as watched. Please try again.",
+    );
+    expect(home.getByRole('button', { name: 'Retry marking episode as watched' })).toBeTruthy();
+  });
+  expect(stopPropagation).toHaveBeenCalledTimes(1);
+  expect(mockRouter.push).not.toHaveBeenCalled();
+  expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+  expect(mockMarkRequest).toHaveBeenLastCalledWith({
+    episodeId: 201, data: { includePrevious: true },
+  });
+  expect(mockWatched.size).toBe(0);
+  expect(home.getByText('0/4 episodes')).toBeTruthy();
+  expect(home.getByText('S2 · E1 — Third')).toBeTruthy();
+  expect(home.queryByText('Watched')).toBeNull();
+  expect(client.getQueryState(getGetTitleQueryKey(42))?.isInvalidated).toBe(false);
+  expect(client.getQueryState(activityKey)?.isInvalidated).toBe(false);
+  for (const season of mockSeasons) {
+    expect(client.getQueryState(getGetSeasonQueryKey(42, season.seasonNumber))?.isInvalidated).toBe(false);
+  }
+
+  let finishRetry!: () => void;
+  mockMarkRequest.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRetry = resolve; }));
+  fireEvent.press(home.getByRole('button', { name: 'Retry marking episode as watched' }), { stopPropagation });
+  await waitFor(() => {
+    expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+    expect(home.getByText('Saving…')).toBeTruthy();
+    expect(home.getByTestId('mark-watched-201')).toBeDisabled();
+  });
+  expect(home.queryByRole('alert')).toBeNull();
+  expect(mockWatched.size).toBe(0);
+  await act(async () => finishRetry());
   await waitFor(() => {
     expect([...mockWatched].sort()).toEqual([101, 102, 201]);
     expect(client.getQueryState(getGetSeasonQueryKey(42, 1))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetSeasonQueryKey(42, 2))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetTitleQueryKey(42))?.isInvalidated).toBe(true);
     expect(client.getQueryState(activityKey)?.isInvalidated).toBe(true);
+    expect(home.queryByRole('alert')).toBeNull();
+    expect(home.getByText('3/4 episodes')).toBeTruthy();
+  });
+  expect(mockMarkRequest).toHaveBeenLastCalledWith({
+    episodeId: 201, data: { includePrevious: true },
   });
 
   fireEvent.press(home.getByTestId('upnext-42'));
