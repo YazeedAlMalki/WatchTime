@@ -142,22 +142,28 @@ describe("restored admin actions", () => {
       { userId: adminId, category: "feature", message: "closed feature", status: "closed" },
     ]).returning();
     const ids = Object.fromEntries(inserted.map((feedback) => [feedback.message, feedback.id]));
-    const listIds = (body: Array<{ id: number }>) => body.map(({ id }) => id).sort((a, b) => a - b);
+    const fixtureIds = new Set(inserted.map(({ id }) => id));
+    const listIds = (body: Array<{ id: number }>) => body
+      .map(({ id }) => id).filter((id) => fixtureIds.has(id)).sort((a, b) => a - b);
 
     const byStatus = await request(app).get("/api/admin/feedback?status=new").expect(200);
     expect(listIds(byStatus.body)).toEqual([ids["new bug"], ids["new feature"]].sort((a, b) => a - b));
+    expect(byStatus.body.every((row: { status: string }) => row.status === "new")).toBe(true);
 
     const byCategory = await request(app).get("/api/admin/feedback?category=bug").expect(200);
     expect(listIds(byCategory.body)).toEqual([ids["new bug"], ids["closed bug"]].sort((a, b) => a - b));
+    expect(byCategory.body.every((row: { category: string }) => row.category === "bug")).toBe(true);
 
     const byBoth = await request(app).get("/api/admin/feedback?status=new&category=bug").expect(200);
-    expect(byBoth.body).toMatchObject([{
+    expect(byBoth.body).toEqual(expect.arrayContaining([expect.objectContaining({
       id: ids["new bug"],
       userEmail: "admin-actions@example.test",
       message: "new bug",
       status: "new",
       category: "bug",
-    }]);
+    })]));
+    expect(byBoth.body.every((row: { status: string; category: string }) =>
+      row.status === "new" && row.category === "bug")).toBe(true);
     expect(listIds(byBoth.body)).toEqual([ids["new bug"]]);
   });
 });

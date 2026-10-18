@@ -79,6 +79,7 @@ import TabLayout from '../app/(tabs)/_layout';
 const expectedTabs = [
   ['index', 'Home'],
   ['browse', 'Browse'],
+  ['mood', 'Mood'],
   ['watchlist', 'Watchlist'],
   ['my-shows', 'My Shows'],
   ['profile', 'Profile'],
@@ -95,32 +96,32 @@ describe('TabLayout', () => {
     mockAuthAvailability.current = true;
   });
 
-  it('renders the five aligned NativeTabs triggers when liquid glass is available', async () => {
+  it('renders the six aligned NativeTabs triggers when liquid glass is available', async () => {
     mockIsLiquidGlassAvailable.mockReturnValue(true);
 
     const { getByTestId, queryByTestId } = await render(<TabLayout />);
 
     expect(getByTestId('native-tabs')).toBeTruthy();
     expect(queryByTestId('classic-tabs')).toBeNull();
-    expect(mockNativeRoutes).toHaveLength(5);
-    expect(mockNativeLabels).toHaveLength(5);
+    expect(mockNativeRoutes).toHaveLength(6);
+    expect(mockNativeLabels).toHaveLength(6);
     expect(mockNativeRoutes.map((route, index) => [route, mockNativeLabels[index]])).toEqual(
       expectedTabs,
     );
   });
 
-  it('renders the five aligned classic tab screens without liquid glass', async () => {
+  it('renders the six aligned classic tab screens without liquid glass', async () => {
     mockIsLiquidGlassAvailable.mockReturnValue(false);
 
     const { getByTestId, queryByTestId } = await render(<TabLayout />);
 
     expect(getByTestId('classic-tabs')).toBeTruthy();
     expect(queryByTestId('native-tabs')).toBeNull();
-    expect(mockClassicTabs).toHaveLength(5);
+    expect(mockClassicTabs).toHaveLength(6);
     expect(mockClassicTabs).toEqual(expectedTabs);
   });
 
-  it('keeps only Home and Browse tabs visible when sign-in is unavailable', async () => {
+  it('keeps only public tabs visible when sign-in is unavailable', async () => {
     mockIsLiquidGlassAvailable.mockReturnValue(false);
     mockAuthAvailability.current = false;
 
@@ -129,6 +130,7 @@ describe('TabLayout', () => {
     expect(mockClassicHrefs).toEqual([
       ['index', undefined],
       ['browse', undefined],
+      ['mood', undefined],
       ['watchlist', null],
       ['my-shows', null],
       ['profile', null],
@@ -141,6 +143,6 @@ describe('TabLayout', () => {
 
     await render(<TabLayout />);
 
-    expect(mockNativeRoutes).toEqual(['index', 'browse']);
+    expect(mockNativeRoutes).toEqual(['index', 'browse', 'mood']);
   });
 });

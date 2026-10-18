@@ -330,7 +330,7 @@ describe("GET /api/admin/integrations", () => {
     await db.execute(sql`
       update safety_records
       set updated_at = '294276-12-31 23:59:59.999999'::timestamp
-      where id = ${rating.id}
+      where id = ${ratings[0].id}
     `);
 
     const extremeFiniteResponse = await request(app)
@@ -343,7 +343,7 @@ describe("GET /api/admin/integrations", () => {
     expect(extremeFiniteHealth).toMatchObject({
       status: "healthy",
       successRatePercent: 97,
-      malformedRefreshTimestampCount: 1,
+      malformedRefreshTimestampCount: 2,
     });
 
     await db

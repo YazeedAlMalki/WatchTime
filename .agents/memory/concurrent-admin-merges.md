@@ -14,3 +14,9 @@ After concurrent task changes land, inspect the complete edited test block even 
 **Why:** A startup-test merge preserved each task's apparent intent but duplicated declarations and moved existing assertions; Jest and API-contract validation exposed different parts of the damage.
 
 **How to apply:** Re-read the whole affected test section after a concurrent merge and run the same typecheck used by task validation before marking the work complete.
+
+Completion can reconcile newer main changes before running validation.
+
+**Why:** A passing local test run can precede a changed test tree with displaced assertions or out-of-scope variables.
+
+**How to apply:** If submission reports different test counts or failures than the local run, compare the resulting current files with main and repair the reconciled test scopes rather than treating the failure as flaky.

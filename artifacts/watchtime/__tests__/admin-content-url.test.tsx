@@ -41,7 +41,11 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl(new URL(shared, "https://example.test").search)).toMatchObject({
       tab: "content", region: "GB", q: "Star Wars & Friends", ownership: "all",
     });
-    const changedRegion = adminContentUrl(new URL(shared, "https://example.test").search, "content", "FR");
+    const changedRegion = adminContentUrl(
+      new URL(shared, "https://example.test").search,
+      "content",
+      "FR",
+    );
     expect(readAdminContentUrl(new URL(changedRegion, "https://example.test").search)).toMatchObject({
       tab: "content", region: "FR", q: "Star Wars & Friends", ownership: "all",
     });
@@ -64,8 +68,17 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl(new URL(selected, "https://example.test").search)).toMatchObject({
       tab: "content", region: "GB", q: "Alien", ownership: "provider",
     });
-    const changedSearch = adminContentUrl(new URL(selected, "https://example.test").search, "content", "GB", "Arrival");
-    const changedRegion = adminContentUrl(new URL(changedSearch, "https://example.test").search, "content", "FR");
+    const changedSearch = adminContentUrl(
+      new URL(selected, "https://example.test").search,
+      "content",
+      "GB",
+      "Arrival",
+    );
+    const changedRegion = adminContentUrl(
+      new URL(changedSearch, "https://example.test").search,
+      "content",
+      "FR",
+    );
     expect(readAdminContentUrl(new URL(changedRegion, "https://example.test").search)).toMatchObject({
       tab: "content", region: "FR", q: "Arrival", ownership: "provider",
     });
@@ -248,8 +261,16 @@ describe("admin content URL", () => {
       .toMatchObject({ ownership: "provider", aliasPage: 1, aliasCursor: null });
   });
 
+  it("keeps the snapshot cursor when navigating back to the first alternate-title page", () => {
+    const cursor = "00000000-0000-0000-0000-000000000001:0";
+    expect(readAdminContentUrl(`?tab=content&aliasPage=1&aliasCursor=${cursor}`))
+      .toMatchObject({ aliasPage: 1, aliasCursor: cursor });
+  });
+
   it("resets invalid alternate-title page numbers and oversized cursors", () => {
     expect(readAdminContentUrl("?tab=content&aliasPage=0&aliasCursor=bad"))
+      .toMatchObject({ aliasPage: 1, aliasCursor: null });
+    expect(readAdminContentUrl("?tab=content&aliasPage=1&aliasCursor=bad"))
       .toMatchObject({ aliasPage: 1, aliasCursor: null });
     expect(readAdminContentUrl(`?tab=content&aliasPage=3&aliasCursor=${"x".repeat(4097)}`))
       .toMatchObject({ aliasPage: 1, aliasCursor: null });

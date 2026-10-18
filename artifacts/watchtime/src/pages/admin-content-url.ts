@@ -54,7 +54,8 @@ export function readAdminContentUrl(search: string): {
       : null;
   const aliasCursor = rawAliasCursor &&
       rawAliasCursor.length <= 4096 &&
-      parsedAliasPage !== null
+      parsedAliasPage !== null &&
+      (parsedAliasPage > 1 || /^([0-9a-f-]{36}):0$/i.test(rawAliasCursor))
     ? rawAliasCursor
     : null;
   const malformedRefreshTimestamp = tab === "content" && params.get("malformedRefreshTimestamp") === "true";

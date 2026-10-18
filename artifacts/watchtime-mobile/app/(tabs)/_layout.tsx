@@ -21,6 +21,10 @@ function NativeTabLayout({ publicOnly }: { publicOnly: boolean }) {
         <NativeTabs.Trigger.Icon sf={{ default: 'magnifyingglass', selected: 'magnifyingglass' }} />
         <NativeTabs.Trigger.Label>Browse</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="mood">
+        <NativeTabs.Trigger.Icon sf={{ default: 'sparkles', selected: 'sparkles' }} />
+        <NativeTabs.Trigger.Label>Mood</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
       {!publicOnly ? (
         <>
           <NativeTabs.Trigger name="watchlist">
@@ -119,6 +123,20 @@ function ClassicTabLayout({ publicOnly }: { publicOnly: boolean }) {
               <SymbolView name="magnifyingglass" tintColor={color} size={24} />
             ) : (
               <Feather name="search" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="mood"
+        options={{
+          title: 'Mood',
+          tabBarAccessibilityLabel: 'Discover by mood',
+          tabBarButtonTestID: 'tab-mood',
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="sparkles" tintColor={color} size={24} />
+            ) : (
+              <Feather name="compass" size={22} color={color} />
             ),
         }}
       />

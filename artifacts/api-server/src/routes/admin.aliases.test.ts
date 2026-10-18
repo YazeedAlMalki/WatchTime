@@ -131,6 +131,12 @@ describe("admin title aliases", () => {
       }],
     }).returning({ id: safetyRecordsTable.id });
 
+    // SQL ranks malformed candidates before the decoded-row mock is applied.
+    // Keep the database fixture malformed as well as its simulated JS value.
+    await db.execute(sql`
+      update safety_records set updated_at = 'infinity'::timestamp
+      where id = ${rating.id}
+    `);
     const restoreSelect = mockMalformedSafetyTimestamp(db, rating.id, malformedTimestamp);
 
     const expectedRating = {

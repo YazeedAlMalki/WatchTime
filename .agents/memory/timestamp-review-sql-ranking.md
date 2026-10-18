@@ -8,3 +8,9 @@ When an admin timestamp-review query ranks candidate ratings in SQL instead of r
 **Why:** The filtered query decides whether a title belongs on a page before full content is loaded. A mismatch with the shared resolver can hide a malformed selected rating or include one that is not selected.
 
 **How to apply:** Whenever rating-selection rules or timestamp parsing change, update the SQL ranking in the admin timestamp-review route and its route tests alongside the shared resolver.
+
+Tests that combine SQL preselection with injected malformed JavaScript timestamps must also make the backing database timestamp malformed.
+
+**Why:** A decoded-row mock changes the loaded record, not the earlier SQL eligibility decision; a valid database fixture can be correctly excluded before the mock is reached.
+
+**How to apply:** Use a real PostgreSQL special timestamp for SQL eligibility, then inject the desired invalid Date or string when testing response serialization.

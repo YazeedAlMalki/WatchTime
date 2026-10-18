@@ -906,7 +906,7 @@ describe("real catalog sync", () => {
       const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
       try {
         await scheduleCatalogRefresh(WEEK_MS);
-        const timerIndex = setTimeoutSpy.mock.calls.findLastIndex(([, delay]) => delay === WEEK_MS);
+        const timerIndex = setTimeoutSpy.mock.calls.map(([, delay]) => delay).lastIndexOf(WEEK_MS);
         const existingTimer = setTimeoutSpy.mock.results[timerIndex]?.value as NodeJS.Timeout;
         expect(existingTimer).toBeDefined();
         const pendingTimers = vi.getTimerCount();
@@ -950,7 +950,7 @@ describe("real catalog sync", () => {
       // Use one known item so the scheduled callback runs a real, gated sync.
       sourceItems.splice(0, sourceItems.length, testItem);
       await scheduleCatalogRefresh(WEEK_MS);
-      const firstIndex = setTimeoutSpy.mock.calls.findLastIndex(([, delay]) => delay === WEEK_MS);
+      const firstIndex = setTimeoutSpy.mock.calls.map(([, delay]) => delay).lastIndexOf(WEEK_MS);
       const first = setTimeoutSpy.mock.results[firstIndex]?.value as NodeJS.Timeout;
       const fireFirst = setTimeoutSpy.mock.calls[firstIndex]?.[0] as () => void;
       scheduledTimers.push(first);
@@ -958,7 +958,7 @@ describe("real catalog sync", () => {
 
       // The replacement is installed while the previous scheduled start is pending.
       await scheduleCatalogRefresh(WEEK_MS / 2);
-      const secondIndex = setTimeoutSpy.mock.calls.findLastIndex(([, delay]) => delay === WEEK_MS / 2);
+      const secondIndex = setTimeoutSpy.mock.calls.map(([, delay]) => delay).lastIndexOf(WEEK_MS / 2);
       const second = setTimeoutSpy.mock.results[secondIndex]?.value as NodeJS.Timeout;
       scheduledTimers.push(second);
       expect(clearTimeoutSpy).toHaveBeenCalledWith(first);

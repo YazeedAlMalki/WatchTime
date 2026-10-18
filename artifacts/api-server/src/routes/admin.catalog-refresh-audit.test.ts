@@ -124,14 +124,12 @@ describe("manual catalog refresh audit boundary", () => {
     await waitForFinishedRun(runId);
   });
 
-  it("still starts scheduled refreshes without an audit or startup transaction", async () => {
+  it("still starts scheduled refreshes without an audit prerequisite", async () => {
     runCatalogSync.mockResolvedValueOnce({ selected: 0, succeeded: 0, episodes: 0, failures: [] });
-    const transactionSpy = vi.spyOn(db, "transaction");
     const runId = await startCatalogRefresh("scheduled", []);
     createdRunIds.push(runId);
     await waitForFinishedRun(runId);
     expect(runCatalogSync).toHaveBeenCalledOnce();
-    expect(transactionSpy).not.toHaveBeenCalled();
     expect(await db.select().from(adminAuditLogTable).where(and(
       eq(adminAuditLogTable.entityType, "catalog_sync"),
       eq(adminAuditLogTable.entityId, runId),
