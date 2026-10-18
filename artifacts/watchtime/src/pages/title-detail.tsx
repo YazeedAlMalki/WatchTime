@@ -14,6 +14,7 @@ import {
   useCreateSafetyContribution,
   useCreateSafetyReport,
   getGetSeasonQueryKey,
+  getGetMyMoviesQueryKey,
   getGetMyRecentActivityQueryKey,
   getGetTitleSafetyQueryKey,
 } from "@workspace/api-client-react";
@@ -133,6 +134,8 @@ export default function TitleDetailPage() {
     const action = title.watched ? "unmark" : "mark";
     const onSuccess = () => {
       invalidateTitle();
+      queryClient.invalidateQueries({ queryKey: getGetMyMoviesQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
       trackEvent("title_watch_changed", { action, title_id: titleId, title_type: title.type });
     };
     if (title.watched) unmarkWatched.mutate({ id: titleId }, { onSuccess });

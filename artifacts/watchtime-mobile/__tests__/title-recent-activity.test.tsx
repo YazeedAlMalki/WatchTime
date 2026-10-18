@@ -3,13 +3,25 @@ import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 let mockWatched = false;
+let mockTitleIsMovie = false;
+let mockMovieWatched = false;
 const mockActivityFetch = jest.fn();
+const mockMovieFetch = jest.fn();
 const mockMarkRequest = jest.fn();
 const mockUnmarkRequest = jest.fn();
+const mockMarkTitleRequest = jest.fn();
 const mockActivity = () => mockWatched ? [{
   titleId: 42, titleName: 'Example Show', posterUrl: null,
   kind: 'episode', episodeLabel: 'S1E1 — Pilot', watchedAt: '2026-10-18T00:00:00.000Z',
+}] : mockMovieWatched ? [{
+  titleId: 42, titleName: 'Example Movie', posterUrl: null,
+  kind: 'movie', episodeLabel: null, watchedAt: '2026-10-18T00:00:00.000Z',
 }] : [];
+const mockMovie = {
+  id: 42, name: 'Example Movie', type: 'movie', year: 2024,
+  genres: [], altTitles: [], providers: [], watched: true,
+  collectionCursor: '2026-10-18T00:00:00.000Z:42',
+};
 const mockSeason = { seasonNumber: 1, name: 'Season 1', episodeCount: 1 };
 
 jest.mock('expo-router', () => ({
@@ -69,8 +81,13 @@ jest.mock('@workspace/api-client-react', () => {
     useGetTitle: (id: number) => useQuery({
       queryKey: titleKey(id),
       queryFn: () => ({
-        id, name: 'Example Show', type: 'series', genres: [], altTitles: [],
-        providers: [], seasons: [{ ...mockSeason, watchedCount: Number(mockWatched) }],
+        id,
+        name: mockTitleIsMovie ? 'Example Movie' : 'Example Show',
+        type: mockTitleIsMovie ? 'movie' : 'series',
+        genres: [], altTitles: [],
+        providers: [],
+        watched: mockMovieWatched,
+        seasons: mockTitleIsMovie ? [] : [{ ...mockSeason, watchedCount: Number(mockWatched) }],
       }),
     }),
     useGetSeason: (id: number, season: number, options: { query: { enabled: boolean } }) =>
@@ -92,6 +109,23 @@ jest.mock('@workspace/api-client-react', () => {
         },
         onSuccess: options.mutation.onSuccess,
       }),
+    useMarkTitleWatched: (options: { mutation: { onSuccess: () => void } }) =>
+      useMutation({
+        mutationFn: async () => {
+          await mockMarkTitleRequest();
+          mockMovieWatched = true;
+          return { ok: true };
+        },
+        onSuccess: options.mutation.onSuccess,
+      }),
+    useUnmarkTitleWatched: (options: { mutation: { onSuccess: () => void } }) =>
+      useMutation({
+        mutationFn: async () => {
+          mockMovieWatched = false;
+          return { ok: true };
+        },
+        onSuccess: options.mutation.onSuccess,
+      }),
     useUnmarkEpisodeWatched: (options: { mutation: { onSuccess: () => void } }) =>
       useMutation({
         mutationFn: async (request: unknown) => {
@@ -102,9 +136,11 @@ jest.mock('@workspace/api-client-react', () => {
         onSuccess: options.mutation.onSuccess,
       }),
     useAddToWatchlist: idleMutation, useRemoveFromWatchlist: idleMutation,
-    useMarkTitleWatched: idleMutation, useUnmarkTitleWatched: idleMutation,
     getMyShows: async () => [], getMyInProgressShows: async () => [],
-    getMyMovies: async () => [],
+    getMyMovies: async () => {
+      mockMovieFetch();
+      return mockMovieWatched ? [mockMovie] : [];
+    },
     mergeTrackedShows: (shows: unknown[]) => shows,
     useGetMyRecentActivity: (options: {
       query: { enabled: boolean; queryKey: readonly unknown[] };
@@ -126,6 +162,8 @@ it.each([
   { action: 'mark', initiallyWatched: false },
   { action: 'unmark', initiallyWatched: true },
 ])('refreshes cached My Shows History after $action from title detail', async ({ initiallyWatched }) => {
+  mockTitleIsMovie = false;
+  mockMovieWatched = false;
   mockWatched = initiallyWatched;
   jest.clearAllMocks();
   const client = new QueryClient({
@@ -174,6 +212,63 @@ it.each([
   });
   await act(async () => shows.unmount());
   client.clear();
+});
+
+it('refreshes the account-scoped Movies and History caches after marking a movie watched', async () => {
+  mockTitleIsMovie = true;
+  mockMovieWatched = false;
+  mockWatched = false;
+  jest.clearAllMocks();
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const { getGetMyMoviesQueryKey, getGetMyRecentActivityQueryKey } =
+    require('@workspace/api-client-react');
+  const moviesKey = [...getGetMyMoviesQueryKey(), 'account', 'activity-user', 'infinite'];
+  const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
+  client.setQueryData(moviesKey, { pages: [[]], pageParams: [undefined] });
+  client.setQueryData(activityKey, []);
+
+  const detail = await render(
+    <QueryClientProvider client={client}><TitleDetailScreen /></QueryClientProvider>,
+  );
+  await waitFor(() => expect(detail.getByTestId('watched-toggle')).toBeTruthy());
+  await fireEvent.press(detail.getByTestId('watched-toggle'));
+  await waitFor(() => {
+    expect(mockMovieWatched).toBe(true);
+    expect(client.getQueryState(moviesKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(activityKey)?.isInvalidated).toBe(true);
+  });
+  expect(mockMovieFetch).not.toHaveBeenCalled();
+  expect(mockActivityFetch).not.toHaveBeenCalled();
+  await act(async () => detail.unmount());
+
+  const shows = await render(
+    <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
+  );
+  await waitFor(() => {
+    expect(mockMovieFetch).toHaveBeenCalledTimes(1);
+    expect(mockActivityFetch).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(moviesKey)).toMatchObject({
+      pages: [[expect.objectContaining({ id: 42, name: 'Example Movie' })]],
+    });
+    expect(client.getQueryData(activityKey)).toEqual([
+      expect.objectContaining({ titleId: 42, kind: 'movie', titleName: 'Example Movie' }),
+    ]);
+  });
+  fireEvent.press(shows.getByTestId('tab-history'));
+  await waitFor(() => {
+    expect(shows.getByTestId('history-item-42')).toBeTruthy();
+    expect(shows.getByText('Example Movie')).toBeTruthy();
+    expect(shows.getByText('movie')).toBeTruthy();
+  });
+  await act(async () => shows.unmount());
+  client.clear();
+  mockTitleIsMovie = false;
 });
 
 afterEach(cleanup);

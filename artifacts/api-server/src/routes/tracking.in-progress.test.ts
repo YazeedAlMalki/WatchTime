@@ -18,9 +18,14 @@ vi.mock("../middlewares/clerkProxyMiddleware", () => ({
 }));
 
 import supertest from "supertest";
-import app from "../app";
+import express from "express";
+import trackingRouter from "./tracking";
 import { db, episodesTable, titlesTable, usersTable, watchedEpisodesTable, watchedTitlesTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
+
+const app = express();
+app.use(express.json());
+app.use("/api", trackingRouter);
 
 let titleIds: number[] = [];
 let episodeIds: number[] = [];
@@ -188,6 +193,51 @@ describe("in-progress show discovery across large libraries", () => {
       await db.delete(watchedEpisodesTable).where(
         and(eq(watchedEpisodesTable.userId, USER_ID), eq(watchedEpisodesTable.titleId, titleId)),
       );
+    }
+  });
+
+  it("serves a watched movie in the shared movie collection and recent activity", async () => {
+    const [movie] = await db
+      .insert(titlesTable)
+      .values({ name: "__progress_page_watched_movie__", type: "movie" })
+      .returning({ id: titlesTable.id });
+
+    try {
+      const write = await supertest(app)
+        .post(`/api/titles/${movie.id}/watched`)
+        .send({});
+      expect(write.status).toBe(200);
+
+      const [movies, history] = await Promise.all([
+        supertest(app).get("/api/me/movies").query({ limit: 24 }),
+        supertest(app).get("/api/me/recent"),
+      ]);
+      expect(movies.status).toBe(200);
+      expect(history.status).toBe(200);
+      expect(movies.body).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: movie.id,
+          name: "__progress_page_watched_movie__",
+          type: "movie",
+          watched: true,
+        }),
+      ]));
+      expect(history.body).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          titleId: movie.id,
+          titleName: "__progress_page_watched_movie__",
+          kind: "movie",
+          episodeLabel: null,
+        }),
+      ]));
+    } finally {
+      await db.delete(watchedTitlesTable).where(
+        and(
+          eq(watchedTitlesTable.userId, USER_ID),
+          eq(watchedTitlesTable.titleId, movie.id),
+        ),
+      );
+      await db.delete(titlesTable).where(eq(titlesTable.id, movie.id));
     }
   });
 

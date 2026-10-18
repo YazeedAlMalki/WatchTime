@@ -53,6 +53,7 @@ export function readAdminContentUrl(search: string): {
       ? Number(rawAliasPage)
       : null;
   const aliasCursor = rawAliasCursor &&
+      rawAliasCursor.length >= 4 &&
       rawAliasCursor.length <= 4096 &&
       parsedAliasPage !== null &&
       (parsedAliasPage > 1 || /^([0-9a-f-]{36}):0$/i.test(rawAliasCursor))

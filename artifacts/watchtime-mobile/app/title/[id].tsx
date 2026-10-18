@@ -39,6 +39,7 @@ import {
   getGetSeasonQueryKey,
   getGetMyWatchlistQueryKey,
   getGetMyShowsQueryKey,
+  getGetMyMoviesQueryKey,
   getGetMyRecentActivityQueryKey,
   getGetMyRecommendationsQueryKey,
   getGetTitleSafetyQueryKey,
@@ -828,10 +829,15 @@ export default function TitleDetailScreen() {
     queryClient.invalidateQueries({ queryKey: getGetMyWatchlistQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
   };
+  const invalidateWatchedTitle = () => {
+    invalidateTitle();
+    queryClient.invalidateQueries({ queryKey: getGetMyMoviesQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
+  };
   const addWatchlist = useAddToWatchlist({ mutation: { onSuccess: invalidateTitle } });
   const removeWatchlist = useRemoveFromWatchlist({ mutation: { onSuccess: invalidateTitle } });
-  const markWatched = useMarkTitleWatched({ mutation: { onSuccess: invalidateTitle } });
-  const unmarkWatched = useUnmarkTitleWatched({ mutation: { onSuccess: invalidateTitle } });
+  const markWatched = useMarkTitleWatched({ mutation: { onSuccess: invalidateWatchedTitle } });
+  const unmarkWatched = useUnmarkTitleWatched({ mutation: { onSuccess: invalidateWatchedTitle } });
 
   if (!Number.isFinite(titleId)) return <ErrorState onRetry={() => router.back()} message="Invalid title" />;
   if (title.isLoading) return <Loading />;
