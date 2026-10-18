@@ -813,6 +813,111 @@ describe('mobile startup contracts', () => {
     });
   });
 
+  it('keeps personal home content hidden when Clerk rechecks auth and resolves signed out', async () => {
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'signed-out-recheck-user',
+    });
+    mockSignedInHomeQueryState.shows.current = {
+      data: [{
+        title: { id: 921, name: 'Recheck tracked show' },
+        nextEpisode: {
+          id: 9211,
+          seasonNumber: 3,
+          episodeNumber: 4,
+          name: 'Recheck next episode',
+        },
+        watchedEpisodes: 3,
+        totalEpisodes: 12,
+      }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.watchlist.current = {
+      data: [{ id: 922, name: 'Recheck watchlist title' }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.recommendations.current = {
+      data: [{
+        reason: 'Because you watched Recheck tracked show',
+        titles: [{ id: 923, name: 'Recheck recommendation' }],
+      }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+
+    const screen = await render(<HomeScreen />);
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+    await act(async () => {
+      pendingFrames[1]?.(0);
+    });
+
+    expect(screen.getByText('Recheck tracked show')).toBeTruthy();
+    expect(screen.getByText(/Recheck next episode/)).toBeTruthy();
+    expect(screen.getByText('Recheck watchlist title')).toBeTruthy();
+    expect(screen.getByText('Recheck recommendation')).toBeTruthy();
+
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: false,
+      isSignedIn: true,
+      userId: 'signed-out-recheck-user',
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByTestId('loading')).toBeTruthy();
+    expect(screen.queryByText('Recheck tracked show')).toBeNull();
+    expect(screen.queryByText(/Recheck next episode/)).toBeNull();
+    expect(screen.queryByText('Recheck watchlist title')).toBeNull();
+    expect(screen.queryByText('Recheck recommendation')).toBeNull();
+    expect(mockQueryEnabled.trending).toEqual([]);
+
+    mockTrendingQueryState.current = {
+      data: [{ id: 924, name: 'Public browse after recheck' }],
+      dataUpdatedAt: 456,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: false,
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.queryByText('Recheck tracked show')).toBeNull();
+    expect(screen.queryByText(/Recheck next episode/)).toBeNull();
+    expect(screen.queryByText('Recheck watchlist title')).toBeNull();
+    expect(screen.queryByText('Recheck recommendation')).toBeNull();
+    expect(screen.getByText('Track your shows.')).toBeTruthy();
+    expect(screen.getByText('Trending Now')).toBeTruthy();
+    expect(screen.getByText('Public browse after recheck')).toBeTruthy();
+    expect(mockQueryEnabled.shows).toEqual([false, true]);
+    expect(mockQueryEnabled.watchlist).toEqual([false, true]);
+    expect(mockQueryEnabled.recommendations).toEqual([false, true]);
+    expect(mockQueryEnabled.trending).toEqual([true]);
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
   it('hides personal home content immediately when Clerk signs out in place', async () => {
     mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: true });
     mockSignedInHomeQueryState.shows.current = {
