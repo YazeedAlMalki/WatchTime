@@ -200,6 +200,111 @@ describe("catalog refresh startup failure", () => {
 
 
 describe("catalog refresh recovery", () => {
+  it("rolls back a midway title-update failure, releases recovery locks, and recovers on retry", async () => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const staleAt = new Date(cutoff.getTime() - 1_000);
+    const runs = await db.insert(catalogSyncRunsTable).values([
+      { trigger: "manual", status: "queued", createdAt: staleAt },
+      { trigger: "manual", status: "running", createdAt: staleAt, startedAt: staleAt },
+    ]).returning();
+    const runIds = runs.map((run) => run.id);
+    createdRunIds.push(...runIds);
+    const items = await db.insert(catalogSyncItemsTable).values(runs.flatMap((run) => [
+      {
+        runId: run.id, itemKey: "unfinished", title: "Unfinished title", provider: "TVMaze",
+        status: run.status, startedAt: run.startedAt,
+      },
+      {
+        runId: run.id, itemKey: "completed", title: "Completed title", provider: "TVMaze",
+        status: "succeeded", startedAt: staleAt, finishedAt: staleAt,
+      },
+      {
+        runId: run.id, itemKey: "previously-failed", title: "Failed title", provider: "TVMaze",
+        status: "failed", error: "original provider error", finishedAt: staleAt,
+      },
+    ])).returning();
+    const recoveryError = new Error("database unavailable during title recovery");
+    const transaction = db.transaction.bind(db);
+    let titleUpdates = 0;
+    // Reserve a distinct session before recovery so reentrant session locks
+    // cannot make a leaked lock appear to have been released.
+    const lockProbe = await pool.connect();
+    const transactionSpy = vi.spyOn(db, "transaction").mockImplementationOnce((callback, config) =>
+      transaction(async (tx) => {
+        const update = tx.update.bind(tx);
+        const updateSpy = vi.spyOn(tx, "update").mockImplementation((table) => {
+          if (table === catalogSyncItemsTable && ++titleUpdates === 2) {
+            return {
+              set: () => ({
+                where: async () => {
+                  const pendingRuns = await tx.select().from(catalogSyncRunsTable)
+                    .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id);
+                  expect(pendingRuns.map((run) => run.status)).toEqual(["failed", "failed"]);
+                  const [updatedItem] = await tx.select().from(catalogSyncItemsTable)
+                    .where(eq(catalogSyncItemsTable.id, items[0].id));
+                  expect(updatedItem.status).toBe("failed");
+                  expect(updatedItem.finishedAt).toBeInstanceOf(Date);
+                  throw recoveryError;
+                },
+              }),
+            } as unknown as ReturnType<typeof tx.update>;
+          }
+          return update(table);
+        });
+        try {
+          return await callback(tx);
+        } finally {
+          updateSpy.mockRestore();
+        }
+      }, config),
+    );
+
+    try {
+      await expect(recoverInterruptedRuns(cutoff)).rejects.toBe(recoveryError);
+      transactionSpy.mockRestore();
+      expect(titleUpdates).toBe(2);
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id)).toEqual(runs);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(inArray(catalogSyncItemsTable.runId, runIds)).orderBy(catalogSyncItemsTable.id)).toEqual(items);
+
+      const catalogLock = await lockProbe.query<{ locked: boolean }>(
+        "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+      );
+      expect(catalogLock.rows[0].locked).toBe(true);
+      for (const runId of runIds) {
+        const workerLock = await lockProbe.query<{ locked: boolean }>(
+          "select pg_try_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1) as locked", [runId],
+        );
+        expect(workerLock.rows[0].locked).toBe(true);
+      }
+      await lockProbe.query("select pg_advisory_unlock_all()");
+
+      await recoverInterruptedRuns(cutoff);
+      const recoveredRuns = await db.select().from(catalogSyncRunsTable)
+        .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id);
+      expect(recoveredRuns.map((run) => run.status)).toEqual(["failed", "failed"]);
+      expect(recoveredRuns[0].error).toContain("retry the failed titles");
+      expect(recoveredRuns[1].error).toBe("Catalog refresh was interrupted by a server restart");
+      expect(recoveredRuns.every((run) => run.finishedAt instanceof Date)).toBe(true);
+      const recoveredItems = await db.select().from(catalogSyncItemsTable)
+        .where(inArray(catalogSyncItemsTable.runId, runIds)).orderBy(catalogSyncItemsTable.id);
+      for (const [index, item] of recoveredItems.entries()) {
+        if (items[index].itemKey === "unfinished") {
+          expect(item.status).toBe("failed");
+          expect(item.error).toBe(recoveredRuns.find((run) => run.id === item.runId)?.error);
+          expect(item.finishedAt).toBeInstanceOf(Date);
+        } else {
+          expect(item).toEqual(items[index]);
+        }
+      }
+    } finally {
+      transactionSpy.mockRestore();
+      await lockProbe.query("select pg_advisory_unlock_all()");
+      lockProbe.release();
+    }
+  });
+
   it("fails stale queued and interrupted runs and unfinished items, but preserves new and completed work", async () => {
     const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
     const staleAt = new Date(cutoff.getTime() - 1_000);
