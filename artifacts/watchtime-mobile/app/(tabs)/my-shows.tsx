@@ -215,9 +215,9 @@ function ShowRow({ show }: { show: TrackedShow }) {
                 },
               ]}
             >
-              <Feather name="check" size={13} color={c.primaryForeground} />
+              <Feather name={markWatched.isError ? 'refresh-cw' : 'check'} size={13} color={c.primaryForeground} />
               <Text style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>
-                Watched
+                {markWatched.isError ? 'Retry' : 'Watched'}
               </Text>
             </Pressable>
           </View>
@@ -229,6 +229,14 @@ function ShowRow({ show }: { show: TrackedShow }) {
             </Text>
           </View>
         )}
+        {ep && markWatched.isError ? (
+          <Text
+            accessibilityRole="alert"
+            style={{ color: c.destructive, fontSize: 13, fontFamily: 'Inter_400Regular' }}
+          >
+            Couldn't mark this episode as watched. Please try again.
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );

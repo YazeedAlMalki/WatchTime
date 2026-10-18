@@ -19,6 +19,7 @@ const mockEpisodes = [
 const mockTitleFetch = jest.fn();
 const mockSeasonFetch = jest.fn();
 const mockRecentActivityFetch = jest.fn();
+const mockMarkRequest = jest.fn(async (_request: unknown) => ({ ok: true }));
 const mockTitleData = () => ({
   id: 42, name: 'Example Show', type: 'series', year: 2024,
   genres: [], altTitles: [], providers: [], inWatchlist: false,
@@ -140,6 +141,7 @@ jest.mock('@workspace/api-client-react', () => {
     useMarkEpisodeWatched: (options: { mutation: { onSuccess: () => void } }) =>
       useMutation({
         mutationFn: async ({ episodeId, data }: { episodeId: number; data: { includePrevious?: boolean } }) => {
+          await mockMarkRequest({ episodeId, data });
           if (data.includePrevious) {
             const target = mockEpisodes.find((ep) => ep.id === episodeId)!;
             mockEpisodes
@@ -177,12 +179,15 @@ function SeasonRows({ season }: { season: number }) {
   );
 }
 
-it('refreshes My Shows, history, and title detail caches after marking Up Next', async () => {
+it('keeps Up Next unchanged on failure and refreshes collection, history, and title caches after retry', async () => {
   mockWatched.clear();
   mockWatched.add(101);
   mockWatched.add(102);
   const client = new QueryClient({
-    defaultOptions: { queries: { staleTime: Infinity, retry: false }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
   });
   const {
     getGetSeasonQueryKey,
@@ -245,6 +250,27 @@ it('refreshes My Shows, history, and title detail caches after marking Up Next',
   ]);
   const showsFetchesBeforeWatch = api.getMyShows.mock.calls.length;
   const historyFetchesBeforeWatch = mockRecentActivityFetch.mock.calls.length;
+  const invalidate = jest.spyOn(client, 'invalidateQueries');
+  mockMarkRequest.mockRejectedValueOnce(new Error('Network unavailable'));
+  const stopPropagation = jest.fn();
+  fireEvent.press(shows.getByTestId('mark-watched-201'), { stopPropagation });
+  await waitFor(() => {
+    expect(shows.getByRole('alert').props.children).toBe(
+      "Couldn't mark this episode as watched. Please try again.",
+    );
+    expect(shows.getByText('Retry')).toBeTruthy();
+  });
+  expect(stopPropagation).toHaveBeenCalled();
+  expect(mockRouter.push).not.toHaveBeenCalled();
+  expect([...mockWatched].sort()).toEqual([101, 102]);
+  expect(shows.getByText('2 / 4 episodes')).toBeTruthy();
+  expect(shows.getByText('S2 E1 · Third')).toBeTruthy();
+  expect(shows.queryByTestId('mark-watched-202')).toBeNull();
+  expect(api.getMyShows.mock.calls.length).toBe(showsFetchesBeforeWatch);
+  expect(mockRecentActivityFetch.mock.calls.length).toBe(historyFetchesBeforeWatch);
+  expect(invalidate).not.toHaveBeenCalled();
+  expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+
   fireEvent.press(shows.getByTestId('mark-watched-201'));
   await waitFor(() => {
     expect([...mockWatched].sort()).toEqual([101, 102, 201]);
@@ -256,6 +282,15 @@ it('refreshes My Shows, history, and title detail caches after marking Up Next',
     expect(client.getQueryState(getGetSeasonQueryKey(42, 1))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetSeasonQueryKey(42, 2))?.isInvalidated).toBe(true);
   });
+  expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+  expect(mockMarkRequest).toHaveBeenNthCalledWith(1, {
+    episodeId: 201, data: { includePrevious: true },
+  });
+  expect(mockMarkRequest).toHaveBeenNthCalledWith(2, {
+    episodeId: 201, data: { includePrevious: true },
+  });
+  expect(shows.queryByRole('alert')).toBeNull();
+  expect(shows.queryByText('Retry')).toBeNull();
   expect(client.getQueryState(getGetSeasonQueryKey(420, 1))?.isInvalidated).toBe(false);
 
   fireEvent.press(shows.getByTestId('tab-history'));
