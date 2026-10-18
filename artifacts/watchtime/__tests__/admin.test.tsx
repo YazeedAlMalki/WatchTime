@@ -126,6 +126,7 @@ describe("admin alternate-title review", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     act(() => root.unmount());
     container.remove();
     confirmSpy.mockRestore();
@@ -481,6 +482,67 @@ describe("admin alternate-title review", () => {
     act(() => button(container, "Retry refresh").click());
     await flushEffects();
     expectRefreshCalls(["aliases"]);
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+  });
+
+  it("allows retry after a pending refresh times out and ignores its late result", async () => {
+    await saveAliasToTriggerRefresh(["aliases"]);
+    mocks.queryClient.invalidateQueries.mockClear();
+
+    let rejectFirstRefresh!: (error: Error) => void;
+    const firstRefresh = new Promise<void>((_resolve, reject) => {
+      rejectFirstRefresh = reject;
+    });
+    let refreshCall = 0;
+    mocks.queryClient.invalidateQueries.mockImplementation(() => {
+      refreshCall += 1;
+      return refreshCall === 1 ? firstRefresh : Promise.resolve();
+    });
+
+    vi.useFakeTimers();
+    act(() => button(container, "Retry refresh").click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(refreshCall).toBe(1);
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(container.textContent).toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).toContain(
+      "Its results are not being treated as current",
+    );
+    expect(button(container, "Retry refresh").disabled).toBe(false);
+
+    act(() => button(container, "Retry refresh").click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+    expect(refreshCall).toBe(2);
+
+    await act(async () => {
+      rejectFirstRefresh(new Error("late refresh failure"));
+      await firstRefresh.catch(() => undefined);
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
     expect(container.textContent).not.toContain(
       "Alternate-title refresh failed",
     );

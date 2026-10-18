@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useAuth } from "@clerk/react";
 import {
   useGetMe,
@@ -88,7 +88,10 @@ import {
   Trash2,
   Save,
 } from "lucide-react";
+
 import { useToast } from "@/hooks/use-toast";
+
+const ALIAS_REFRESH_RECOVERY_TIMEOUT_MS = 30_000;
 
 export default function AdminPage() {
   const [, setLocation] = useLocation();
@@ -2088,6 +2091,8 @@ export function AliasReview({
     ReviewRefreshRequest[] | null
   >(null);
   const [isRefreshingAliasViews, setIsRefreshingAliasViews] = useState(false);
+  const [isAliasRefreshTimedOut, setIsAliasRefreshTimedOut] = useState(false);
+  const aliasRefreshAttempt = useRef(0);
 
   const formatRefreshFailures = (failedRequests: ReviewRefreshRequest[]) => {
     const requestNames = failedRequests.map((request) =>
@@ -2116,9 +2121,17 @@ export function AliasReview({
 
   const refreshAliasViews = async (
     requests: ReviewRefreshRequest[] = ["aliases", "catalog"],
-  ) => {
+  ): Promise<ReviewRefreshRequest[] | null> => {
+    const attempt = ++aliasRefreshAttempt.current;
     setRefreshError(null);
+    setIsAliasRefreshTimedOut(false);
     setIsRefreshingAliasViews(true);
+    const recoveryTimer = window.setTimeout(() => {
+      if (aliasRefreshAttempt.current !== attempt) return;
+      setIsAliasRefreshTimedOut(true);
+      setRefreshError(requests);
+      setIsRefreshingAliasViews(false);
+    }, ALIAS_REFRESH_RECOVERY_TIMEOUT_MS);
     try {
       const results = await Promise.allSettled(
         requests.map((request) =>
@@ -2138,7 +2151,9 @@ export function AliasReview({
       const failedRequests = requests.filter(
         (_request, index) => results[index].status === "rejected",
       );
+      if (aliasRefreshAttempt.current !== attempt) return null;
       setRefreshError(failedRequests.length > 0 ? failedRequests : null);
+      setIsAliasRefreshTimedOut(false);
       if (
         requests.includes("aliases") &&
         !failedRequests.includes("aliases")
@@ -2148,7 +2163,10 @@ export function AliasReview({
       }
       return failedRequests;
     } finally {
-      setIsRefreshingAliasViews(false);
+      window.clearTimeout(recoveryTimer);
+      if (aliasRefreshAttempt.current === attempt) {
+        setIsRefreshingAliasViews(false);
+      }
     }
   };
 
@@ -2227,6 +2245,7 @@ export function AliasReview({
             });
           }
           const failedRequests = await refreshAliasViews();
+          if (!failedRequests) return;
           toast(
             failedRequests.length === 0
               ? { title: "Alternate title updated" }
@@ -2311,6 +2330,7 @@ export function AliasReview({
             current?.id === alias.id ? null : current,
           );
           const failedRequests = await refreshAliasViews();
+          if (!failedRequests) return;
           toast(
             failedRequests.length === 0
               ? { title: "Alternate title removed" }
@@ -2422,15 +2442,22 @@ export function AliasReview({
           className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/20 dark:text-orange-300"
         >
           <div>
-            <p className="font-semibold">Alternate-title refresh failed</p>
+            <p className="font-semibold">
+              {isAliasRefreshTimedOut
+                ? "Alternate-title refresh is taking longer than expected"
+                : "Alternate-title refresh failed"}
+            </p>
             <p>
               {describeRefreshStaleness(refreshError)}{" "}
+              {isAliasRefreshTimedOut
+                ? "A previous refresh is still pending. Its results are not being treated as current; retry to start a new check. "
+                : ""}
               {savedAliasPreview
                 ? "Your saved correction is shown in the table below, but its review details may be out of date. "
                 : ""}
-              {formatRefreshFailures(refreshError)}{" "}
-              Retry the refresh to check the latest correction and collision
-              information.
+              {isAliasRefreshTimedOut
+                ? "If the earlier request finishes after a retry, it will not replace the newer status."
+                : `${formatRefreshFailures(refreshError)} Retry the refresh to check the latest correction and collision information.`}
             </p>
           </div>
           <Button
