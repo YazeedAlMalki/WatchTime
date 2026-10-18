@@ -145,6 +145,8 @@ describe('mobile signed-in Home partial feed failures', () => {
 
   beforeEach(() => {
     mockSignedIn = true;
+    mockTrendingRefetch.mockReset();
+    mockMarkStartup.mockReset();
     mockShowsRefetch.mockReset();
     mockWatchlistRefetch.mockReset();
     mockRecommendationsRefetch.mockReset();
@@ -188,10 +190,11 @@ describe('mobile signed-in Home partial feed failures', () => {
     mockTrendingQueryState.current = failed;
     await notify();
     expect(screen.getByText("Couldn't load trending titles")).toBeTruthy();
+    expect(screen.queryByTestId('trending-refresh-warning')).toBeNull();
     expect(mockMarkStartup).toHaveBeenCalledWith('trending-error');
     const trendingRetry = screen.getByRole('button', { name: 'Retry Trending Now' });
     expect(within(trendingRetry).getByText('Retry')).toBeTruthy();
-    fireEvent.press(trendingRetry);
+    await fireEvent.press(trendingRetry);
     expect(mockTrendingRefetch).toHaveBeenCalledTimes(1);
     expect(mockMarkStartup).toHaveBeenCalledWith('trending-retry');
 
@@ -199,6 +202,45 @@ describe('mobile signed-in Home partial feed failures', () => {
     await notify();
     expect(screen.getByText('Recovered trending title')).toBeTruthy();
     expect(mockMarkStartup).toHaveBeenCalledWith('trending-loaded');
+
+    // A background refresh failure must not replace already loaded guest cards.
+    mockTrendingRefetch.mockClear();
+    mockMarkStartup.mockClear();
+    mockTrendingQueryState.current = {
+      ...ready([{ id: 1, name: 'Recovered trending title' }]),
+      isError: true,
+    };
+    await notify();
+    expect(screen.getByText('Recovered trending title')).toBeTruthy();
+    expect(screen.queryByText("Couldn't load trending titles")).toBeNull();
+    expect(screen.queryByTestId('loading')).toBeNull();
+    const trendingWarning = screen.getByTestId('trending-refresh-warning');
+    expect(within(trendingWarning).getByText(
+      "Couldn't refresh Trending Now. Results may be out of date.",
+    )).toBeTruthy();
+    await fireEvent.press(within(trendingWarning).getByRole('button', { name: 'Retry Trending Now' }));
+    expect(mockTrendingRefetch).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('trending-retry');
+    expect(mockShowsRefetch).not.toHaveBeenCalled();
+    expect(mockWatchlistRefetch).not.toHaveBeenCalled();
+    expect(mockRecommendationsRefetch).not.toHaveBeenCalled();
+
+    mockTrendingQueryState.current = ready([{ id: 2, name: 'Fresh trending title' }]);
+    await notify();
+    expect(screen.queryByTestId('trending-refresh-warning')).toBeNull();
+    expect(screen.getByText('Fresh trending title')).toBeTruthy();
+    expect(screen.queryByText('Recovered trending title')).toBeNull();
+
+    // A successful empty response is cached data too, not a first-load failure.
+    mockTrendingQueryState.current = ready([]);
+    await notify();
+    mockTrendingQueryState.current = { ...ready([]), isError: true };
+    await notify();
+    expect(screen.getByTestId('trending-refresh-warning')).toBeTruthy();
+    expect(screen.queryByText("Couldn't load trending titles")).toBeNull();
+    mockTrendingQueryState.current = ready([]);
+    await notify();
+    expect(screen.queryByTestId('trending-refresh-warning')).toBeNull();
 
     mockSignedIn = true;
     await act(async () => mockAuthListeners.forEach((listener) => listener()));

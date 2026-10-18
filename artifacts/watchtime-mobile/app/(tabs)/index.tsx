@@ -430,24 +430,29 @@ function SignedOutHome({
       </View>
 
       <SectionHeader title="Trending Now" />
-      {trending.isLoading ? (
+      {trending.isLoading && trending.data === undefined ? (
         <Loading />
-      ) : trending.isError ? (
+      ) : trending.isError && trending.data === undefined ? (
         <ErrorState
           message="Couldn't load trending titles"
           retryAccessibilityLabel="Retry Trending Now"
           onRetry={retryTrending}
         />
       ) : (
-        <FlatList
-          horizontal
-          data={trending.data ?? []}
-          scrollEnabled={(trending.data ?? []).length > 0}
-          keyExtractor={(t) => String(t.id)}
-          renderItem={({ item }) => <PosterCard title={item} />}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-          showsHorizontalScrollIndicator={false}
-        />
+        <>
+          {trending.isError && (
+            <RefreshWarning section="Trending Now" testID="trending-refresh-warning" onRetry={retryTrending} />
+          )}
+          <FlatList
+            horizontal
+            data={trending.data ?? []}
+            scrollEnabled={(trending.data ?? []).length > 0}
+            keyExtractor={(t) => String(t.id)}
+            renderItem={({ item }) => <PosterCard title={item} />}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+            showsHorizontalScrollIndicator={false}
+          />
+        </>
       )}
     </ScrollView>
   );
