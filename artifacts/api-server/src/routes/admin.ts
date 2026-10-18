@@ -1779,7 +1779,9 @@ router.get("/audit-log", async (req, res) => {
     .from(adminAuditLogTable)
     .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
     .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
+    .orderBy(desc(adminAuditLogTable.createdAt), desc(adminAuditLogTable.id))
+    .limit(limit)
+    .offset(offset);
 
   return res.json({
     total,

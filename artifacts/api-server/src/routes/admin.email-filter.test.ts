@@ -230,6 +230,34 @@ describe("GET /api/admin/audit-log?adminEmail — email filter isolation", () =>
   });
 });
 
+describe("GET /api/admin/audit-log — pagination", () => {
+  it("returns filtered pages without repeating rows and keeps the full matching total", async () => {
+    const filters = new URLSearchParams({
+      action: EXPORT_ACTION,
+      adminEmail: ADMIN_A_EMAIL,
+      entityType: "content",
+      dateFrom: EXPORT_DAY_START.toISOString(),
+      dateTo: EXPORT_DAY_END.toISOString(),
+      limit: "10",
+    });
+    const pages = await Promise.all([0, 10, 20, 30].map(async (offset) => {
+      const res = await supertest(app)
+        .get(`/api/admin/audit-log?${filters.toString()}&offset=${offset}`);
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(EXPORT_MATCH_COUNT);
+      return res.body.entries as Array<{ id: number }>;
+    }));
+
+    expect(pages.map((entries) => entries.length)).toEqual([10, 10, 10, 1]);
+    const pagedIds = pages.flatMap((entries) => entries.map((entry) => entry.id));
+    expect(new Set(pagedIds).size).toBe(EXPORT_MATCH_COUNT);
+    expect([...pagedIds].sort((a, b) => a - b)).toEqual(
+      [...exportMatchRowIds].sort((a, b) => a - b),
+    );
+    expect(pagedIds).toEqual([...pagedIds].sort((a, b) => b - a));
+  });
+});
+
 describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
   it("returns CSV with correct headers and only admin A rows when filtered by exact email", async () => {
     const res = await supertest(app)
