@@ -6,10 +6,11 @@ import {
   catalogSyncRunsTable,
   db,
   feedbackTable,
+  reportsTable,
   titlesTable,
   usersTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 const startCatalogRefresh = vi.hoisted(() => vi.fn());
 const retryFailedCatalogTitles = vi.hoisted(() => vi.fn().mockResolvedValue(null));
@@ -48,6 +49,7 @@ startCatalogRefresh.mockImplementation(async (
 
 const adminId = "test-admin-actions";
 let titleId: number;
+let reportIds: number[] = [];
 
 beforeAll(async () => {
   await db.insert(usersTable).values({ id: adminId, email: "admin-actions@example.test" }).onConflictDoNothing();
@@ -59,6 +61,10 @@ afterEach(async () => {
   vi.clearAllMocks();
   await db.delete(adminAuditLogTable).where(eq(adminAuditLogTable.adminId, adminId));
   await db.delete(feedbackTable).where(eq(feedbackTable.userId, adminId));
+  if (reportIds.length) {
+    await db.delete(reportsTable).where(inArray(reportsTable.id, reportIds));
+    reportIds = [];
+  }
   await db.delete(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.trigger, "admin-actions-test"));
 });
 
@@ -109,20 +115,49 @@ describe("restored admin actions", () => {
     await request(app).post("/api/admin/content/0/refresh").expect(400);
   });
 
-  it("lists feedback from feedback records with the author email", async () => {
-    const [feedback] = await db.insert(feedbackTable).values({
-      userId: adminId,
-      category: "bug",
-      message: "A test report",
-      status: "new",
-    }).returning();
-    const list = await request(app).get("/api/admin/feedback?status=new&category=bug").expect(200);
-    expect(list.body).toContainEqual(expect.objectContaining({
-      id: feedback.id,
+  it("returns only reports matching the requested status", async () => {
+    const inserted = await db.insert(reportsTable).values([
+      { titleId, userId: adminId, reason: "open neighbor", status: "open" },
+      { titleId, userId: adminId, reason: "resolved target", status: "resolved" },
+      { titleId, userId: adminId, reason: "dismissed neighbor", status: "dismissed" },
+    ]).returning();
+    reportIds = inserted.map(({ id }) => id);
+    const target = inserted.find(({ status }) => status === "resolved")!;
+
+    const response = await request(app).get("/api/admin/reports?status=resolved").expect(200);
+    expect(response.body.map((row: { id: number }) => row.id)).toEqual([target.id]);
+    expect(response.body[0]).toMatchObject({
+      id: target.id,
+      titleId,
+      titleName: "Admin actions test title",
+      status: "resolved",
+    });
+  });
+
+  it("applies feedback status and category filters individually and together", async () => {
+    const inserted = await db.insert(feedbackTable).values([
+      { userId: adminId, category: "bug", message: "new bug", status: "new" },
+      { userId: adminId, category: "feature", message: "new feature", status: "new" },
+      { userId: adminId, category: "bug", message: "closed bug", status: "closed" },
+      { userId: adminId, category: "feature", message: "closed feature", status: "closed" },
+    ]).returning();
+    const ids = Object.fromEntries(inserted.map((feedback) => [feedback.message, feedback.id]));
+    const listIds = (body: Array<{ id: number }>) => body.map(({ id }) => id).sort((a, b) => a - b);
+
+    const byStatus = await request(app).get("/api/admin/feedback?status=new").expect(200);
+    expect(listIds(byStatus.body)).toEqual([ids["new bug"], ids["new feature"]].sort((a, b) => a - b));
+
+    const byCategory = await request(app).get("/api/admin/feedback?category=bug").expect(200);
+    expect(listIds(byCategory.body)).toEqual([ids["new bug"], ids["closed bug"]].sort((a, b) => a - b));
+
+    const byBoth = await request(app).get("/api/admin/feedback?status=new&category=bug").expect(200);
+    expect(byBoth.body).toMatchObject([{
+      id: ids["new bug"],
       userEmail: "admin-actions@example.test",
-      message: "A test report",
-    }));
-    const filtered = await request(app).get("/api/admin/feedback?status=closed").expect(200);
-    expect(filtered.body).not.toContainEqual(expect.objectContaining({ id: feedback.id }));
+      message: "new bug",
+      status: "new",
+      category: "bug",
+    }]);
+    expect(listIds(byBoth.body)).toEqual([ids["new bug"]]);
   });
 });
