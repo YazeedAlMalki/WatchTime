@@ -843,6 +843,40 @@ describe("real catalog sync", () => {
     }
   });
 
+  it.each(["recovery", "latest-run read"] as const)(
+    "keeps the existing refresh pending when startup %s fails",
+    async (failurePoint) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+      try {
+        await scheduleCatalogRefresh(WEEK_MS);
+        const timerIndex = setTimeoutSpy.mock.calls.findLastIndex(([, delay]) => delay === WEEK_MS);
+        const existingTimer = setTimeoutSpy.mock.results[timerIndex]?.value as NodeJS.Timeout;
+        expect(existingTimer).toBeDefined();
+        const pendingTimers = vi.getTimerCount();
+        expect(pendingTimers).toBeGreaterThan(0);
+
+        const failure = new Error(`Startup ${failurePoint} database failure`);
+        if (failurePoint === "recovery") {
+          vi.spyOn(db, "transaction").mockRejectedValueOnce(failure);
+        } else {
+          vi.spyOn(db, "select").mockImplementationOnce(() => { throw failure; });
+        }
+
+        await expect(scheduleCatalogRefresh()).rejects.toBe(failure);
+
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(existingTimer);
+        expect(vi.getTimerCount()).toBe(pendingTimers);
+        expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === WEEK_MS)).toHaveLength(1);
+      } finally {
+        vi.clearAllTimers();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("does not replace a newer schedule when an older scheduled run finishes", async () => {
     const originalItems = [...sourceItems];
     let releaseFetch!: () => void;
