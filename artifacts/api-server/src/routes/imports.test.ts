@@ -207,7 +207,15 @@ describe("private, idempotent watch-history imports", () => {
     });
   });
 
-  it("keeps a reviewed regional match after a refresh moves its alias to another title", async () => {
+  it.each([
+    { name: "keeps a reviewed regional match after a refresh moves its alias to another title", freshImport: false },
+    { name: "matches a fresh regional import to the current alias owner after a refresh", freshImport: true },
+  ])("$name", async ({ freshImport }) => {
+    // Catalog-refresh scenarios must not consume the quota of later import tests.
+    await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
+      `import_create:${USER_A}`,
+      `import_confirm:${USER_A}`,
+    ]));
     const fixtures: SourceItem[] = [
       {
         key: "test:import-refresh-primary",
@@ -241,6 +249,7 @@ describe("private, idempotent watch-history imports", () => {
     ];
     const healthSnapshot = await db.select().from(integrationHealthTable);
     let importId: number | undefined;
+    let freshImportId: number | undefined;
     let regionalTitleId: number | undefined;
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
       const fixture = fixtures.find((item) => String(input).includes(`/shows/${item.tvmazeId}?`));
@@ -343,6 +352,48 @@ describe("private, idempotent watch-history imports", () => {
       expect(persistedPreview.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId, selected: true });
       expect(persistedPreview.body.items[2]).toMatchObject({ classification: "matched", titleId: primaryId, episodeId: regionalEpisode.id, selected: true });
 
+      if (freshImport) {
+        // Different content creates a new job for the same user instead of
+        // reusing the fingerprint (and saved matches) of the reviewed import.
+        const fresh = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
+          source: "generic",
+          fileName: "current-regional-owner.csv",
+          content: "kind,title,type,year\nwatchlist,地域限定タイトル,tv,2020",
+        });
+        expect(fresh.status).toBe(201);
+        freshImportId = fresh.body.id;
+        expect(freshImportId).not.toBe(importId);
+        expect(fresh.body.summary).toMatchObject({ matched: 1, ambiguous: 0, unmatched: 0 });
+        expect(fresh.body.items).toHaveLength(1);
+        expect(fresh.body.items[0]).toMatchObject({
+          kind: "watchlist",
+          classification: "matched",
+          titleId: secondaryId,
+          selected: true,
+        });
+
+        const freshPreview = await supertest(app).get(`/api/imports/${freshImportId}`).set("x-test-user", USER_A);
+        expect(freshPreview.status).toBe(200);
+        expect(freshPreview.body.items[0]).toMatchObject({ classification: "matched", titleId: secondaryId, selected: true });
+
+        const confirmed = await supertest(app).post(`/api/imports/${freshImportId}/confirm`).set("x-test-user", USER_A);
+        expect(confirmed.status).toBe(200);
+        expect(confirmed.body.status).toBe("confirmed");
+        expect(confirmed.body.summary).toMatchObject({ selected: 1, applied: 1 });
+        expect(confirmed.body.items[0]).toMatchObject({ classification: "matched", titleId: secondaryId });
+        const tracked = await db.select().from(watchlistTable).where(and(
+          eq(watchlistTable.userId, USER_A),
+          inArray(watchlistTable.titleId, [primaryId, secondaryId]),
+        ));
+        expect(tracked.map((row) => row.titleId)).toEqual([secondaryId]);
+        const watched = await db.select().from(watchedEpisodesTable).where(and(
+          eq(watchedEpisodesTable.userId, USER_A),
+          inArray(watchedEpisodesTable.titleId, [primaryId, secondaryId]),
+        ));
+        expect(watched).toEqual([]);
+        return;
+      }
+
       const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
       expect(confirmed.status).toBe(200);
       expect(confirmed.body.summary).toMatchObject({ selected: 2, applied: 2 });
@@ -360,6 +411,11 @@ describe("private, idempotent watch-history imports", () => {
       expect(watched).toMatchObject([{ titleId: primaryId, episodeId: regionalEpisode.id }]);
     } finally {
       vi.unstubAllGlobals();
+      await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
+        `import_create:${USER_A}`,
+        `import_confirm:${USER_A}`,
+      ]));
+      if (freshImportId !== undefined) await db.delete(importsTable).where(eq(importsTable.id, freshImportId));
       if (importId !== undefined) await db.delete(importsTable).where(eq(importsTable.id, importId));
       if (regionalTitleId !== undefined) await db.delete(watchedEpisodesTable).where(and(
         eq(watchedEpisodesTable.userId, USER_A),
