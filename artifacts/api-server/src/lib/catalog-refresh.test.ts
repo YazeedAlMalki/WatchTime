@@ -100,6 +100,58 @@ describe("catalog refresh startup failure", () => {
     }
   });
 
+  it("preserves the recorded startup failure when history cleanup also rejects", async () => {
+    const startupError = new Error("unable to mark refresh running");
+    const cleanupError = new Error("history deletion failed");
+    let rejectCleanup!: (error: Error) => void;
+    const cleanupGate = new Promise<never>((_resolve, reject) => {
+      rejectCleanup = reject;
+    });
+    const startupSpy = vi.spyOn(db, "transaction").mockRejectedValueOnce(startupError);
+    const deleteSpy = vi.spyOn(db, "delete").mockReturnValueOnce({
+      where: () => ({ returning: () => cleanupGate }),
+    } as unknown as ReturnType<typeof db.delete>);
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      const runId = await startCatalogRefresh("manual", []);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(deleteSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+      const [beforeCleanup] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(beforeCleanup.status).toBe("failed");
+      expect(beforeCleanup.error).toBe(startupError.message);
+      expect(beforeCleanup.finishedAt).toBeInstanceOf(Date);
+      expect(beforeCleanup.startedAt).toBeNull();
+
+      rejectCleanup(cleanupError);
+      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(
+        { err: cleanupError }, "unable to prune catalog refresh history",
+      ));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const [afterCleanup] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(afterCleanup).toEqual(beforeCleanup);
+      expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+        { err: startupError, runId }, "catalog refresh failed",
+      );
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      startupSpy.mockRestore();
+      deleteSpy.mockRestore();
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+    }
+  });
+
   it("logs both errors if recording the startup failure also fails", async () => {
     const startupError = new Error("unable to mark refresh running");
     const recordError = new Error("unable to mark refresh failed");
