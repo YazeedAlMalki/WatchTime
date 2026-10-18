@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { readAdminContentUrl } from "@/pages/admin-content-url";
 
 const toast = vi.hoisted(() => vi.fn());
+const integrationHealth = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast }) }));
 
 // Leave the generated content query and HTTP client intact: the test checks
@@ -15,7 +16,18 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
   return {
     ...api,
     useGetMe: () => ({ data: { isAdmin: true }, isLoading: false }),
-    useGetAdminDashboard: () => ({ data: undefined }),
+    useGetAdminDashboard: () => ({
+      data: {
+        totalUsers: 10,
+        newRegistrations7d: 1,
+        titlesInCatalog: 20,
+        safetyCoveragePercent: 90,
+        pendingContributions: 0,
+        openReports: 0,
+        failedSyncs: 0,
+      },
+    }),
+    useListAdminIntegrations: () => ({ data: integrationHealth.rows, isLoading: false }),
     useListAdminContentAliases: (params?: { id?: number }) => ({
       data: params?.id === 217 ? {
         items: [{
@@ -98,6 +110,74 @@ it("copies a link with the current Content filters and reports clipboard failure
     window.history.replaceState({}, "", previousUrl);
     if (previousClipboard) Object.defineProperty(navigator, "clipboard", previousClipboard);
     else Reflect.deleteProperty(navigator, "clipboard");
+  }
+});
+
+it("shows dashboard alerts only for providers with malformed timestamps and links to their filtered review", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=dashboard&region=GB");
+  integrationHealth.rows = [
+    {
+      provider: "Timestamp Provider",
+      status: "healthy",
+      successRatePercent: 100,
+      refreshAttempts: 2,
+      successfulRefreshes: 2,
+      mappedTitles: 5,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 3,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: false,
+    },
+    {
+      provider: "Clean Provider",
+      status: "degraded",
+      successRatePercent: 75,
+      refreshAttempts: 4,
+      successfulRefreshes: 3,
+      mappedTitles: 5,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: false,
+    },
+  ];
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByRole("heading", {
+      name: "Malformed rating timestamp alerts",
+    })).toBeVisible();
+    await expect.element(page.getByText(
+      "Timestamp Provider: 3 ratings have malformed refresh timestamps",
+    )).toBeVisible();
+    await expect.element(page.getByText("Clean Provider")).not.toBeInTheDocument();
+    await expect.element(page.getByText(
+      "These data-quality warnings do not change provider health status.",
+    )).toBeVisible();
+
+    const reviewLink = page.getByRole("link", { name: "Review affected ratings" });
+    await expect.element(reviewLink).toBeVisible();
+    const reviewHref = container
+      .querySelector<HTMLAnchorElement>('a[href*="malformedRefreshTimestampProvider"]')
+      ?.getAttribute("href");
+    expect(reviewHref).toBeTruthy();
+    const reviewUrl = new URL(reviewHref ?? "", location.origin);
+    expect(readAdminContentUrl(reviewUrl.search)).toMatchObject({
+      tab: "content",
+      region: "GB",
+      malformedRefreshTimestamp: true,
+      malformedRefreshTimestampProvider: "Timestamp Provider",
+    });
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    integrationHealth.rows = [];
+    window.history.replaceState({}, "", previousUrl);
   }
 });
 

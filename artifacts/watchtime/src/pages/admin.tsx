@@ -24,6 +24,7 @@ import {
   useListAdminContentRefreshBatchHistory,
   useGetAdminAuditLog,
   getGetAdminDashboardQueryKey,
+  getListAdminIntegrationsQueryKey,
   getListAdminContributionsQueryKey,
   getListAdminReportsQueryKey,
   getListAdminFeedbackQueryKey,
@@ -37,6 +38,7 @@ import {
   type AdminContentAlias,
   type AdminContentAliasPage,
   type AdminContentAliasRecord,
+  type IntegrationHealth,
   type ListAdminContentAliasesOwnership,
 } from "@workspace/api-client-react";
 import { RATING_REGIONS, type RatingRegion } from "@workspace/rating-regions";
@@ -145,6 +147,27 @@ export default function AdminPage() {
   const { data: dashboard } = useGetAdminDashboard({
     query: { enabled: !!me?.isAdmin, queryKey: getGetAdminDashboardQueryKey() },
   });
+  const {
+    data: integrations,
+    isLoading: integrationsLoading,
+  } = useListAdminIntegrations({
+    query: {
+      enabled: !!me?.isAdmin,
+      queryKey: getListAdminIntegrationsQueryKey(),
+    },
+  });
+  const reviewMalformedTimestampsUrl = (provider: string) =>
+    adminContentUrl(
+      search,
+      "content",
+      region,
+      "",
+      "all",
+      undefined,
+      true,
+      0,
+      provider,
+    );
 
   if (meLoading)
     return (
@@ -224,6 +247,60 @@ export default function AdminPage() {
 
         {/* Dashboard */}
         <TabsContent value="dashboard" className="outline-none">
+          {integrations?.some(
+            (integration) => integration.malformedRefreshTimestampCount > 0,
+          ) && (
+            <section
+              aria-labelledby="malformed-rating-timestamp-alerts"
+              className="mb-6 rounded-2xl border border-orange-300 bg-orange-50 p-5 text-orange-900 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-200"
+            >
+              <h2
+                id="malformed-rating-timestamp-alerts"
+                className="text-lg font-display font-bold"
+              >
+                Malformed rating timestamp alerts
+              </h2>
+              <p className="mt-1 text-sm">
+                These data-quality warnings do not change provider health
+                status.
+              </p>
+              <ul className="mt-4 space-y-3">
+                {integrations
+                  .filter(
+                    (integration) =>
+                      integration.malformedRefreshTimestampCount > 0,
+                  )
+                  .map((integration) => (
+                    <li
+                      key={integration.provider}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-200 bg-background/70 p-3 dark:border-orange-900"
+                    >
+                      <span className="font-medium">
+                        {integration.provider}:{" "}
+                        {integration.malformedRefreshTimestampCount.toLocaleString()}{" "}
+                        {integration.malformedRefreshTimestampCount === 1
+                          ? "rating has a malformed refresh timestamp"
+                          : "ratings have malformed refresh timestamps"}
+                      </span>
+                      <Button
+                        asChild
+                        size="sm"
+                        variant="outline"
+                        className="border-orange-400 text-orange-900 dark:border-orange-700 dark:text-orange-200"
+                      >
+                        <Link
+                          href={reviewMalformedTimestampsUrl(
+                            integration.provider,
+                          )}
+                        >
+                          Review affected ratings
+                        </Link>
+                      </Button>
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          )}
           {dashboard ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               <StatCard
@@ -329,19 +406,9 @@ export default function AdminPage() {
         {/* Integrations */}
         <TabsContent value="integrations" className="outline-none">
           <IntegrationsTab
-            reviewMalformedTimestampsUrl={(provider) =>
-              adminContentUrl(
-                search,
-                "content",
-                region,
-                "",
-                "all",
-                undefined,
-                true,
-                0,
-                provider,
-              )
-            }
+            integrations={integrations}
+            isLoading={integrationsLoading}
+            reviewMalformedTimestampsUrl={reviewMalformedTimestampsUrl}
           />
         </TabsContent>
 
@@ -3143,13 +3210,16 @@ function AuditLogTab() {
 /* ─── Integrations ─── */
 
 function IntegrationsTab({
+  integrations,
+  isLoading,
   reviewMalformedTimestampsUrl,
 }: {
+  integrations: IntegrationHealth[] | undefined;
+  isLoading: boolean;
   reviewMalformedTimestampsUrl: (provider: string) => string;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { data: integrations, isLoading } = useListAdminIntegrations();
   const { data: refreshes } = useListCatalogRefreshes({
     query: {
       queryKey: getListCatalogRefreshesQueryKey(),

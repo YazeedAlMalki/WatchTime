@@ -249,7 +249,7 @@ describe("admin content URL", () => {
   });
 
   it("resets invalid alternate-title page numbers and oversized cursors", () => {
-    expect(readAdminContentUrl("?tab=content&aliasPage=1&aliasCursor=bad"))
+    expect(readAdminContentUrl("?tab=content&aliasPage=0&aliasCursor=bad"))
       .toMatchObject({ aliasPage: 1, aliasCursor: null });
     expect(readAdminContentUrl(`?tab=content&aliasPage=3&aliasCursor=${"x".repeat(4097)}`))
       .toMatchObject({ aliasPage: 1, aliasCursor: null });
