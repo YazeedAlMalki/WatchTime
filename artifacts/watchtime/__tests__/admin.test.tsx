@@ -1447,11 +1447,46 @@ describe("admin alternate-title review", () => {
     },
   );
 
-  it("hides a removed alias until a failed list refresh is retried", async () => {
-    mocks.queryClient.invalidateQueries.mockRejectedValueOnce(
-      new Error("Alias refresh unavailable"),
+  it("removes an alias from the refreshed table after a failed removal refresh is retried", async () => {
+    const latestServerAliases: AdminContentAlias[] = [
+      {
+        ...initialAlias,
+        id: 18,
+        alias: "Latest server alternate title",
+        collision: false,
+        collisionTitleCount: 1,
+      },
+    ];
+    let updateServerAliases!: (aliases: AdminContentAlias[]) => void;
+    function ReviewWithServerData() {
+      const [aliases, setAliases] = React.useState([initialAlias]);
+      updateServerAliases = setAliases;
+      return (
+        <AliasReview
+          aliases={aliases}
+          isLoading={false}
+          isError={false}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="all"
+          onOwnershipChange={() => {}}
+        />
+      );
+    }
+    let aliasRefreshCount = 0;
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) => {
+        if (queryKey[0] === "/api/admin/content-aliases") {
+          aliasRefreshCount += 1;
+          if (aliasRefreshCount === 1) {
+            return Promise.reject(new Error("Alias refresh unavailable"));
+          }
+          updateServerAliases(latestServerAliases);
+        }
+        return Promise.resolve();
+      },
     );
-    render();
+    act(() => root.render(<ReviewWithServerData />));
     confirmSpy.mockReturnValue(true);
 
     act(() => button(container, "Remove").click());
@@ -1502,15 +1537,7 @@ describe("admin alternate-title review", () => {
 
     act(() => button(container, "Retry refresh").click());
     await flushEffects();
-    render([
-      {
-        ...initialAlias,
-        id: 18,
-        alias: "Latest server alternate title",
-        collision: false,
-        collisionTitleCount: 1,
-      },
-    ]);
+    expect(aliasRefreshCount).toBe(2);
     expect(container.textContent).not.toContain("Alternate-title refresh failed");
     expect(container.textContent).not.toContain("Removed alternate title:");
     expect(container.textContent).toContain("Latest server alternate title");
