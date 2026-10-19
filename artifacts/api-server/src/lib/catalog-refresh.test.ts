@@ -383,6 +383,82 @@ describe("catalog refresh recovery", () => {
     }
   });
 
+  it("does not restart a recovered run when a delayed startup resumes and releases local ownership", async () => {
+    // Model another API process: share the real database, but load a separate
+    // refresh module so recovery cannot see the delayed worker's local set.
+    const database = await import("@workspace/db");
+    vi.resetModules();
+    vi.doMock("@workspace/db", () => database);
+    const { recoverInterruptedRuns: recoverFromOtherProcess } = await import("./catalog-refresh");
+    let finishStartup!: () => void;
+    const startupGate = new Promise<void>((resolve) => { finishStartup = resolve; });
+    const transaction = db.transaction.bind(db);
+    const startupSpy = vi.spyOn(db, "transaction").mockImplementationOnce(async (callback, config) => {
+      await startupGate;
+      return transaction(callback, config);
+    });
+    // Reaching pruning proves executeRun has passed through its finally block.
+    const cleanupSpy = vi.spyOn(db, "delete").mockReturnValueOnce({
+      where: () => ({ returning: async () => [] }),
+    } as unknown as ReturnType<typeof db.delete>);
+    runCatalogSyncMock.mockResolvedValue({
+      selected: 0, succeeded: 0, episodes: 0, failures: [],
+    });
+    let runId: number | undefined;
+    try {
+      runId = await startCatalogRefresh("manual", []);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(startupSpy).toHaveBeenCalledTimes(1));
+      const staleAt = new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000);
+      await db.update(catalogSyncRunsTable).set({ createdAt: staleAt })
+        .where(eq(catalogSyncRunsTable.id, runId));
+
+      await recoverFromOtherProcess();
+      const [recovered] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(recovered.status).toBe("failed");
+      expect(recovered.error).toBe(
+        "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles",
+      );
+      expect(recovered.finishedAt).toBeInstanceOf(Date);
+      expect(recovered.startedAt).toBeNull();
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+      expect(cleanupSpy).not.toHaveBeenCalled();
+
+      finishStartup();
+      await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+      const [afterStartup] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      // Include error and finishedAt: even a failed/skipped late worker must
+      // not overwrite the explanation or timestamp recorded by recovery.
+      expect(afterStartup).toEqual(recovered);
+
+      // Make the same id recoverable again to prove the original process no
+      // longer excludes it via activeRunIds after the early startup return.
+      await db.update(catalogSyncRunsTable).set({
+        status: "queued", error: null, finishedAt: null,
+      }).where(eq(catalogSyncRunsTable.id, runId));
+      await recoverInterruptedRuns();
+      const [recoveredAgain] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(recoveredAgain.status).toBe("failed");
+      expect(recoveredAgain.error).toBe(recovered.error);
+      expect(recoveredAgain.finishedAt).toBeInstanceOf(Date);
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+    } finally {
+      finishStartup();
+      if (runId !== undefined) {
+        await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+      }
+      startupSpy.mockRestore();
+      cleanupSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+      vi.doUnmock("@workspace/db");
+      vi.resetModules();
+    }
+  });
+
   it("leaves stale queued work alone when another worker owns the catalog lock", async () => {
     const [run] = await db.insert(catalogSyncRunsTable).values({
       trigger: "manual", status: "queued",
