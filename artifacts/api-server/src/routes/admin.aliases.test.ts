@@ -495,7 +495,15 @@ describe("admin title aliases", () => {
         isEditorial: false,
       })),
     ];
-    await db.insert(titleAliasesTable).values(exportRows);
+    const insertedRows = await db.insert(titleAliasesTable).values(exportRows)
+      .returning({ id: titleAliasesTable.id });
+    await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: "Export sample editorial exclusion",
+      normalizedAlias: "exportsampleeditorialexclusion",
+      sourceName: "Editorial test",
+      isEditorial: true,
+    });
 
     const response = await request(app)
       .get("/api/admin/content-aliases/export")
@@ -521,6 +529,9 @@ describe("admin title aliases", () => {
       line.includes(`"'=HYPERLINK(""https://example.test"",""Export sample"")"`),
     )).toBe(true);
     expect(lines.slice(1).every((line) => line.includes('"Provider-owned"'))).toBe(true);
+    expect(lines.slice(1).map((line) => Number(line.split(",", 1)[0].slice(1, -1))))
+      .toEqual(insertedRows.map((row) => row.id));
+    expect(lines.slice(1).every((line) => line.includes('"Provider-owned","No"'))).toBe(true);
 
     const empty = await request(app)
       .get("/api/admin/content-aliases/export")
@@ -530,6 +541,77 @@ describe("admin title aliases", () => {
     expect(empty.text.split("\r\n")).toHaveLength(1);
     expect((await request(app)
       .get("/api/admin/content-aliases/export?ownership=unknown")).status).toBe(400);
+  });
+
+  it("exports editorial provenance and collisions outside the active filters", async () => {
+    const sourceName = 'Editorial, "verified"\nsecond line';
+    const [editorial] = await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: "Unique CSV review alias",
+      normalizedAlias: "uniquecsvreviewalias",
+      language: "fr",
+      sourceName,
+      sourceUrl: "https://example.test/editorial-review",
+      isEditorial: true,
+    }).returning();
+    await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[1],
+      alias: "Different provider spelling",
+      normalizedAlias: editorial.normalizedAlias,
+      sourceName: "Provider test",
+      isEditorial: false,
+    });
+
+    // Matching by title name must retain collision evidence from excluded rows.
+    const response = await request(app)
+      .get("/api/admin/content-aliases/export")
+      .query({ q: "Alias Test One", ownership: "editorial" })
+      .expect(200);
+
+    expect(response.headers["x-export-count"]).toBe("2");
+    expect(response.text).toContain([
+      `"${editorial.id}"`,
+      `"${editorial.titleId}"`,
+      '"Alias Test One"',
+      '"movie"',
+      '"2020"',
+      '"Unique CSV review alias"',
+      '"fr"',
+      '"Editorial, ""verified""\nsecond line"',
+      '"https://example.test/editorial-review"',
+      '"Editorial"',
+      '"Yes"',
+      '"Yes"',
+      '"2"',
+      `"${editorial.updatedAt.toISOString()}"`,
+    ].join(","));
+    expect(response.text).not.toContain("Different provider spelling");
+    expect(response.text).not.toContain('"Provider-owned"');
+  });
+
+  it("protects formula prefixes in all exported text fields", async () => {
+    const [alias] = await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: " \t=Formula CSV review",
+      normalizedAlias: "formulacsvreview",
+      language: "+en",
+      sourceName: "-source",
+      sourceUrl: "@source",
+      isEditorial: true,
+    }).returning();
+
+    const response = await request(app)
+      .get("/api/admin/content-aliases/export")
+      .query({ q: "Formula CSV review", ownership: "editorial" })
+      .expect(200);
+
+    expect(response.headers["x-export-count"]).toBe("1");
+    expect(response.text.split("\r\n")).toHaveLength(2);
+    expect(response.text).toContain([
+      `"${alias.id}"`, `"${alias.titleId}"`, '"Alias Test One"', '"movie"', '"2020"',
+      "\"' \t=Formula CSV review\"", "\"'+en\"", "\"'-source\"", "\"'@source\"",
+      '"Editorial"', '"Yes"', '"No"', '"1"', `"${alias.updatedAt.toISOString()}"`,
+    ].join(","));
   });
 
   it("streams a large filtered export with every row ordered and collision counts intact", async () => {
