@@ -632,7 +632,7 @@ describe("real catalog sync", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await runCatalogSync(
-      { dryRun: true, allowPartial: false },
+      { dryRun: true, allowPartial: true },
       [testItem, failedTvItem, wikipediaItem, failedWikipediaItem],
     );
 

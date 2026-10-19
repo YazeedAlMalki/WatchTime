@@ -403,15 +403,16 @@ router.post("/catalog-refreshes", async (req, res) => {
 router.post("/catalog-refreshes/:id/retry", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid run id" });
-  const runId = await retryFailedCatalogTitles(id);
-  if (!runId) return res.status(409).json({ error: "This run has no failed titles to retry" });
-  await db.insert(adminAuditLogTable).values({
-    adminId: req.userId!,
-    action: "retry_catalog_refresh",
-    entityType: "catalog_sync",
-    entityId: runId,
-    details: { sourceRunId: id },
+  const runId = await retryFailedCatalogTitles(id, async (tx, retryRunId) => {
+    await tx.insert(adminAuditLogTable).values({
+      adminId: req.userId!,
+      action: "retry_catalog_refresh",
+      entityType: "catalog_sync",
+      entityId: retryRunId,
+      details: { sourceRunId: id },
+    });
   });
+  if (!runId) return res.status(409).json({ error: "This run has no failed titles to retry" });
   return res.status(202).json({ runId });
 });
 

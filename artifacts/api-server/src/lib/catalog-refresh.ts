@@ -154,13 +154,16 @@ async function logSustainedProviderFailures() {
   }
 }
 
-export async function retryFailedCatalogTitles(runId: number) {
+export async function retryFailedCatalogTitles(
+  runId: number,
+  beforeStart?: (tx: CatalogRefreshTransaction, runId: number) => Promise<void>,
+) {
   const failed = await db.select({ itemKey: catalogSyncItemsTable.itemKey })
     .from(catalogSyncItemsTable)
     .where(and(eq(catalogSyncItemsTable.runId, runId), eq(catalogSyncItemsTable.status, "failed")));
   const keys = new Set(failed.map((item) => item.itemKey));
   if (!keys.size) return null;
-  return startCatalogRefresh("retry", sourceItems.filter((item) => keys.has(item.key)));
+  return startCatalogRefresh("retry", sourceItems.filter((item) => keys.has(item.key)), beforeStart);
 }
 
 export async function scheduleCatalogRefresh(delayOverride?: number) {
