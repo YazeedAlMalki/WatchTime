@@ -213,6 +213,18 @@ describe('title action sign-in return', () => {
     expect(detail.getByTestId('title-primary-actions').props.style).toEqual(
       expect.objectContaining({ flexWrap: 'wrap' }),
     );
+    for (const testID of ['watchlist-toggle', 'watched-toggle']) {
+      const action = detail.getByTestId(testID);
+      expect(action.props.accessibilityRole).toBe('button');
+      expect(action.props.style).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ minHeight: 44 }),
+          expect.objectContaining({ flexShrink: 1, maxWidth: '100%' }),
+        ]),
+      );
+    }
+    expect(detail.getByText('Watchlist').props.allowFontScaling).not.toBe(false);
+    expect(detail.getByText('Mark watched').props.allowFontScaling).not.toBe(false);
   });
 
   it.each([

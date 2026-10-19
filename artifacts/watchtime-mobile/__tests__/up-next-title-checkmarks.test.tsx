@@ -229,6 +229,19 @@ it('shows a failed Home mark and refreshes title, seasons, and activity after a 
     <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
   );
   await waitFor(() => expect(home.getByTestId('mark-watched-201')).toBeTruthy());
+  expect(home.getByTestId('upnext-actions-42').props.style).toEqual(
+    expect.objectContaining({ flexWrap: 'wrap' }),
+  );
+  const markButton = home.getByTestId('mark-watched-201');
+  expect(markButton.props.style).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ minHeight: 44, maxWidth: '100%', flexShrink: 1 }),
+    ]),
+  );
+  expect(home.getByText('Watched').props.style).toEqual(
+    expect.objectContaining({ flexShrink: 1 }),
+  );
+  expect(home.getByText('Watched').props.allowFontScaling).not.toBe(false);
   const stopPropagation = jest.fn();
   fireEvent.press(home.getByTestId('mark-watched-201'), { stopPropagation });
   await waitFor(() => {

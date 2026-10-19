@@ -103,7 +103,17 @@ function UpNextCard({ show }: { show: TrackedShow }) {
             ]}
           />
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+        <View
+          testID={`upnext-actions-${show.title.id}`}
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            marginTop: 8,
+          }}
+        >
           <Text style={{ flexShrink: 1, color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
             {show.watchedEpisodes}/{show.totalEpisodes} episodes
           </Text>
@@ -126,6 +136,8 @@ function UpNextCard({ show }: { show: TrackedShow }) {
                   backgroundColor: c.primary,
                   borderRadius: 999,
                   minHeight: 44,
+                  maxWidth: '100%',
+                  flexShrink: 1,
                   paddingHorizontal: 12,
                   paddingVertical: 6,
                   opacity: markWatched.isPending ? 0.5 : pressed ? 0.8 : 1,
@@ -133,7 +145,7 @@ function UpNextCard({ show }: { show: TrackedShow }) {
               ]}
             >
               <Feather name={markWatched.isError ? 'refresh-cw' : 'check'} size={14} color={c.primaryForeground} />
-              <Text style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>
+              <Text style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_600SemiBold', flexShrink: 1 }}>
                 {markWatched.isPending ? 'Saving…' : markWatched.isError ? 'Retry' : 'Watched'}
               </Text>
             </Pressable>

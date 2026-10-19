@@ -927,6 +927,7 @@ export default function TitleDetailScreen() {
         >
           <Pressable
             testID="watchlist-toggle"
+            accessibilityRole="button"
             disabled={watchlistBusy}
             onPress={() => {
               if (!isSignedIn) {
@@ -975,6 +976,7 @@ export default function TitleDetailScreen() {
           {t.type === 'movie' ? (
             <Pressable
               testID="watched-toggle"
+              accessibilityRole="button"
               disabled={watchedBusy}
               onPress={() => {
                 if (!isSignedIn) {
