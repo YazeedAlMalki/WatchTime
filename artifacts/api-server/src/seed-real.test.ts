@@ -569,7 +569,7 @@ describe("real catalog sync", () => {
     }
   });
 
-  it("leaves TVMaze and Wikipedia health history unchanged during a dry run", async () => {
+  it("leaves TVMaze and Wikipedia health history unchanged when dry-run source items fail", async () => {
     const previousSyncAt = new Date("2025-04-03T02:01:00.000Z");
     const previousSuccessAt = new Date("2025-04-02T01:00:00.000Z");
     const seededHealth = [
@@ -611,20 +611,38 @@ describe("real catalog sync", () => {
       wikiPage: "Dry Run Health History Test",
       popularity: 0,
     };
+    const failedTvItem: SourceItem = {
+      ...testItem,
+      key: "tv:dry-run-health-history-failure",
+      expectedTitle: "Unexpected TVMaze Title",
+    };
+    const failedWikipediaItem: SourceItem = {
+      ...wikipediaItem,
+      key: "movie:dry-run-health-history-failure",
+      name: "Failed Dry Run Health History Test",
+      wikiPage: "Failed Dry Run Health History Test",
+    };
     const fetchMock = vi.fn(async (input: string | URL | Request) =>
       String(input).includes("wikipedia.org")
-        ? jsonResponse({ extract: "A sourced preview summary." })
+        ? String(input).includes(encodeURIComponent(failedWikipediaItem.wikiPage!))
+          ? jsonResponse({ extract: "" })
+          : jsonResponse({ extract: "A sourced preview summary." })
         : jsonResponse(showPayload),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await runCatalogSync(
       { dryRun: true, allowPartial: false },
-      [testItem, wikipediaItem],
+      [testItem, failedTvItem, wikipediaItem, failedWikipediaItem],
     );
 
-    expect(result).toMatchObject({ selected: 2, succeeded: 2, failures: [] });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result).not.toBeNull();
+    if (!result) throw new Error("Catalog sync did not run");
+    expect(result).toMatchObject({ selected: 4, succeeded: 2, episodes: 0 });
+    expect(result.failures).toHaveLength(2);
+    expect(result.failures.map(({ provider }) => provider).sort())
+      .toEqual(["TVMaze", "Wikipedia"]);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     const storedHealth = await db.select().from(integrationHealthTable)
       .where(inArray(integrationHealthTable.provider, ["TVMaze", "Wikipedia"]));
     expect(storedHealth).toHaveLength(2);
