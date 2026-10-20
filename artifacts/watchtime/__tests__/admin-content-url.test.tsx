@@ -268,11 +268,35 @@ describe("admin content URL", () => {
   });
 
   it("resets invalid alternate-title page numbers and oversized cursors", () => {
-    expect(readAdminContentUrl("?tab=content&aliasPage=0&aliasCursor=bad"))
-      .toMatchObject({ aliasPage: 1, aliasCursor: null });
+    const cursor = "00000000-0000-0000-0000-000000000001:0";
+    for (const invalidPage of ["0", "-1", "1.5", "invalid", "9007199254740992"]) {
+      expect(readAdminContentUrl(`?tab=content&aliasPage=${invalidPage}&aliasCursor=${cursor}`))
+        .toMatchObject({ aliasPage: 1, aliasCursor: null });
+    }
     expect(readAdminContentUrl("?tab=content&aliasPage=1&aliasCursor=bad"))
       .toMatchObject({ aliasPage: 1, aliasCursor: null });
     expect(readAdminContentUrl(`?tab=content&aliasPage=3&aliasCursor=${"x".repeat(4097)}`))
       .toMatchObject({ aliasPage: 1, aliasCursor: null });
+  });
+
+  it("preserves the snapshot cursor when returning to the first alternate-title page", () => {
+    const cursor = "00000000-0000-0000-0000-000000000001:0";
+    const firstPage = adminContentUrl(
+      "?tab=content&region=FR&aliasPage=2&aliasCursor=previous",
+      "content",
+      "FR",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1,
+      cursor,
+    );
+    expect(readAdminContentUrl(new URL(firstPage, "https://example.test").search))
+      .toMatchObject({ aliasPage: 1, aliasCursor: cursor });
+    expect(readAdminContentUrl(`?tab=content&aliasPage=1&aliasCursor=${cursor}`))
+      .toMatchObject({ aliasPage: 1, aliasCursor: cursor });
   });
 });

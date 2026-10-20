@@ -14,3 +14,9 @@ For pull-to-refresh tests, inspect the ScrollView's `refreshControl` prop and in
 **Why:** React Native Testing Library 14 no longer exposes `UNSAFE_getByType`, and the native ScrollView mock retains its refresh control as a prop rather than mounting a host child. Searching host descendants for an `onRefresh` handler therefore finds nothing.
 
 **How to apply:** Use the renderer root's predicate queries with `includeSelf: true` when the ScrollView can itself be the root. Keep network hooks and the query client real when testing the resulting refetch lifecycle.
+
+For deferred-request tests, do not await an event helper that awaits the handler's unresolved promise. Start the request without returning its promise from `act`, then settle it in a later `act`.
+
+**Why:** React Native Testing Library 14 awaits async press handlers. Awaiting the press before resolving a deliberately held request deadlocks the test. Host Pressable nodes also need not expose `props.onPress`.
+
+**How to apply:** When direct handler invocation is needed to test a disabled-control guard, locate the callback on the host's enclosing `unstable_fiber` chain. Keep that renderer-specific access confined to tests and separately assert the native disabled state.

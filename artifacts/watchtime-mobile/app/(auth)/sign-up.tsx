@@ -111,7 +111,7 @@ function ClerkSignUpScreen() {
   };
 
   const handleVerify = async () => {
-    if (busy) return;
+    if (busy || resending) return;
     const { error } = await signUp.verifications.verifyEmailCode({ code });
     if (error) return;
     if (signUp.status === 'complete') await handleFinalize();
@@ -220,10 +220,10 @@ function ClerkSignUpScreen() {
             <Pressable
               testID="verify-button"
               onPress={handleVerify}
-              disabled={busy || !code}
+              disabled={busy || resending || !code}
               style={({ pressed }) => [
                 styles.button,
-                { backgroundColor: c.primary, opacity: busy || !code ? 0.5 : pressed ? 0.8 : 1 },
+                { backgroundColor: c.primary, opacity: busy || resending || !code ? 0.5 : pressed ? 0.8 : 1 },
               ]}
             >
               <Text style={{ color: c.primaryForeground, fontSize: 16, fontFamily: 'Inter_600SemiBold' }}>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 const mockUseLocalSearchParams = jest.fn();
 const mockUseSignUp = jest.fn();
@@ -334,6 +334,85 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(screen.queryByTestId('resend-code-status')).toBeNull();
     expect(signUp.verifications.sendEmailCode).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['success', 'returned error', 'rejected promise'])(
+    'blocks verification while resending and restores it after %s',
+    async (outcome) => {
+      mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
+      let resolveSend!: (value: { error: null | { message: string } }) => void;
+      let rejectSend!: (reason: Error) => void;
+      const sendEmailCode = jest.fn(() => new Promise<{ error: null | { message: string } }>((resolve, reject) => {
+        resolveSend = resolve;
+        rejectSend = reject;
+      }));
+      const signUp = {
+        status: 'missing_requirements',
+        unverifiedFields: ['email_address'],
+        missingFields: [],
+        verifications: {
+          sendEmailCode,
+          verifyEmailCode: jest.fn(async () => {
+            signUp.status = 'complete';
+            return { error: null };
+          }),
+        },
+        finalize: jest.fn(async ({ navigate }: { navigate: (args: unknown) => void }) => {
+          navigate({ session: { currentTask: null }, decorateUrl: (url: string) => url });
+        }),
+      };
+      // Clerk can remain idle while our separate resend promise is pending.
+      mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+      const screen = await render(<SignUpScreen />);
+      // The renderer exposes host nodes, so find the enclosing Pressable's
+      // callback to test its guard independently of native disabled behavior.
+      const getPressHandler = (testID: string) => {
+        let fiber = screen.getByTestId(testID).unstable_fiber;
+        while (fiber) {
+          if (typeof fiber.memoizedProps?.onPress === 'function') return fiber.memoizedProps.onPress;
+          fiber = fiber.return;
+        }
+        throw new Error(`No press handler found for ${testID}`);
+      };
+      await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
+      expect(screen.getByTestId('verify-button')).toBeEnabled();
+      // Do not await the resend handler: its request must stay pending.
+      await act(async () => {
+        void getPressHandler('resend-code-button')();
+      });
+
+      expect(sendEmailCode).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('verify-button')).toBeDisabled();
+      await fireEvent.press(screen.getByTestId('verify-button'));
+      // Also bypass the disabled control to exercise the handler's own guard.
+      await act(async () => {
+        await getPressHandler('verify-button')();
+      });
+      expect(signUp.verifications.verifyEmailCode).not.toHaveBeenCalled();
+      expect(signUp.finalize).not.toHaveBeenCalled();
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+
+      await act(async () => {
+        if (outcome === 'rejected promise') {
+          rejectSend(new Error('Email service unavailable.'));
+        } else {
+          resolveSend({ error: outcome === 'returned error' ? { message: 'Please try again.' } : null });
+        }
+      });
+
+      expect(screen.getByTestId('verify-button')).toBeEnabled();
+      expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+      expect(signUp.verifications.verifyEmailCode).not.toHaveBeenCalled();
+      expect(signUp.finalize).not.toHaveBeenCalled();
+      await fireEvent.changeText(screen.getByTestId('code-input'), '654321');
+      await fireEvent.press(screen.getByTestId('verify-button'));
+
+      await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith('/title/456'));
+      expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledTimes(1);
+      expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledWith({ code: '654321' });
+      expect(signUp.finalize).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('reports a failed resend and lets the user retry without leaving verification', async () => {
     mockUseLocalSearchParams.mockReturnValue({});
