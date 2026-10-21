@@ -324,17 +324,38 @@ describe("GET /api/admin/integrations", () => {
 
     await db.execute(sql`
       update safety_records
-      set updated_at = '275760-09-13 00:00:00.000'::timestamp
-      where id = ${ratings[0].id}
+      set updated_at = case
+        when id = ${ratings[0].id} then '275760-09-13 00:00:00.000'::timestamp
+        else '275760-09-12 23:59:59.999999'::timestamp
+      end
+      where id in (${ratings[0].id}, ${ratings[1].id})
     `);
-    const extremeFiniteResponse = await request(app)
+    const supportedBoundaryResponse = await request(app)
       .get("/api/admin/integrations")
       .expect(200);
-    const extremeFiniteHealth = extremeFiniteResponse.body.find(
+    const supportedBoundaryHealth = supportedBoundaryResponse.body.find(
       (row: { provider: string }) => row.provider === malformedProvider,
     );
 
-    expect(extremeFiniteHealth).toMatchObject({
+    expect(supportedBoundaryHealth).toMatchObject({
+      status: "healthy",
+      successRatePercent: 97,
+      malformedRefreshTimestampCount: 0,
+    });
+
+    await db.execute(sql`
+      update safety_records
+      set updated_at = '275760-09-13 00:00:00.001'::timestamp
+      where id = ${ratings[0].id}
+    `);
+    const outOfRangeResponse = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+    const outOfRangeHealth = outOfRangeResponse.body.find(
+      (row: { provider: string }) => row.provider === malformedProvider,
+    );
+
+    expect(outOfRangeHealth).toMatchObject({
       status: "healthy",
       successRatePercent: 97,
       malformedRefreshTimestampCount: 1,
@@ -353,24 +374,6 @@ describe("GET /api/admin/integrations", () => {
     );
 
     expect(repairedHealth).toMatchObject({
-      status: malformedHealth.status,
-      successRatePercent: malformedHealth.successRatePercent,
-      malformedRefreshTimestampCount: 1,
-    });
-
-    await db
-      .update(safetyRecordsTable)
-      .set({ updatedAt: new Date("2026-10-05T12:00:00.000Z") })
-      .where(eq(safetyRecordsTable.id, ratings[1].id));
-
-    const fullyRepairedResponse = await request(app)
-      .get("/api/admin/integrations")
-      .expect(200);
-    const fullyRepairedHealth = fullyRepairedResponse.body.find(
-      (row: { provider: string }) => row.provider === malformedProvider,
-    );
-
-    expect(fullyRepairedHealth).toMatchObject({
       status: malformedHealth.status,
       successRatePercent: malformedHealth.successRatePercent,
       malformedRefreshTimestampCount: 0,
