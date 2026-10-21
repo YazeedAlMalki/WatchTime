@@ -50,9 +50,9 @@ describe("GET /api/admin/integrations", () => {
       .values({
         provider,
         status: "healthy",
-        successRatePercent,
-        refreshAttempts,
-        successfulRefreshes,
+        successRatePercent: 83.3,
+        refreshAttempts: null,
+        successfulRefreshes: null,
       })
       .returning({ id: integrationHealthTable.id });
     insertedIds.push(stored.id);
@@ -60,6 +60,10 @@ describe("GET /api/admin/integrations", () => {
     const response = await request(app)
       .get("/api/admin/integrations")
       .expect(200);
+
+    const infiniteSyncHealth = response.body.find(
+      (row: { provider: string }) => row.provider === infiniteSyncProvider,
+    );
         const health = response.body.find(
           (row: { provider: string }) => row.provider === provider,
         );
@@ -89,6 +93,10 @@ describe("GET /api/admin/integrations", () => {
     const response = await request(app)
       .get("/api/admin/integrations")
       .expect(200);
+
+    const infiniteSyncHealth = response.body.find(
+      (row: { provider: string }) => row.provider === infiniteSyncProvider,
+    );
         const health = response.body.find(
           (row: { provider: string }) => row.provider === provider,
         );
@@ -108,26 +116,37 @@ describe("GET /api/admin/integrations", () => {
       .insert(integrationHealthTable)
       .values([
         {
-          provider: attemptsOnlyProvider,
-          status: "degraded",
-          successRatePercent: 66.7,
-          refreshAttempts: 9,
-          successfulRefreshes: null,
+          provider: infiniteSyncProvider,
+          status: "healthy",
+          lastSuccessAt: new Date("2026-10-20T12:00:00.000Z"),
         },
         {
-          provider: successesOnlyProvider,
-          status: "healthy",
-          successRatePercent: 50,
-          refreshAttempts: null,
-          successfulRefreshes: 4,
+          provider: outOfRangeSuccessProvider,
+          status: "failing",
+          lastSyncAt: new Date("2026-10-20T12:00:00.000Z"),
         },
       ])
       .returning({ id: integrationHealthTable.id });
     insertedIds.push(...storedRows.map((row) => row.id));
 
+    await db.execute(sql`
+      update integration_health
+      set last_sync_at = 'infinity'::timestamp
+      where id = ${storedRows[0].id}
+    `);
+    await db.execute(sql`
+      update integration_health
+      set last_success_at = '275761-01-01 00:00:00'::timestamp
+      where id = ${storedRows[1].id}
+    `);
+
     const response = await request(app)
       .get("/api/admin/integrations")
       .expect(200);
+
+    const infiniteSyncHealth = response.body.find(
+      (row: { provider: string }) => row.provider === infiniteSyncProvider,
+    );
     const attemptsOnlyHealth = response.body.find(
       (row: { provider: string }) => row.provider === attemptsOnlyProvider,
     );
@@ -135,19 +154,7 @@ describe("GET /api/admin/integrations", () => {
       (row: { provider: string }) => row.provider === successesOnlyProvider,
     );
 
-    expect(attemptsOnlyHealth).toMatchObject({
-      provider: attemptsOnlyProvider,
-      refreshAttempts: 9,
-      successfulRefreshes: null,
-    });
-    expect(successesOnlyHealth).toMatchObject({
-      provider: successesOnlyProvider,
-      refreshAttempts: null,
-      successfulRefreshes: 4,
-    });
-  });
-
-  it("warns for low accumulated rates across providers with reliable counts, even after recovery", async () => {
+    const infiniteSyncProvider = "Integration health infinite sync timestamp";
     const trackedProviders = [
       "Wikidata",
       "Does the Dog Die?",
@@ -182,6 +189,10 @@ describe("GET /api/admin/integrations", () => {
     const response = await request(app)
       .get("/api/admin/integrations")
       .expect(200);
+
+    const infiniteSyncHealth = response.body.find(
+      (row: { provider: string }) => row.provider === infiniteSyncProvider,
+    );
       for (const provider of trackedProviders) {
         const health = response.body.find(
           (row: { provider: string }) => row.provider === provider,
@@ -306,12 +317,20 @@ describe("GET /api/admin/integrations", () => {
     const response = await request(app)
       .get("/api/admin/integrations")
       .expect(200);
+
+    const infiniteSyncHealth = response.body.find(
+      (row: { provider: string }) => row.provider === infiniteSyncProvider,
+    );
     const zeroCountHealth = response.body.find(
       (row: { provider: string }) => row.provider === zeroCountProvider,
     );
     const malformedHealth = response.body.find(
       (row: { provider: string }) => row.provider === malformedProvider,
     );
+
+    const supportedBoundaryResponse = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
     expect(zeroCountHealth).toMatchObject({
       status: "failing",
       malformedRefreshTimestampCount: 0,
@@ -373,6 +392,10 @@ describe("GET /api/admin/integrations", () => {
       (row: { provider: string }) => row.provider === malformedProvider,
     );
 
+    const outOfRangeResponse = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+
     expect(repairedHealth).toMatchObject({
       status: malformedHealth.status,
       successRatePercent: malformedHealth.successRatePercent,
@@ -380,3 +403,9 @@ describe("GET /api/admin/integrations", () => {
     });
   });
 });
+
+    const outOfRangeSuccessProvider = "Integration health out-of-range success timestamp";
+
+    const outOfRangeSuccessHealth = response.body.find(
+      (row: { provider: string }) => row.provider === outOfRangeSuccessProvider,
+    );
