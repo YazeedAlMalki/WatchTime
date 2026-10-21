@@ -541,6 +541,132 @@ describe("private, idempotent watch-history imports", () => {
     }
   });
 
+  it("keeps a refreshed shared regional alias ambiguous when only one show has the imported episode", async () => {
+    await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
+      `import_create:${USER_A}`,
+      `import_confirm:${USER_A}`,
+    ]));
+    const fixtures: SourceItem[] = [990093, 990094].map((tvmazeId, index) => ({
+      key: `test:import-asymmetric-${index}`,
+      source: "tvmaze",
+      type: "tv",
+      name: `__import_asymmetric_show_${index}__`,
+      tvmazeId,
+      expectedTitle: `__import_asymmetric_show_${index}__`,
+      expectedYear: 2020,
+      expectedImdbId: `tt999009${index + 3}`,
+      aliases: [{
+        alias: "非対称の共通タイトル",
+        language: "ja",
+        sourceName: "JA Wikipedia",
+        sourceUrl: "https://ja.wikipedia.org/wiki/非対称の共通タイトル",
+      }],
+      popularity: 0,
+    }));
+    const imdbIds = fixtures.map((fixture) => fixture.expectedImdbId!);
+    const healthSnapshot = await db.select().from(integrationHealthTable);
+    let importId: number | undefined;
+    let titleIds: number[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const fixture = fixtures.find((item) => String(input).includes(`/shows/${item.tvmazeId}?`));
+      if (!fixture) throw new Error(`Unexpected catalog request: ${input}`);
+      return new Response(JSON.stringify({
+        id: fixture.tvmazeId,
+        name: fixture.name,
+        type: "Scripted",
+        genres: ["Drama"],
+        premiered: "2020-01-01",
+        status: "Ended",
+        summary: "<p>Fixture</p>",
+        image: null,
+        externals: { imdb: fixture.expectedImdbId },
+        _embedded: {
+          cast: [],
+          // Both shows have episodes, but only the first contains S2E3.
+          episodes: [{ season: 2, number: fixture === fixtures[0] ? 3 : 4, name: "Fixture episode", airdate: "2020-02-03" }],
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    try {
+      const initial = await runCatalogSync({ dryRun: false, allowPartial: true }, fixtures.map((fixture) => ({ ...fixture, aliases: [] })));
+      expect(initial?.succeeded).toBe(2);
+      expect(initial?.failures).toEqual([]);
+      const refreshed = await runCatalogSync({ dryRun: false, allowPartial: true }, fixtures);
+      expect(refreshed?.succeeded).toBe(2);
+      expect(refreshed?.failures).toEqual([]);
+
+      const titles = await db.select().from(titlesTable).where(inArray(titlesTable.imdbId, imdbIds));
+      expect(titles).toHaveLength(2);
+      titleIds = titles.map((title) => title.id).sort((a, b) => a - b);
+      const aliases = await db.select().from(titleAliasesTable).where(and(
+        inArray(titleAliasesTable.titleId, titleIds),
+        eq(titleAliasesTable.alias, "非対称の共通タイトル"),
+      ));
+      expect(aliases.map((alias) => alias.titleId).sort((a, b) => a - b)).toEqual(titleIds);
+      const matchingEpisodes = await db.select().from(episodesTable).where(and(
+        inArray(episodesTable.titleId, titleIds),
+        eq(episodesTable.seasonNumber, 2),
+        eq(episodesTable.episodeNumber, 3),
+      ));
+      expect(matchingEpisodes).toHaveLength(1);
+      expect(matchingEpisodes[0].titleId).toBe(titles.find((title) => title.imdbId === imdbIds[0])!.id);
+
+      const ambiguousEpisode = {
+        kind: "watched_episode",
+        classification: "ambiguous",
+        titleId: null,
+        episodeId: null,
+        selected: false,
+        errorCode: "multiple_titles",
+      };
+      const created = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
+        source: "generic",
+        fileName: "asymmetric-regional-episode.csv",
+        content: "kind,title,type,year,season,episode\nwatched_episode,非対称の共通タイトル,tv,2020,2,3",
+      });
+      expect(created.status).toBe(201);
+      importId = created.body.id;
+      expect(created.body.summary).toMatchObject({ matched: 0, ambiguous: 1 });
+      expect(created.body.items).toHaveLength(1);
+      expect(created.body.items[0]).toMatchObject(ambiguousEpisode);
+      expect(created.body.items[0].candidates.map((candidate: { titleId: number }) => candidate.titleId).sort((a: number, b: number) => a - b))
+        .toEqual(titleIds);
+
+      const preview = await supertest(app).get(`/api/imports/${importId}`).set("x-test-user", USER_A);
+      expect(preview.status).toBe(200);
+      expect(preview.body.items).toHaveLength(1);
+      expect(preview.body.items[0]).toMatchObject(ambiguousEpisode);
+      expect(preview.body.items[0].candidates.map((candidate: { titleId: number }) => candidate.titleId).sort((a: number, b: number) => a - b))
+        .toEqual(titleIds);
+
+      const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
+      expect(confirmed.status).toBe(200);
+      expect(confirmed.body.status).toBe("confirmed");
+      expect(confirmed.body.summary).toMatchObject({ selected: 0, applied: 0, skipped: 1, ambiguous: 1 });
+      expect(confirmed.body.items[0]).toMatchObject(ambiguousEpisode);
+      const watched = await db.select().from(watchedEpisodesTable).where(and(
+        eq(watchedEpisodesTable.userId, USER_A),
+        inArray(watchedEpisodesTable.titleId, titleIds),
+      ));
+      expect(watched).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+      await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
+        `import_create:${USER_A}`,
+        `import_confirm:${USER_A}`,
+      ]));
+      if (importId !== undefined) await db.delete(importsTable).where(eq(importsTable.id, importId));
+      if (titleIds.length) await db.delete(watchedEpisodesTable).where(and(
+        eq(watchedEpisodesTable.userId, USER_A),
+        inArray(watchedEpisodesTable.titleId, titleIds),
+      ));
+      await db.delete(titlesTable).where(inArray(titlesTable.imdbId, imdbIds));
+      await db.delete(integrationHealthTable);
+      if (healthSnapshot.length) await db.insert(integrationHealthTable).values(healthSnapshot);
+    }
+  });
+
   it("rolls back prior tracking writes when any selected item fails during confirmation", async () => {
     const content = [
       "kind,title,type,year",
