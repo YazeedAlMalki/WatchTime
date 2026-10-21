@@ -66,6 +66,9 @@ const LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS = new Set([
 const CONTENT_REVIEW_PAGE_SIZE = 50;
 const JS_DATE_LIMIT_MS = 8_640_000_000_000_000;
 const CONTENT_ALIAS_EXPORT_BATCH_SIZE = 500;
+const AUDIT_LOG_DEFAULT_LIMIT = 50;
+const AUDIT_LOG_MAX_LIMIT = 200;
+const AUDIT_LOG_MAX_OFFSET = 1_000_000;
 const activeSafetySyncRunIds = new Set<number>();
 const activeSafetySyncUniqueIndex =
   "safety_sync_runs_active_provider_offset_unique_idx";
@@ -1846,9 +1849,43 @@ function buildAuditLogWhere(query: Record<string, string>) {
   return allConds.length ? and(...allConds) : undefined;
 }
 
+function parseAuditLogPageValue(
+  value: unknown,
+  defaultValue: number,
+  minimum: number,
+  maximum: number,
+): number | null {
+  if (value === undefined) return defaultValue;
+  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum
+    ? parsed
+    : null;
+}
+
 router.get("/audit-log", async (req, res) => {
-  const limit = Math.max(1, Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200));
-  const offset = Math.max(0, parseInt(String(req.query.offset ?? "0"), 10) || 0);
+  const limit = parseAuditLogPageValue(
+    req.query.limit,
+    AUDIT_LOG_DEFAULT_LIMIT,
+    1,
+    AUDIT_LOG_MAX_LIMIT,
+  );
+  if (limit === null) {
+    return res.status(400).json({
+      error: `limit must be an integer from 1 to ${AUDIT_LOG_MAX_LIMIT}`,
+    });
+  }
+  const offset = parseAuditLogPageValue(
+    req.query.offset,
+    0,
+    0,
+    AUDIT_LOG_MAX_OFFSET,
+  );
+  if (offset === null) {
+    return res.status(400).json({
+      error: `offset must be an integer from 0 to ${AUDIT_LOG_MAX_OFFSET}`,
+    });
+  }
   const where = buildAuditLogWhere(req.query as Record<string, string>);
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })

@@ -256,6 +256,40 @@ describe("GET /api/admin/audit-log — pagination", () => {
     );
     expect(pagedIds).toEqual([...pagedIds].sort((a, b) => b - a));
   });
+
+  it.each([
+    ["limit", "-1"],
+    ["limit", "not-a-number"],
+    ["limit", "201"],
+    ["limit", "9007199254740992"],
+    ["offset", "-1"],
+    ["offset", "not-a-number"],
+    ["offset", "1000001"],
+    ["offset", "9007199254740992"],
+  ])("rejects invalid %s value %s with a clear client error", async (parameter, value) => {
+    const res = await supertest(app)
+      .get(`/api/admin/audit-log?${parameter}=${encodeURIComponent(value)}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(new RegExp(`^${parameter} must be an integer`));
+  });
+
+  it("preserves defaults and accepts the maximum page size", async () => {
+    const [defaultPage, maximumPage] = await Promise.all([
+      supertest(app).get("/api/admin/audit-log"),
+      supertest(app).get("/api/admin/audit-log?limit=200&offset=0"),
+    ]);
+
+    expect(defaultPage.status).toBe(200);
+    expect(defaultPage.body.entries).toHaveLength(
+      Math.min(defaultPage.body.total, 50),
+    );
+    expect(maximumPage.status).toBe(200);
+    expect(maximumPage.body.entries).toHaveLength(
+      Math.min(maximumPage.body.total, 200),
+    );
+    expect(maximumPage.body.total).toBe(defaultPage.body.total);
+  });
 });
 
 describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
