@@ -2788,6 +2788,11 @@ export function AliasReview({
           </div>
         </div>
       )}
+      {isFetching && (
+        <p role="status" className="mb-3 text-sm text-muted-foreground">
+          Loading alternate titles for page {aliasPage}…
+        </p>
+      )}
       {isLoading ? (
         <div className="h-24 animate-pulse bg-secondary/30 rounded-2xl" />
       ) : isError && !linkedAlias ? (

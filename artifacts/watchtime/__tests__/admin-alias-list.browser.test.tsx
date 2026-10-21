@@ -28,15 +28,31 @@ import AdminPage from "@/pages/admin";
 
 it("distinguishes an alias-list failure from an empty result and retries the current filters", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
-  window.history.replaceState({}, "", "/admin?tab=content&region=US&q=Lighthouse");
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&q=Lighthouse&aliasPage=2&aliasCursor=00000000-0000-0000-0000-000000000001:50:0",
+  );
   const requests: URL[] = [];
   const originalFetch = window.fetch;
+  let resolveInitialResponse!: (response: Response) => void;
+  let markInitialRequestStarted!: () => void;
+  const initialResponse = new Promise<Response>((resolve) => {
+    resolveInitialResponse = resolve;
+  });
+  const initialRequestStarted = new Promise<void>((resolve) => {
+    markInitialRequestStarted = resolve;
+  });
   window.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
     if (url.pathname !== "/api/admin/content-aliases") {
       throw new Error(`Unexpected browser test request: ${url}`);
     }
     requests.push(url);
+    if (url.searchParams.get("ownership") !== "provider") {
+      markInitialRequestStarted();
+      return initialResponse;
+    }
     const failed = url.searchParams.get("ownership") === "provider"
       && requests.filter((request) => request.search === url.search).length === 1;
     return new Response(JSON.stringify(failed
@@ -53,13 +69,22 @@ it("distinguishes an alias-list failure from an empty result and retries the cur
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await initialRequestStarted;
+    const loadingStatus = page.getByText("Loading alternate titles for page 2…");
+    await expect.element(loadingStatus).toBeVisible();
+    await expect.element(loadingStatus).toHaveAttribute("role", "status");
+    resolveInitialResponse(new Response(JSON.stringify({
+      items: [], total: 0, limit: 50, offset: 0,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
     await expect.element(page.getByText("No alternate titles found")).toBeVisible();
+    await expect.element(loadingStatus).not.toBeInTheDocument();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
 
     const ownership = page.getByRole("combobox", { name: "Alias ownership" });
     await userEvent.click(ownership);
     await userEvent.click(page.getByRole("option", { name: "Provider-owned" }));
     await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load alternate titles.");
+    await expect.element(loadingStatus).not.toBeInTheDocument();
     await expect.element(page.getByText("No alternate titles found")).not.toBeInTheDocument();
     await expect.element(ownership).toHaveTextContent("Provider-owned");
     await expect.element(page.getByPlaceholder("Search titles…")).toHaveValue("Lighthouse");
@@ -167,7 +192,7 @@ it("restores the saved alias page and keeps its cursor with the saved filters", 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 51 matching aliases");
+    await expect.element(page.getByText("Page 2 · 51 matching aliases")).toBeVisible();
     await expect.element(page.getByText("Lighthouse resumed page alias")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBe("00000000-0000-0000-0000-000000000001:50:0");
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
@@ -303,11 +328,11 @@ it("keeps filtered alias continuation stable when matching records change betwee
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 51 matching aliases");
+    await expect.element(page.getByText("Page 1 · 51 matching aliases")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
     expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 52 matching aliases");
+    await expect.element(page.getByText("Page 2 · 52 matching aliases")).toBeVisible();
     await expect.element(page.getByText("Lighthouse alias renamed ahead of the current page")).toBeVisible();
     await expect.element(page.getByText("Lighthouse inserted after this cursor")).not.toBeInTheDocument();
     await expect.element(page.getByText("Lighthouse inserted before this cursor")).not.toBeInTheDocument();
@@ -320,7 +345,7 @@ it("keeps filtered alias continuation stable when matching records change betwee
     expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
 
     await userEvent.click(page.getByRole("button", { name: "Previous aliases" }));
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 52 matching aliases");
+    await expect.element(page.getByText("Page 1 · 52 matching aliases")).toBeVisible();
     await expect.element(page.getByText("Lighthouse inserted before this cursor")).not.toBeInTheDocument();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
@@ -328,12 +353,12 @@ it("keeps filtered alias continuation stable when matching records change betwee
     expect(requests.at(-1)?.searchParams.has("offset")).toBe(false);
 
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 52 matching aliases");
+    await expect.element(page.getByText("Page 2 · 52 matching aliases")).toBeVisible();
     const ownership = page.getByRole("combobox", { name: "Alias ownership" });
     await userEvent.click(ownership);
     await userEvent.click(page.getByRole("option", { name: "Provider-owned" }));
     await expect.element(ownership).toHaveTextContent("Provider-owned");
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 52 matching aliases");
+    await expect.element(page.getByText("Page 1 · 52 matching aliases")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("provider");
     expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
@@ -423,7 +448,7 @@ it("keeps the selected alias page when an older page response finishes late", as
     await olderPageRequested;
 
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 2 matching aliases");
+    await expect.element(page.getByText("Page 2 · 2 matching aliases")).toBeVisible();
     await expect.element(page.getByText("Second page alias")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBe("after-401");
 
@@ -431,7 +456,7 @@ it("keeps the selected alias page when an older page response finishes late", as
     await olderPageCompleted;
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 2 matching aliases");
+    await expect.element(page.getByText("Page 2 · 2 matching aliases")).toBeVisible();
     await expect.element(page.getByText("Second page alias")).toBeVisible();
     await expect.element(page.getByText("First page alias")).not.toBeInTheDocument();
   } finally {
