@@ -2248,7 +2248,6 @@ export function AliasReview({
     requests: ReviewRefreshRequest[] = ["aliases", "catalog"],
   ): Promise<ReviewRefreshRequest[] | null> => {
     const attempt = ++aliasRefreshAttempt.current;
-    setRefreshError(null);
     setIsAliasRefreshTimedOut(false);
     setIsRefreshingAliasViews(true);
     const recoveryTimer = window.setTimeout(() => {
@@ -2589,26 +2588,34 @@ export function AliasReview({
       )}
       {refreshError && (
         <div
-          role="alert"
+          role={isRefreshingAliasViews ? "status" : "alert"}
           className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/20 dark:text-orange-300"
         >
           <div>
             <p className="font-semibold">
-              {isAliasRefreshTimedOut
-                ? "Alternate-title refresh is taking longer than expected"
-                : "Alternate-title refresh failed"}
+              {isRefreshingAliasViews
+                ? "Refreshing alternate-title views"
+                : isAliasRefreshTimedOut
+                  ? "Alternate-title refresh is taking longer than expected"
+                  : "Alternate-title refresh failed"}
             </p>
             <p>
-              {describeRefreshStaleness(refreshError)}{" "}
-              {isAliasRefreshTimedOut
-                ? "A previous refresh is still pending. Its results are not being treated as current; retry to start a new check. "
-                : ""}
-              {savedAliasPreview && refreshError.includes("aliases")
-                ? "Your saved correction is shown in the table below, but its review details may be out of date. "
-                : ""}
-              {isAliasRefreshTimedOut
-                ? "If the earlier request finishes after a retry, it will not replace the newer status."
-                : `${formatRefreshFailures(refreshError)} Retry the refresh to check the latest correction and collision information.`}
+              {isRefreshingAliasViews ? (
+                "A newer refresh is in progress. Earlier requests cannot replace its status."
+              ) : (
+                <>
+                  {describeRefreshStaleness(refreshError)}{" "}
+                  {isAliasRefreshTimedOut
+                    ? "A previous refresh is still pending. Its results are not being treated as current; retry to start a new check. "
+                    : ""}
+                  {savedAliasPreview && refreshError.includes("aliases")
+                    ? "Your saved correction is shown in the table below, but its review details may be out of date. "
+                    : ""}
+                  {isAliasRefreshTimedOut
+                    ? "If the earlier request finishes after a retry, it will not replace the newer status."
+                    : `${formatRefreshFailures(refreshError)} Retry the refresh to check the latest correction and collision information.`}
+                </>
+              )}
             </p>
           </div>
           <Button

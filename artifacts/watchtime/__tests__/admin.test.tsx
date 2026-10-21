@@ -681,10 +681,14 @@ describe("admin alternate-title review", () => {
     const firstRefresh = new Promise<void>((_resolve, reject) => {
       rejectFirstRefresh = reject;
     });
+    let resolveRetryRefresh!: () => void;
+    const retryRefresh = new Promise<void>((resolve) => {
+      resolveRetryRefresh = resolve;
+    });
     let refreshCall = 0;
     mocks.queryClient.invalidateQueries.mockImplementation(() => {
       refreshCall += 1;
-      return refreshCall === 1 ? firstRefresh : Promise.resolve();
+      return refreshCall === 1 ? firstRefresh : retryRefresh;
     });
 
     vi.useFakeTimers();
@@ -713,6 +717,13 @@ describe("admin alternate-title review", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(button(container, "Retrying…").disabled).toBe(true);
+    expect(container.textContent).toContain(
+      "Refreshing alternate-title views",
+    );
+    expect(container.textContent).toContain(
+      "A newer refresh is in progress. Earlier requests cannot replace its status.",
+    );
     expect(container.textContent).not.toContain(
       "Alternate-title refresh is taking longer than expected",
     );
@@ -725,7 +736,29 @@ describe("admin alternate-title review", () => {
       rejectFirstRefresh(new Error("late refresh failure"));
       await firstRefresh.catch(() => undefined);
       await Promise.resolve();
+      await Promise.resolve();
     });
+    expect(button(container, "Retrying…").disabled).toBe(true);
+    expect(container.textContent).toContain(
+      "Refreshing alternate-title views",
+    );
+    expect(container.textContent).toContain(
+      "A newer refresh is in progress. Earlier requests cannot replace its status.",
+    );
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+
+    await act(async () => {
+      resolveRetryRefresh();
+      await retryRefresh;
+    });
+    expect(container.textContent).not.toContain(
+      "Refreshing alternate-title views",
+    );
     expect(container.textContent).not.toContain(
       "Alternate-title refresh is taking longer than expected",
     );
