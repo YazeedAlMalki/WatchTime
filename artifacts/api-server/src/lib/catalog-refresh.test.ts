@@ -1048,45 +1048,98 @@ describe("catalog refresh recovery", () => {
     }
   });
 
-  it("recovers unrelated stale queued runs while one run is owned by another worker", async () => {
-    const staleAt = new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000);
+  it.each(["queued", "running"] as const)("recovers abandoned runs and unfinished items while a %s run is owned by another worker", async (ownedStatus) => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const staleAt = new Date(cutoff.getTime() - 1_000);
     const runs = await db.insert(catalogSyncRunsTable).values([
+      { trigger: "manual", status: ownedStatus, createdAt: staleAt },
       { trigger: "manual", status: "queued", createdAt: staleAt },
-      { trigger: "manual", status: "queued", createdAt: staleAt },
+      { trigger: "manual", status: "running", createdAt: staleAt },
+      { trigger: "manual", status: "succeeded", createdAt: staleAt, finishedAt: staleAt },
     ]).returning();
     createdRunIds.push(...runs.map((run) => run.id));
+    const runIds = runs.map((run) => run.id);
+    const items = await db.insert(catalogSyncItemsTable).values(runs.flatMap((run) =>
+      (["queued", "running", "succeeded", "failed"] as const).map((status) => ({
+        runId: run.id,
+        itemKey: `mixed-ownership-${run.id}-${status}`,
+        title: `Mixed ownership ${status}`,
+        provider: "TVMaze",
+        status,
+        startedAt: status === "queued" ? null : staleAt,
+        finishedAt: status === "succeeded" || status === "failed" ? staleAt : null,
+        error: status === "failed" ? "Existing provider failure" : null,
+      })),
+    )).returning();
+    const readRuns = () => db.select().from(catalogSyncRunsTable)
+      .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id);
+    const readItems = () => db.select().from(catalogSyncItemsTable)
+      .where(inArray(catalogSyncItemsTable.runId, runIds)).orderBy(catalogSyncItemsTable.id);
+    const queuedExplanation = "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles";
+    const runningExplanation = "Catalog refresh was interrupted by a server restart";
+    const assertRecoveredRun = (actual: typeof runs[number], original: typeof runs[number]) => {
+      expect(actual).toEqual({
+        ...original,
+        status: "failed",
+        error: original.status === "queued" ? queuedExplanation : runningExplanation,
+        finishedAt: expect.any(Date),
+      });
+    };
+    const assertRecoveredItems = (actual: typeof items, recoveredRunIds: number[]) => {
+      expect(actual).toHaveLength(items.length);
+      for (const [index, original] of items.entries()) {
+        if (recoveredRunIds.includes(original.runId) && ["queued", "running"].includes(original.status)) {
+          const originalRun = runs.find((run) => run.id === original.runId)!;
+          expect(actual[index]).toEqual({
+            ...original,
+            status: "failed",
+            error: originalRun.status === "queued" ? queuedExplanation : runningExplanation,
+            finishedAt: expect.any(Date),
+          });
+        } else {
+          expect(actual[index]).toEqual(original);
+        }
+      }
+    };
 
+    // Keep the owner's session checked out so recovery cannot reentrantly
+    // acquire its advisory lock on a connection borrowed from the pool.
     const lockProbe = await pool.connect();
     try {
       await lockProbe.query(
         "select pg_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1)", [runs[0].id],
       );
 
-      await recoverInterruptedRuns();
+      await recoverInterruptedRuns(cutoff);
 
-      const [protectedRun, unrelatedRun] = await Promise.all(runs.map(async (run) => {
-        const [current] = await db.select().from(catalogSyncRunsTable)
-          .where(eq(catalogSyncRunsTable.id, run.id));
-        return current;
-      }));
-      expect(protectedRun).toEqual(runs[0]);
-      expect(unrelatedRun.status).toBe("failed");
-      expect(unrelatedRun.error).toContain("retry the failed titles");
-      expect(unrelatedRun.finishedAt).toBeInstanceOf(Date);
+      const recoveredRuns = await readRuns();
+      const recoveredItems = await readItems();
+      expect(recoveredRuns).toHaveLength(runs.length);
+      expect(recoveredRuns[0]).toEqual(runs[0]);
+      assertRecoveredRun(recoveredRuns[1], runs[1]);
+      assertRecoveredRun(recoveredRuns[2], runs[2]);
+      expect(recoveredRuns[3]).toEqual(runs[3]);
+      assertRecoveredItems(recoveredItems, [runs[1].id, runs[2].id]);
 
-      await lockProbe.query(
-        "select pg_advisory_unlock(hashtext('watchtime:catalog-refresh-worker'), $1)", [runs[0].id],
+      const unlocked = await lockProbe.query<{ unlocked: boolean }>(
+        "select pg_advisory_unlock(hashtext('watchtime:catalog-refresh-worker'), $1) as unlocked", [runs[0].id],
       );
-      await recoverInterruptedRuns();
+      expect(unlocked.rows[0].unlocked).toBe(true);
+      await recoverInterruptedRuns(cutoff);
 
-      const [recoveredProtectedRun] = await db.select().from(catalogSyncRunsTable)
-        .where(eq(catalogSyncRunsTable.id, runs[0].id));
-      expect(recoveredProtectedRun.status).toBe("failed");
-      expect(recoveredProtectedRun.error).toContain("retry the failed titles");
-      expect(recoveredProtectedRun.finishedAt).toBeInstanceOf(Date);
+      const finalRuns = await readRuns();
+      const finalItems = await readItems();
+      assertRecoveredRun(finalRuns[0], runs[0]);
+      expect(finalRuns.slice(1)).toEqual(recoveredRuns.slice(1));
+      assertRecoveredItems(finalItems, runIds.slice(0, 3));
+      expect(finalItems.filter((item) => item.runId !== runs[0].id))
+        .toEqual(recoveredItems.filter((item) => item.runId !== runs[0].id));
     } finally {
-      await lockProbe.query("select pg_advisory_unlock_all()");
-      lockProbe.release();
+      try {
+        await lockProbe.query("select pg_advisory_unlock_all()");
+      } finally {
+        lockProbe.release();
+      }
     }
   });
 });
