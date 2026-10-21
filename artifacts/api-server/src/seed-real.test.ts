@@ -1071,6 +1071,58 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("does not replace a newer schedule when an older scheduled start rejects", async () => {
+    let rejectStart!: (error: Error) => void;
+    const startGate = new Promise<never>((_resolve, reject) => { rejectStart = reject; });
+    const returning = vi.fn(() => startGate);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const retryDelay = 5 * 60 * 1000;
+    const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+      delay === WEEK_MS || delay === WEEK_MS / 2 || delay === retryDelay
+        ? [{
+            fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+            delay,
+            timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+          }]
+        : []);
+
+    try {
+      await scheduleCatalogRefresh(WEEK_MS);
+      const first = refreshTimers()[0];
+      expect(first).toBeDefined();
+      // Pause enqueueing itself, not provider work after a successful start.
+      vi.spyOn(db, "insert").mockReturnValueOnce({
+        values: () => ({ returning }),
+      } as unknown as ReturnType<typeof db.insert>);
+      first.fire();
+      expect(returning).toHaveBeenCalledOnce();
+
+      await scheduleCatalogRefresh(WEEK_MS / 2);
+      const second = refreshTimers()[1];
+      expect(second).toBeDefined();
+      expect(second.timer).not.toBe(first.timer);
+      expect(second.delay).toBe(WEEK_MS / 2);
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(first.timer);
+      const connectSpy = vi.spyOn(pool, "connect");
+
+      rejectStart(new Error("older scheduled enqueue failed"));
+      // Drain the rejected start's catch/finally chain without firing timers.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(second.timer);
+      expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS / 2]);
+      expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === retryDelay)).toHaveLength(0);
+      // Even an asynchronous attempt to replace the schedule must not begin.
+      expect(connectSpy).not.toHaveBeenCalled();
+    } finally {
+      rejectStart(new Error("release pending start during cleanup"));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+      vi.restoreAllMocks();
+    }
+  });
+
   it.each([0, 1])(
     "keeps exactly one pending refresh when simultaneous starts finish in order %i",
     async (firstToFinish) => {
