@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { createHash, randomUUID } from "node:crypto";
+import adminQueuesRouter from "./admin-queues";
 import {
   db,
   usersTable,
@@ -21,11 +22,6 @@ import {
 } from "@workspace/db";
 import { and, asc, eq, sql, desc, gte, gt, lt, lte, ilike, inArray, isNull, or } from "drizzle-orm";
 import {
-  UpdateAdminContributionBody,
-  UpdateAdminReportBody,
-  UpdateAdminFeedbackBody,
-  ListAdminReportsQueryParams,
-  ListAdminFeedbackQueryParams,
   DeleteAdminContentAliasBody,
   ListAdminContentAliasesQueryParams,
   ListAdminContentAliasesResponse,
@@ -47,7 +43,7 @@ import {
   resolvePreferredRating,
   type RatingRegion,
 } from "../lib/ratingRegions";
-import { RATING_REGIONS_BY_CODE } from "@workspace/rating-regions";
+import { RATING_REGIONS, RATING_REGIONS_BY_CODE } from "@workspace/rating-regions";
 import { retryFailedCatalogTitles, startCatalogRefresh } from "../lib/catalog-refresh";
 
 const router: IRouter = Router();
@@ -139,165 +135,7 @@ router.get("/dashboard", async (_req, res) => {
   });
 });
 
-router.get("/contributions", async (req, res) => {
-  const status = req.query.status as string | undefined;
-  if (status && !["pending", "approved", "rejected", "flagged"].includes(status)) {
-    return res.status(400).json({ error: "Invalid contribution status" });
-  }
-  const rows = await db
-    .select({ contribution: contributionsTable, titleName: titlesTable.name })
-    .from(contributionsTable)
-    .innerJoin(titlesTable, eq(titlesTable.id, contributionsTable.titleId))
-    .where(status ? eq(contributionsTable.status, status as "pending" | "approved" | "rejected" | "flagged") : undefined)
-    .orderBy(desc(contributionsTable.createdAt));
-  return res.json(rows.map(({ contribution, titleName }) => ({
-    ...contribution, titleName, createdAt: contribution.createdAt.toISOString(),
-  })));
-});
-
-router.patch("/contributions/:contributionId", async (req, res) => {
-  const id = parseInt(String(req.params.contributionId), 10);
-  const parsed = UpdateAdminContributionBody.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-  const updated = await db.transaction(async (tx) => {
-    const [previous] = await tx.select().from(contributionsTable)
-      .where(eq(contributionsTable.id, id)).for("update");
-    if (!previous) return null;
-    const [row] = await tx.update(contributionsTable).set({ status: parsed.data.status })
-      .where(eq(contributionsTable.id, id)).returning();
-    await tx.insert(adminAuditLogTable).values({
-      adminId: req.userId!,
-      action: `${row.status}_contribution`,
-      entityType: "contribution",
-      entityId: row.id,
-      details: { titleId: row.titleId, category: row.category },
-    });
-    if (previous.status === row.status) return row;
-    const scope = and(
-      eq(safetyRecordsTable.titleId, row.titleId),
-      eq(safetyRecordsTable.sourceName, "WatchTime Community"),
-      row.seasonNumber != null ? eq(safetyRecordsTable.seasonNumber, row.seasonNumber) : isNull(safetyRecordsTable.seasonNumber),
-      row.episodeNumber != null ? eq(safetyRecordsTable.episodeNumber, row.episodeNumber) : isNull(safetyRecordsTable.episodeNumber),
-    );
-    const [existing] = await tx.select().from(safetyRecordsTable).where(scope).for("update");
-    if (row.status === "approved") {
-      const item = {
-        category: row.category, label: row.category, score: null, maxScore: null,
-        description: row.description,
-        severity: row.severity as "none" | "mild" | "moderate" | "severe",
-        contributionId: row.id,
-      };
-      if (existing) {
-        const remaining = existing.items.filter(
-          (entry) => (entry as { contributionId?: number }).contributionId !== row.id,
-        );
-        await tx.update(safetyRecordsTable).set({ items: [...remaining, item], updatedAt: new Date() })
-          .where(eq(safetyRecordsTable.id, existing.id));
-      } else {
-        await tx.insert(safetyRecordsTable).values({
-          titleId: row.titleId, seasonNumber: row.seasonNumber, episodeNumber: row.episodeNumber,
-          sourceName: "WatchTime Community", tier: 3, isCommunity: true, status: "available", items: [item],
-        });
-      }
-    } else if (previous.status === "approved" && existing) {
-      const remaining = existing.items.filter(
-        (entry) => (entry as { contributionId?: number }).contributionId !== row.id,
-      );
-      if (remaining.length) {
-        await tx.update(safetyRecordsTable).set({ items: remaining, updatedAt: new Date() })
-          .where(eq(safetyRecordsTable.id, existing.id));
-      } else {
-        await tx.delete(safetyRecordsTable).where(eq(safetyRecordsTable.id, existing.id));
-      }
-    }
-    return row;
-  });
-  if (!updated) return res.status(404).json({ error: "Not found" });
-  const [title] = await db.select().from(titlesTable).where(eq(titlesTable.id, updated.titleId));
-  return res.json({ ...updated, titleName: title?.name ?? "", createdAt: updated.createdAt.toISOString() });
-});
-
-router.get("/reports", async (req, res) => {
-  const parsed = ListAdminReportsQueryParams.safeParse(req.query);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-  const { status } = parsed.data;
-  const rows = await db
-    .select({ report: reportsTable, titleName: titlesTable.name })
-    .from(reportsTable)
-    .innerJoin(titlesTable, eq(titlesTable.id, reportsTable.titleId))
-    .where(status ? eq(reportsTable.status, status) : undefined)
-    .orderBy(desc(reportsTable.createdAt));
-  return res.json(rows.map(({ report, titleName }) => ({
-    ...report, titleName, createdAt: report.createdAt.toISOString(),
-  })));
-});
-
-router.patch("/reports/:reportId", async (req, res) => {
-  const id = parseInt(String(req.params.reportId), 10);
-  const parsed = UpdateAdminReportBody.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-  const updated = await db.transaction(async (tx) => {
-    const [row] = await tx.update(reportsTable).set({ status: parsed.data.status })
-      .where(eq(reportsTable.id, id)).returning();
-    if (!row) return null;
-    await tx.insert(adminAuditLogTable).values({
-      adminId: req.userId!,
-      action: `${row.status}_report`, entityType: "report", entityId: row.id,
-      details: { titleId: row.titleId, reason: row.reason },
-    });
-    return row;
-  });
-  if (!updated) return res.status(404).json({ error: "Not found" });
-  const [title] = await db.select().from(titlesTable).where(eq(titlesTable.id, updated.titleId));
-  return res.json({ ...updated, titleName: title?.name ?? "", createdAt: updated.createdAt.toISOString() });
-});
-
-router.get("/feedback", async (req, res) => {
-  const parsed = ListAdminFeedbackQueryParams.safeParse(req.query);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-  const { status, category } = parsed.data;
-  const rows = await db
-    .select({ feedback: feedbackTable, userEmail: usersTable.email })
-    .from(feedbackTable)
-    .leftJoin(usersTable, eq(usersTable.id, feedbackTable.userId))
-    .where(and(
-      status ? eq(feedbackTable.status, status) : undefined,
-      category ? eq(feedbackTable.category, category) : undefined,
-    ))
-    .orderBy(desc(feedbackTable.createdAt));
-  return res.json(rows.map(({ feedback, userEmail }) => ({
-    ...feedback, userEmail,
-    createdAt: feedback.createdAt.toISOString(),
-  })));
-});
-
-router.patch("/feedback/:feedbackId", async (req, res) => {
-  const id = parseInt(String(req.params.feedbackId), 10);
-  const parsed = UpdateAdminFeedbackBody.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-  const updated = await db.transaction(async (tx) => {
-    const [row] = await tx.update(feedbackTable).set({ status: parsed.data.status })
-      .where(eq(feedbackTable.id, id)).returning();
-    if (!row) return null;
-    await tx.insert(adminAuditLogTable).values({
-      adminId: req.userId!, action: `feedback_${row.status}`,
-      entityType: "feedback", entityId: row.id, details: { category: row.category },
-    });
-    return row;
-  });
-  if (!updated) return res.status(404).json({ error: "Not found" });
-
-  return res.json({
-    id: updated.id,
-    category: updated.category,
-    message: updated.message,
-    page: updated.page,
-    titleId: updated.titleId,
-    userEmail: null,
-    status: updated.status,
-    createdAt: updated.createdAt.toISOString(),
-  });
-});
+router.use(adminQueuesRouter);
 
 router.get("/integrations", async (_req, res) => {
   const [rows, malformedTimestampCounts] = await Promise.all([
@@ -351,23 +189,9 @@ router.get("/integrations", async (_req, res) => {
 
 router.get("/catalog-refreshes", async (_req, res) => {
   const runs = await db
-    .select({
-      id: catalogSyncRunsTable.id,
-      trigger: catalogSyncRunsTable.trigger,
-      status: catalogSyncRunsTable.status,
-      totalItems: catalogSyncRunsTable.totalItems,
-      processedItems: catalogSyncRunsTable.processedItems,
-      succeededItems: catalogSyncRunsTable.succeededItems,
-      failedItems: catalogSyncRunsTable.failedItems,
-      episodesUpdated: catalogSyncRunsTable.episodesUpdated,
-      startedAt: catalogSyncRunsTable.startedAt,
-      finishedAt: catalogSyncRunsTable.finishedAt,
-      error: catalogSyncRunsTable.error,
-      createdAt: catalogSyncRunsTable.createdAt,
-    })
-    .from(catalogSyncRunsTable)
+    .select().from(catalogSyncRunsTable)
     .orderBy(desc(catalogSyncRunsTable.createdAt), desc(catalogSyncRunsTable.id))
-    .limit(50);
+    .limit(20);
   const runIds = runs.map((run) => run.id);
   const items = runIds.length
     ? await db.select().from(catalogSyncItemsTable).where(and(
@@ -391,10 +215,8 @@ router.get("/catalog-refreshes", async (_req, res) => {
 router.post("/catalog-refreshes", async (req, res) => {
   const runId = await startCatalogRefresh("manual", undefined, async (tx, id) => {
     await tx.insert(adminAuditLogTable).values({
-      adminId: req.userId!,
-      action: "start_catalog_refresh",
-      entityType: "catalog_sync",
-      entityId: id,
+      adminId: req.userId!, action: "start_catalog_refresh",
+      entityType: "catalog_sync", entityId: id,
     });
   });
   return res.status(202).json({ runId });
@@ -419,19 +241,17 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
 router.get("/content", async (req, res) => {
   const regionParam = req.query.region;
   const malformedRefreshTimestampParam = req.query.malformedRefreshTimestamp;
-  if (
-    regionParam !== undefined &&
+  const malformedRefreshTimestampAllRegionsParam =
+    req.query.malformedRefreshTimestampAllRegions;
+  if (regionParam !== undefined &&
     (typeof regionParam !== "string" ||
-      !RATING_REGIONS_BY_CODE[regionParam as RatingRegion])
-  ) {
+      !Object.hasOwn(RATING_REGIONS_BY_CODE, regionParam))) {
     return res.status(400).json({ error: "Invalid rating region" });
   }
-  if (
-    malformedRefreshTimestampParam !== undefined &&
-    (typeof malformedRefreshTimestampParam !== "string" ||
-      !["true", "false"].includes(malformedRefreshTimestampParam))
-  ) {
-    return res.status(400).json({ error: "Invalid malformed refresh timestamp filter" });
+  for (const value of [malformedRefreshTimestampParam, malformedRefreshTimestampAllRegionsParam]) {
+    if (value !== undefined && (typeof value !== "string" || !["true", "false"].includes(value))) {
+      return res.status(400).json({ error: "Invalid malformed refresh timestamp filter" });
+    }
   }
   const malformedRefreshTimestampProviderParam = req.query.malformedRefreshTimestampProvider;
   if (
@@ -452,16 +272,24 @@ router.get("/content", async (req, res) => {
   }
   const parsedParams = SearchAdminContentQueryParams.safeParse(req.query);
   if (!parsedParams.success) {
-    res.status(400).json({ error: "Invalid content search parameters" });
+    res.status(400).json({ error: "Invalid content parameters" });
     return;
   }
+
   const q = parsedParams.data.q?.trim() ?? "";
+
   const region = (typeof regionParam === "string" ? regionParam : "US") as RatingRegion;
   const malformedRefreshTimestamp = malformedRefreshTimestampParam === "true";
+
+  const malformedRefreshTimestampAllRegions =
+    malformedRefreshTimestampAllRegionsParam === "true" && malformedRefreshTimestamp;
   const malformedRefreshTimestampProvider =
     typeof malformedRefreshTimestampProviderParam === "string"
       ? malformedRefreshTimestampProviderParam.trim()
       : "";
+  if (malformedRefreshTimestampAllRegions && !malformedRefreshTimestampProvider) {
+    return res.status(400).json({ error: "A provider is required for all-regions timestamp review" });
+  }
   const makeTitleQuery = () => db
     .select()
     .from(titlesTable)
@@ -469,7 +297,11 @@ router.get("/content", async (req, res) => {
       q ? ilike(titlesTable.name, `%${q}%`) : undefined,
     ))
     .orderBy(desc(titlesTable.popularity), asc(titlesTable.id));
-  const buildContent = async (titles: (typeof titlesTable.$inferSelect)[]) => {
+  const buildContent = async (
+    titles: (typeof titlesTable.$inferSelect)[],
+    selectedRegions: RatingRegion[] = titles.map(() => region),
+    selectedProvider = "Wikidata",
+  ) => {
     const ids = titles.map((title) => title.id);
     const [mappings, safetyRecords] = ids.length
       ? await Promise.all([
@@ -512,7 +344,7 @@ router.get("/content", async (req, res) => {
       else safetyRecordsByTitle.set(record.titleId, [record]);
     }
 
-    return titles.map((title) => {
+    return titles.map((title, index) => {
       const titleSafetyRecords = safetyRecordsByTitle.get(title.id) ?? [];
       const ratingRecords = titleSafetyRecords.map((record) => ({
         ...record,
@@ -520,7 +352,12 @@ router.get("/content", async (req, res) => {
           ? record.rawUpdatedAt
           : record.updatedAt,
       }));
-      const selectedRating = resolvePreferredRating(ratingRecords, region);
+      const selectedRegion = selectedRegions[index] ?? region;
+      const selectedRating = resolvePreferredRating(
+        ratingRecords,
+        selectedRegion,
+        selectedProvider,
+      );
       const selectedRecord = titleSafetyRecords.find((record) => record.id === selectedRating?.recordId);
       return {
         id: title.id,
@@ -542,28 +379,29 @@ router.get("/content", async (req, res) => {
   };
 
   if (!malformedRefreshTimestamp) {
-    const titles = await makeTitleQuery().limit(CONTENT_REVIEW_PAGE_SIZE).offset(offset);
+    const titles = await makeTitleQuery().limit(CONTENT_REVIEW_PAGE_SIZE);
     return res.json(await buildContent(titles));
   }
-
-  // resolvePreferredRating only selects official Wikidata records for the
-  // region's classification system. Rank those ratings in SQL, then apply the
-  // result-page offset before loading full title content. This avoids rebuilding
-  // every earlier matching title just to serve a later page.
-  if (malformedRefreshTimestampProvider && malformedRefreshTimestampProvider !== "Wikidata") {
-    return res.json([]);
-  }
-  const preferredSystem = RATING_REGIONS_BY_CODE[region].system;
-  const matchingTitles = await db.execute<{ id: number }>(sql`
-    WITH ranked_ratings AS (
+  const regions = malformedRefreshTimestampAllRegions
+    ? RATING_REGIONS
+    : [RATING_REGIONS_BY_CODE[region]];
+  const regionValues = sql.join(
+    regions.map(({ code, system }) => sql`(${code}, ${system})`),
+    sql`, `,
+  );
+  const matchingRatings = await db.execute<{ id: number; region: RatingRegion }>(sql`
+    WITH regions(region, system) AS (VALUES ${regionValues}),
+    ranked_ratings AS (
       SELECT
         rating.title_id,
+        regions.region,
         rating.updated_at::text AS raw_updated_at,
         ROW_NUMBER() OVER (
-          PARTITION BY rating.title_id
+          PARTITION BY rating.title_id, regions.region
           ORDER BY
             CASE
-              WHEN rating.updated_at IN ('infinity'::timestamp, '-infinity'::timestamp) THEN NULL
+              WHEN NOT isfinite(rating.updated_at)
+                OR abs(extract(epoch FROM rating.updated_at)) > 8640000000000 THEN NULL
               ELSE floor(extract(epoch FROM (rating.updated_at AT TIME ZONE 'UTC')) * 1000)
             END DESC NULLS LAST,
             rating.tier ASC,
@@ -573,34 +411,45 @@ router.get("/content", async (req, res) => {
         ) AS rating_rank
       FROM safety_records AS rating
       INNER JOIN titles AS title ON title.id = rating.title_id
+      CROSS JOIN regions
       CROSS JOIN LATERAL jsonb_array_elements(rating.items) AS item(value)
       WHERE rating.season_number IS NULL
         AND rating.episode_number IS NULL
         AND rating.status = 'available'
         AND rating.is_community = false
-        AND rating.source_name = 'Wikidata'
-        AND item.value->>'category' = ${preferredSystem}
+        AND rating.source_name = ${malformedRefreshTimestampProvider || "Wikidata"}
+        AND item.value->>'category' = regions.system
         AND (${q} = '' OR title.name ILIKE ${`%${q}%`})
     )
-    SELECT title.id
+    SELECT title.id, selected.region
     FROM titles AS title
     INNER JOIN ranked_ratings AS selected
       ON selected.title_id = title.id
       AND selected.rating_rank = 1
-      AND selected.raw_updated_at IN ('infinity', '-infinity')
-    ORDER BY title.popularity DESC, title.id ASC
+      AND (selected.raw_updated_at IN ('infinity', '-infinity')
+        OR abs(extract(epoch FROM selected.raw_updated_at::timestamp)) > 8640000000000)
+    ORDER BY title.popularity DESC, title.id ASC, selected.region ASC
     LIMIT ${CONTENT_REVIEW_PAGE_SIZE + 1}
     OFFSET ${offset}
   `);
-  const matchingIds = matchingTitles.rows.map(({ id }) => id);
+  const matchingIds = matchingRatings.rows.map(({ id }) => id);
   if (!matchingIds.length) return res.json([]);
 
   const titles = await db.select().from(titlesTable).where(inArray(titlesTable.id, matchingIds));
   const titlesById = new Map(titles.map((title) => [title.id, title]));
-  const pageTitles = matchingIds
-    .map((id) => titlesById.get(id))
-    .filter((title): title is (typeof titles)[number] => title !== undefined);
-  return res.json(await buildContent(pageTitles));
+  const pageEntries = matchingRatings.rows
+      .map(({ id, region: selectedRegion }) => ({
+        title: titlesById.get(id),
+        region: selectedRegion,
+      }))
+      .filter((entry): entry is { title: (typeof titles)[number]; region: RatingRegion } =>
+        entry.title !== undefined,
+      );
+  return res.json(await buildContent(
+    pageEntries.map(({ title }) => title),
+    pageEntries.map(({ region: selectedRegion }) => selectedRegion),
+    malformedRefreshTimestampProvider || "Wikidata",
+  ));
 });
 
 const normalizeAlias = (value: string) =>
@@ -657,22 +506,13 @@ async function refreshTitleAliasSearchList(tx: any, titleId: number) {
 router.get("/content-aliases", async (req, res): Promise<void> => {
   const parsedParams = ListAdminContentAliasesQueryParams.safeParse(req.query);
   if (!parsedParams.success) {
-    res.status(400).json({ error: "Invalid alias page parameters" });
+    res.status(400).json({ error: "Invalid alias review parameters" });
     return;
   }
-  const { ownership, id: requestedId, afterId, cursor, limit: requestedLimit } = parsedParams.data;
-  const limit = requestedId === undefined ? requestedLimit : 1;
+  const { ownership, id: requestedId, afterId, cursor, limit, offset } = parsedParams.data;
   const q = parsedParams.data.q?.trim() ?? "";
-  let offset = requestedId === undefined ? parsedParams.data.offset : 0;
   const baseWhere = buildContentAliasWhere(q, ownership, requestedId);
   const filterKey = JSON.stringify([q, ownership ?? null]);
-  const startsSnapshot = requestedId === undefined && cursor === undefined &&
-    afterId === undefined && req.query.offset === undefined;
-  const usesSnapshot = requestedId === undefined && cursor !== undefined;
-  let nextCursor: string | null = null;
-  let previousCursor: string | null = null;
-  let total: number;
-  const usesIdCursor = requestedId === undefined && afterId !== undefined;
   const selectRows = () => db.select({
       alias: titleAliasesTable,
       titleName: titlesTable.name,
@@ -681,30 +521,39 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
     })
       .from(titleAliasesTable)
       .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId));
-  type AliasRow = Awaited<ReturnType<typeof selectRows>>[number];
-  let rows: AliasRow[];
-  let hasMore = false;
-
-  if (startsSnapshot || usesSnapshot) {
+  let pageRows: Awaited<ReturnType<typeof selectRows>>;
+  let total: number;
+  let pageOffset = offset;
+  let nextCursor: string | null = null;
+  let previousCursor: string | null = null;
+  let nextAfterId: number | null = null;
+  const snapshotMode = requestedId === undefined &&
+    (cursor !== undefined || (afterId === undefined && req.query.offset === undefined));
+  if (snapshotMode) {
     pruneAliasReviewSnapshots();
     let snapshotId: string;
-    let snapshot: AliasReviewSnapshot;
+    let snapshotOffset = 0;
     let previousOffset: number | undefined;
-    if (usesSnapshot) {
-      const parsedCursor = /^([0-9a-f-]{36}):(\d+)(?::(\d+))?$/i.exec(cursor!);
-      const found = parsedCursor ? aliasReviewSnapshots.get(parsedCursor[1]) : undefined;
-      const cursorOffset = parsedCursor ? Number(parsedCursor[2]) : NaN;
-      const cursorPrevious = parsedCursor?.[3] === undefined ? undefined : Number(parsedCursor[3]);
+    let snapshot: { filterKey: string; aliasIds: number[]; createdAt: number };
+    if (cursor !== undefined) {
+      const parsedCursor = /^([0-9a-f-]{36}):(\d+)(?::(\d+))?$/i.exec(cursor);
+      const found = parsedCursor && aliasReviewSnapshots.get(parsedCursor[1]);
       if (!parsedCursor || !found || found.filterKey !== filterKey ||
-          !Number.isSafeInteger(cursorOffset) || cursorOffset > found.aliasIds.length ||
-          (cursorPrevious !== undefined && (!Number.isSafeInteger(cursorPrevious) || cursorPrevious >= cursorOffset))) {
+        !Number.isSafeInteger(Number(parsedCursor[2])) ||
+        Number(parsedCursor[2]) > found.aliasIds.length ||
+        (parsedCursor[3] !== undefined && (
+          !Number.isSafeInteger(Number(parsedCursor[3])) ||
+          Number(parsedCursor[3]) >= Number(parsedCursor[2])
+        ))) {
         res.status(400).json({ error: "Invalid or expired alias review cursor" });
         return;
       }
       snapshotId = parsedCursor[1];
       snapshot = found;
-      offset = cursorOffset;
-      previousOffset = cursorPrevious ?? (offset > 0 ? Math.max(0, offset - limit) : undefined);
+      snapshotOffset = Number(parsedCursor[2]);
+      previousOffset = parsedCursor[3] === undefined
+        ? (snapshotOffset > 0 ? Math.max(0, snapshotOffset - limit) : undefined)
+        : Number(parsedCursor[3]);
     } else {
       const orderedAliases = await db.select({ id: titleAliasesTable.id })
         .from(titleAliasesTable)
@@ -712,33 +561,35 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
         .where(baseWhere)
         .orderBy(asc(titleAliasesTable.normalizedAlias), asc(titlesTable.name), asc(titleAliasesTable.id));
       snapshotId = randomUUID();
-      snapshot = { filterKey, aliasIds: orderedAliases.map((row) => row.id), createdAt: Date.now() };
+      snapshot = { filterKey, aliasIds: orderedAliases.map(({ id }) => id), createdAt: Date.now() };
       makeRoomForAliasReviewSnapshot();
       aliasReviewSnapshots.set(snapshotId, snapshot);
-      offset = 0;
     }
     total = snapshot.aliasIds.length;
-    const nextOffset = Math.min(offset + limit, total);
-    const windowIds = snapshot.aliasIds.slice(offset, nextOffset);
+    pageOffset = snapshotOffset;
+    const nextOffset = Math.min(snapshotOffset + limit, total);
+    const windowIds = snapshot.aliasIds.slice(snapshotOffset, nextOffset);
     const liveRows = windowIds.length
       ? await selectRows().where(and(baseWhere, inArray(titleAliasesTable.id, windowIds)))
       : [];
     const rowsById = new Map(liveRows.map((row) => [row.alias.id, row]));
-    rows = windowIds.flatMap((id) => {
+    pageRows = windowIds.flatMap((id) => {
       const row = rowsById.get(id);
       return row ? [row] : [];
     });
     nextCursor = nextOffset < total
-      ? createAliasReviewSnapshotCursor(snapshotId, nextOffset, offset)
+      ? createAliasReviewSnapshotCursor(snapshotId, nextOffset, snapshotOffset)
       : null;
     previousCursor = previousOffset === undefined
       ? null
       : createAliasReviewSnapshotCursor(snapshotId, previousOffset);
   } else {
-    const pageWhere = usesIdCursor ? and(baseWhere, gt(titleAliasesTable.id, afterId!)) : baseWhere;
-    const [counts, page] = await Promise.all([
-      db.select({ total: sql<number>`count(*)::int` })
-        .from(titleAliasesTable)
+    const usesIdCursor = requestedId === undefined && afterId !== undefined;
+    const pageWhere = usesIdCursor
+      ? and(baseWhere, gt(titleAliasesTable.id, afterId))
+      : baseWhere;
+    const [[count], rows] = await Promise.all([
+      db.select({ total: sql<number>`count(*)::int` }).from(titleAliasesTable)
         .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
         .where(baseWhere),
       selectRows().where(pageWhere)
@@ -750,13 +601,17 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       .limit(limit + 1)
       .offset(usesIdCursor ? 0 : offset),
     ]);
-    total = counts[0].total;
-    hasMore = page.length > limit;
-    rows = page.slice(0, limit);
+    total = count.total;
+    pageRows = rows.slice(0, limit);
+    nextAfterId = usesIdCursor && rows.length > limit && pageRows.length
+      ? pageRows[pageRows.length - 1].alias.id
+      : null;
   }
-  const collisionCount = await getAliasCollisionCounts([...new Set(rows.map((row) => row.alias.normalizedAlias))]);
+  const collisionCount = await getAliasCollisionCounts([
+    ...new Set(pageRows.map((row) => row.alias.normalizedAlias)),
+  ]);
   res.json(ListAdminContentAliasesResponse.parse({
-    items: rows.map(({ alias, titleName, titleType, titleYear }) => {
+    items: pageRows.map(({ alias, titleName, titleType, titleYear }) => {
       const isEditorial = Boolean(alias.isEditorial);
       const providerCitations = isEditorial
         ? []
@@ -784,9 +639,9 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       };
     }),
     total,
-    limit,
-    offset,
-    nextAfterId: usesIdCursor && hasMore && rows.length ? rows[rows.length - 1].alias.id : null,
+    limit: requestedId === undefined ? limit : 1,
+    offset: requestedId === undefined ? pageOffset : 0,
+    nextAfterId,
     nextCursor,
     previousCursor,
   }));
@@ -806,17 +661,19 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
     .from(titleAliasesTable)
     .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
     .where(where);
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", 'attachment; filename="alternate-title-review.csv"');
-  res.setHeader("X-Export-Count", String(total));
-  const header = ["ID", "Title ID", "Title", "Type", "Year", "Alternate title",
-    "Language", "Source", "Source URL", "Ownership", "Editorial correction",
-    "Collision", "Collision title count", "Last updated"];
+
+  const header = [
+    "ID", "Title ID", "Title", "Type", "Year", "Alternate title", "Language",
+    "Source", "Source URL", "Ownership", "Editorial", "Collision", "Collision title count", "Last updated",
+  ];
   const escapeCsv = (value: unknown) => {
     const text = String(value ?? "");
     const safeText = /^[\u0000-\u0020]*[=+\-@]/.test(text) ? `'${text}` : text;
     return `"${safeText.replace(/"/g, '""')}"`;
   };
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="alternate-title-review.csv"');
+  res.setHeader("X-Export-Count", String(total));
   res.write(header.map(escapeCsv).join(","));
   let afterId = 0;
   while (!res.destroyed) {
@@ -831,10 +688,11 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
       .orderBy(asc(titleAliasesTable.id))
       .limit(CONTENT_ALIAS_EXPORT_BATCH_SIZE);
     if (!rows.length) break;
-    afterId = rows[rows.length - 1].alias.id;
+
     const collisionCount = await getAliasCollisionCounts([
       ...new Set(rows.map((row) => row.alias.normalizedAlias)),
     ]);
+
     for (const { alias, titleName, titleType, titleYear } of rows) {
       const titleCount = collisionCount.get(alias.normalizedAlias) ?? 1;
       const csvRow = [
@@ -873,6 +731,7 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
         if (res.destroyed) return;
       }
     }
+    afterId = rows[rows.length - 1].alias.id;
   }
 
   if (!res.destroyed) {
@@ -981,6 +840,7 @@ router.delete("/content-aliases/:id", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid alias id" });
   const parsed = DeleteAdminContentAliasBody.safeParse(req.body);
+
   if (!parsed.success) return res.status(400).json({ error: "The alias timestamp is required to remove this alternate title" });
   const removed = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(titleAliasesTable)
@@ -1023,6 +883,10 @@ router.post("/content/:id/refresh", async (req, res) => {
   const result = provider === "wikidata"
     ? await refreshWikidataTitle(id)
     : await refreshDoesTheDogDieTitle(id);
+  await db.insert(adminAuditLogTable).values({
+    adminId: req.userId!, action: "refresh_content",
+    entityType: "title", entityId: id, details: { provider },
+  });
   return res.json(result);
 });
 
@@ -1456,6 +1320,7 @@ router.get("/audit-log/export", async (req, res) => {
 
 export default router;
 
+
 const ALIAS_REVIEW_SNAPSHOT_LIMIT = 20;
 
 function createAliasReviewSnapshotCursor(
@@ -1468,12 +1333,11 @@ function createAliasReviewSnapshotCursor(
     : `${snapshotId}:${offset}:${previousOffset}`;
 }
 
-interface AliasReviewSnapshot {
+const aliasReviewSnapshots = new Map<string, {
   filterKey: string;
   aliasIds: number[];
   createdAt: number;
-}
-const aliasReviewSnapshots = new Map<string, AliasReviewSnapshot>();
+}>();
 
 function makeRoomForAliasReviewSnapshot() {
   while (aliasReviewSnapshots.size >= ALIAS_REVIEW_SNAPSHOT_LIMIT) {

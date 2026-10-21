@@ -23,6 +23,7 @@ export function readAdminContentUrl(search: string): {
   ownership: AliasOwnershipFilter;
   malformedRefreshTimestamp: boolean;
   malformedRefreshTimestampProvider: string;
+  malformedRefreshTimestampAllRegions: boolean;
   contentOffset: number;
   aliasId: number | null;
   aliasPage: number;
@@ -34,7 +35,7 @@ export function readAdminContentUrl(search: string): {
     RATING_REGIONS.find(({ code }) => code === rawRegion)?.code ?? "US";
   const rawTab = params.get("tab");
   const tab = ADMIN_TABS.find((value) => value === rawTab)
-    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("malformedRefreshTimestamp") || params.has("offset") || params.has("aliasId") ? "content" : "dashboard");
+    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("malformedRefreshTimestamp") || params.has("malformedRefreshTimestampAllRegions") || params.has("offset") || params.has("aliasId") ? "content" : "dashboard");
   const rawOwnership = params.get("ownership");
   const ownership = tab === "content" && (rawOwnership === "provider" || rawOwnership === "editorial")
     ? rawOwnership
@@ -56,7 +57,9 @@ export function readAdminContentUrl(search: string): {
       rawAliasCursor.length >= 4 &&
       rawAliasCursor.length <= 4096 &&
       parsedAliasPage !== null &&
-      (parsedAliasPage > 1 || /^([0-9a-f-]{36}):0$/i.test(rawAliasCursor))
+      // A previous-page cursor can return to the first frozen snapshot page.
+      (parsedAliasPage > 1 ||
+        /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}:0$/i.test(rawAliasCursor))
     ? rawAliasCursor
     : null;
   const malformedRefreshTimestamp = tab === "content" && params.get("malformedRefreshTimestamp") === "true";
@@ -64,6 +67,8 @@ export function readAdminContentUrl(search: string): {
     malformedRefreshTimestamp
       ? params.get("malformedRefreshTimestampProvider")?.trim() ?? ""
       : "";
+  const malformedRefreshTimestampAllRegions =
+    malformedRefreshTimestamp && params.get("malformedRefreshTimestampAllRegions") === "true";
   const rawOffset = params.get("offset");
   const parsedOffset = rawOffset !== null && /^(0|[1-9]\d*)$/.test(rawOffset) &&
       Number.isSafeInteger(Number(rawOffset))
@@ -76,6 +81,7 @@ export function readAdminContentUrl(search: string): {
     ownership,
     malformedRefreshTimestamp,
     malformedRefreshTimestampProvider,
+    malformedRefreshTimestampAllRegions,
     contentOffset: malformedRefreshTimestamp ? parsedOffset : 0,
     aliasId: tab === "content" ? aliasId : null,
     aliasPage: tab === "content" && aliasCursor && parsedAliasPage !== null
@@ -97,6 +103,7 @@ export function adminContentUrl(
   malformedRefreshTimestampProvider?: string,
   aliasPage?: number,
   aliasCursor?: string | null,
+  malformedRefreshTimestampAllRegions?: boolean,
 ): string {
   const params = new URLSearchParams(search);
   const current = readAdminContentUrl(search);
@@ -144,11 +151,18 @@ export function adminContentUrl(
     } else {
       params.delete("malformedRefreshTimestampProvider");
     }
+    const selectedAllRegions = selectedMalformedRefreshTimestamp
+      ? malformedRefreshTimestampAllRegions ??
+        readAdminContentUrl(search).malformedRefreshTimestampAllRegions
+      : false;
+    if (selectedAllRegions) params.set("malformedRefreshTimestampAllRegions", "true");
+    else params.delete("malformedRefreshTimestampAllRegions");
   } else {
     params.delete("q");
     params.delete("ownership");
     params.delete("malformedRefreshTimestamp");
     params.delete("malformedRefreshTimestampProvider");
+    params.delete("malformedRefreshTimestampAllRegions");
     params.delete("offset");
     params.delete("aliasCursor");
     params.delete("aliasPage");

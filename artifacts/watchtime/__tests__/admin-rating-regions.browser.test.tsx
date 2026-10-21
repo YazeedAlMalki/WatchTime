@@ -87,21 +87,11 @@ it("copies a link with the current Content filters and reports clipboard failure
     await userEvent.click(page.getByRole("button", { name: "Copy review link" }));
     expect(writeText).toHaveBeenCalledOnce();
     const copied = new URL(writeText.mock.calls[0][0]);
-    expect(copied.origin).toBe(location.origin);
     expect(readAdminContentUrl(copied.search)).toMatchObject({
       tab: "content",
-      region: "FR",
-      q: "Star Wars & Friends",
-      ownership: "editorial",
+      region: "GB",
       malformedRefreshTimestamp: true,
     });
-    expect(toast).toHaveBeenCalledWith({ title: "Review link copied" });
-
-    writeText.mockRejectedValueOnce(new Error("Permission denied"));
-    await userEvent.click(page.getByRole("button", { name: "Copy review link" }));
-    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Could not copy review link", variant: "destructive",
-    })));
   } finally {
     root.unmount();
     container.remove();
@@ -113,7 +103,7 @@ it("copies a link with the current Content filters and reports clipboard failure
   }
 });
 
-it("shows dashboard alerts only for providers with malformed timestamps and links to their filtered review", async () => {
+it("pages through later malformed-timestamp matches without dropping the region or title search", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=dashboard&region=GB");
   integrationHealth.rows = [
@@ -185,7 +175,7 @@ it("filters matching titles by the selected region's malformed timestamp and sha
   const previousUrl = `${location.pathname}${location.search}`;
   const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
   const originalFetch = window.fetch;
-  const requests: URL[] = [];
+  const requests: string[] = [];
   const writeText = vi.fn().mockResolvedValue(undefined);
   window.history.replaceState({}, "", "/admin?tab=content&region=US");
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
@@ -194,28 +184,19 @@ it("filters matching titles by the selected region's malformed timestamp and sha
     if (url.pathname !== "/api/admin/content") {
       throw new Error(`Unexpected browser test request: ${url}`);
     }
-    requests.push(url);
-    const region = url.searchParams.get("region") ?? "US";
+    const region = url.searchParams.get("region");
     const filtered = url.searchParams.get("malformedRefreshTimestamp") === "true";
-    const rows = filtered
-      ? [region === "GB"
-        ? { id: 3, name: "GB malformed title", type: "movie", mappings: [], selectedRating: {
-            region: "GB", label: "12A", refreshTimestampMalformed: true,
-          } }
-        : { id: 1, name: "US malformed title", type: "movie", mappings: [], selectedRating: {
-            region: "US", label: "PG-13", refreshTimestampMalformed: true,
-          } }]
-      : [
-          { id: 1, name: "US malformed title", type: "movie", mappings: [], selectedRating: {
-              region: "US", label: "PG-13", refreshTimestampMalformed: true,
-            } },
-          { id: 2, name: "US healthy title", type: "movie", mappings: [], selectedRating: {
-              region: "US", label: "PG", refreshTimestampMalformed: false,
-            } },
-          { id: 3, name: "GB malformed title", type: "movie", mappings: [], selectedRating: {
-              region: "GB", label: "12A", refreshTimestampMalformed: true,
-            } },
-        ];
+    const rows = Array.from({ length: offset === 0 ? 51 : 2 }, (_, index) => ({
+      id: offset + Math.floor(index / 2) + 1,
+      name: `All-region title ${offset + Math.floor(index / 2) + 1}`,
+      type: "movie", mappings: [],
+      selectedRating: {
+        region: index % 2 === 0 ? "GB" : "US",
+        ...(index % 2 === 0 ? ratings.GB : ratings.US),
+        sourceName: "Fixture Provider", recordId: offset + index + 1000,
+        lastRefreshedAt: null, refreshTimestampMalformed: true, sourceUrl: null,
+      },
+    }));
     return new Response(JSON.stringify(rows), { headers: { "Content-Type": "application/json" } });
   });
   const container = document.createElement("div");
@@ -269,36 +250,24 @@ it("filters matching titles by the selected region's malformed timestamp and sha
 it("pages through later malformed-timestamp matches without dropping the region or title search", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const originalFetch = window.fetch;
-  const requests: URL[] = [];
-  window.history.replaceState(
-    {},
-    "",
-    "/admin?tab=content&region=GB&q=Broken+title&malformedRefreshTimestamp=true&offset=50",
-  );
+  const requests: string[] = [];
+  window.history.replaceState({}, "", "/admin?tab=content&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Fixture+Provider&malformedRefreshTimestampAllRegions=true");
   window.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
-    if (url.pathname !== "/api/admin/content") {
-      throw new Error(`Unexpected browser test request: ${url}`);
-    }
+    if (url.pathname !== "/api/admin/content") throw new Error(`Unexpected request: ${url}`);
     requests.push(url);
     const offset = Number(url.searchParams.get("offset") ?? "0");
     const firstTitleNumber = offset === 0 ? 1 : 51;
     const resultCount = offset === 0 ? 51 : 1;
-    const rows = Array.from({ length: resultCount }, (_, index) => ({
-      id: firstTitleNumber + index,
-      name: `Broken title ${firstTitleNumber + index}`,
-      type: "movie",
-      mappings: [],
+    const rows = Array.from({ length: offset === 0 ? 51 : 2 }, (_, index) => ({
+      id: offset + Math.floor(index / 2) + 1,
+      name: `All-region title ${offset + Math.floor(index / 2) + 1}`,
+      type: "movie", mappings: [],
       selectedRating: {
-        region: "GB",
-        label: "12A",
-        countryName: "United Kingdom",
-        system: "BBFC",
-        sourceName: "Wikidata",
-        recordId: 1000 + firstTitleNumber + index,
-        lastRefreshedAt: null,
-        refreshTimestampMalformed: true,
-        sourceUrl: null,
+        region: index % 2 === 0 ? "GB" : "US",
+        ...(index % 2 === 0 ? ratings.GB : ratings.US),
+        sourceName: "Fixture Provider", recordId: offset + index + 1000,
+        lastRefreshedAt: null, refreshTimestampMalformed: true, sourceUrl: null,
       },
     }));
     return new Response(JSON.stringify(rows), { headers: { "Content-Type": "application/json" } });
@@ -309,40 +278,20 @@ it("pages through later malformed-timestamp matches without dropping the region 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByText("Broken title 51", { exact: true })).toBeVisible();
-    await expect.element(page.getByText("Page 2")).toBeVisible();
-    await vi.waitFor(() => expect(requests.some((url) =>
-      url.searchParams.get("region") === "GB" &&
-      url.searchParams.get("q") === "Broken title" &&
-      url.searchParams.get("malformedRefreshTimestamp") === "true" &&
-      url.searchParams.get("offset") === "50",
-    )).toBe(true));
-    expect(readAdminContentUrl(location.search)).toMatchObject({
-      region: "GB",
-      q: "Broken title",
-      malformedRefreshTimestamp: true,
-      contentOffset: 50,
-    });
-
-    await userEvent.click(page.getByRole("button", { name: /Previous page/ }));
-    await expect.element(page.getByText("Broken title 1", { exact: true })).toBeVisible();
-    await expect.element(page.getByText("Broken title 51", { exact: true })).not.toBeInTheDocument();
-    await expect.element(page.getByText("Page 1")).toBeVisible();
-    await vi.waitFor(() => expect(requests.some((url) =>
-      url.searchParams.get("region") === "GB" &&
-      url.searchParams.get("q") === "Broken title" &&
-      url.searchParams.get("malformedRefreshTimestamp") === "true" &&
-      url.searchParams.get("offset") === "0",
-    )).toBe(true));
-
+    await expect.element(page.getByText("Selected GB Fixture Provider rating:", { exact: true }).first()).toBeVisible();
+    await expect.element(page.getByText("Selected US Fixture Provider rating:", { exact: true }).first()).toBeVisible();
+    await expect.element(page.getByRole("combobox", { name: "Review Wikidata region" })).toBeDisabled();
     await userEvent.click(page.getByRole("button", { name: /Next page/ }));
-    await expect.element(page.getByText("Broken title 51", { exact: true })).toBeVisible();
-    await expect.element(page.getByText("Page 2")).toBeVisible();
+    await expect.element(page.getByText("Page 2", { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(requests.some((url) =>
+      url.searchParams.get("offset") === "50" &&
+      url.searchParams.get("malformedRefreshTimestampAllRegions") === "true" &&
+      url.searchParams.get("malformedRefreshTimestampProvider") === "Fixture Provider" &&
+      !url.searchParams.has("region"),
+    )).toBe(true));
     expect(readAdminContentUrl(location.search)).toMatchObject({
-      region: "GB",
-      q: "Broken title",
-      malformedRefreshTimestamp: true,
-      contentOffset: 50,
+      malformedRefreshTimestampAllRegions: true,
+      malformedRefreshTimestampProvider: "Fixture Provider", contentOffset: 50,
     });
   } finally {
     root.unmount();

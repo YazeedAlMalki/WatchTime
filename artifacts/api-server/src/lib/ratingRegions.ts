@@ -43,14 +43,18 @@ export function hasMalformedTimestamp(value: Date | string | null | undefined): 
   return value != null && timestampValue(value) === Number.NEGATIVE_INFINITY;
 }
 
-export function resolvePreferredRating(records: RatingRecord[], region: RatingRegion) {
+export function resolvePreferredRating(
+  records: RatingRecord[],
+  region: RatingRegion,
+  provider = "Wikidata",
+) {
   const preferredSystem = RATING_REGIONS_BY_CODE[region];
   const matches = records
     .filter(
       (record) =>
         record.status === "available" &&
         !record.isCommunity &&
-        record.sourceName === "Wikidata",
+        record.sourceName === provider,
     )
     .flatMap((record) => record.items.map((item) => ({ record, item })))
     .filter(({ item }) => item.category === preferredSystem.system)

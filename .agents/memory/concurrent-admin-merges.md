@@ -9,6 +9,12 @@ During conflict resolution, inspect each side's behavior, not just whether the c
 
 **How to apply:** Compare both conflict stages and their tests, retain the coherent implementation, port independent behavior from the other side, and run focused route, UI, type, and contract checks before continuing the merge. Confirm routes are actively registered at the expected method/path and use matching parameter and body schemas; commented duplicate blocks can leave source valid while requests fail with 404/400.
 
+Do not choose a historical recovery point using a parser check alone. A parse-clean revision can already contain handlers copied into unrelated routes.
+
+**Why:** Several successive historical admin revisions parsed successfully while still containing unrelated database queries and undefined runtime values.
+
+**How to apply:** Check handler semantics and types against the route's contract and tests before reusing historical code.
+
 After concurrent task changes land, inspect the complete edited test block even if Git reports a clean merge. A context-based patch can leave displaced assertions or duplicate declarations that only the project-wide typecheck catches.
 
 **Why:** A startup-test merge preserved each task's apparent intent but duplicated declarations and moved existing assertions; Jest and API-contract validation exposed different parts of the damage.

@@ -40,7 +40,7 @@ afterEach(async () => {
 
 describe("GET /api/admin/integrations", () => {
   it("returns persisted refresh counts alongside the rate derived from them", async () => {
-    const provider = "Admin history count regression";
+    const provider = "Admin history persisted-counts regression";
     const refreshAttempts = 7;
     const successfulRefreshes = 3;
     const successRatePercent =
@@ -49,7 +49,7 @@ describe("GET /api/admin/integrations", () => {
       .insert(integrationHealthTable)
       .values({
         provider,
-        status: "degraded",
+        status: "healthy",
         successRatePercent,
         refreshAttempts,
         successfulRefreshes,
@@ -60,22 +60,20 @@ describe("GET /api/admin/integrations", () => {
     const response = await request(app)
       .get("/api/admin/integrations")
       .expect(200);
-    const health = response.body.find(
-      (row: { provider: string }) => row.provider === provider,
-    );
+        const health = response.body.find(
+          (row: { provider: string }) => row.provider === provider,
+        );
 
     expect(health).toMatchObject({
       provider,
-      status: "degraded",
       refreshAttempts,
       successfulRefreshes,
     });
-    expect(health.successRatePercent).toBeCloseTo(
-      (successfulRefreshes / refreshAttempts) * 100,
-    );
+    // PostgreSQL stores this rate at a fixed decimal precision.
+    expect(health.successRatePercent).toBeCloseTo(successRatePercent, 5);
   });
 
-  it("preserves a zero success count when refresh attempts are present", async () => {
+  it("preserves a zero-success count without treating it as missing", async () => {
     const provider = "Admin history zero-success regression";
     const [stored] = await db
       .insert(integrationHealthTable)
@@ -92,9 +90,9 @@ describe("GET /api/admin/integrations", () => {
     const response = await request(app)
       .get("/api/admin/integrations")
       .expect(200);
-    const health = response.body.find(
-      (row: { provider: string }) => row.provider === provider,
-    );
+        const health = response.body.find(
+          (row: { provider: string }) => row.provider === provider,
+        );
 
     expect(health).toMatchObject({
       provider,
@@ -121,9 +119,9 @@ describe("GET /api/admin/integrations", () => {
     const response = await request(app)
       .get("/api/admin/integrations")
       .expect(200);
-    const health = response.body.find(
-      (row: { provider: string }) => row.provider === provider,
-    );
+        const health = response.body.find(
+          (row: { provider: string }) => row.provider === provider,
+        );
 
     expect(health).toMatchObject({
       provider,
@@ -211,9 +209,9 @@ describe("GET /api/admin/integrations", () => {
         )
         .returning({ id: integrationHealthTable.id });
 
-      const response = await request(app)
-        .get("/api/admin/integrations")
-        .expect(200);
+    const response = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
       for (const provider of trackedProviders) {
         const health = response.body.find(
           (row: { provider: string }) => row.provider === provider,

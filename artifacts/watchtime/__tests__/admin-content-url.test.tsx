@@ -41,11 +41,7 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl(new URL(shared, "https://example.test").search)).toMatchObject({
       tab: "content", region: "GB", q: "Star Wars & Friends", ownership: "all",
     });
-    const changedRegion = adminContentUrl(
-      new URL(shared, "https://example.test").search,
-      "content",
-      "FR",
-    );
+    const changedRegion = adminContentUrl(new URL(shared, "https://example.test").search, "content", "FR");
     expect(readAdminContentUrl(new URL(changedRegion, "https://example.test").search)).toMatchObject({
       tab: "content", region: "FR", q: "Star Wars & Friends", ownership: "all",
     });
@@ -68,17 +64,8 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl(new URL(selected, "https://example.test").search)).toMatchObject({
       tab: "content", region: "GB", q: "Alien", ownership: "provider",
     });
-    const changedSearch = adminContentUrl(
-      new URL(selected, "https://example.test").search,
-      "content",
-      "GB",
-      "Arrival",
-    );
-    const changedRegion = adminContentUrl(
-      new URL(changedSearch, "https://example.test").search,
-      "content",
-      "FR",
-    );
+    const changedSearch = adminContentUrl(new URL(selected, "https://example.test").search, "content", "GB", "Arrival");
+    const changedRegion = adminContentUrl(new URL(changedSearch, "https://example.test").search, "content", "FR");
     expect(readAdminContentUrl(new URL(changedRegion, "https://example.test").search)).toMatchObject({
       tab: "content", region: "FR", q: "Arrival", ownership: "provider",
     });
@@ -127,6 +114,29 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl(new URL(providerFiltered, "https://example.test").search))
       .toMatchObject({ malformedRefreshTimestampProvider: "Wikidata" });
 
+    const allRegionsLink = adminContentUrl(
+      new URL(providerFiltered, "https://example.test").search,
+      "content",
+      "GB",
+      "",
+      "all",
+      undefined,
+      true,
+      0,
+      "Fixture Provider",
+      undefined,
+      undefined,
+      true,
+    );
+    expect(readAdminContentUrl(new URL(allRegionsLink, "https://example.test").search))
+      .toMatchObject({
+        tab: "content",
+        malformedRefreshTimestamp: true,
+        malformedRefreshTimestampProvider: "Fixture Provider",
+        malformedRefreshTimestampAllRegions: true,
+        contentOffset: 0,
+      });
+
     const changedRegion = adminContentUrl(
       new URL(filtered, "https://example.test").search,
       "content",
@@ -142,6 +152,8 @@ describe("admin content URL", () => {
       .not.toContain("malformedRefreshTimestamp");
     expect(adminContentUrl(new URL(providerFiltered, "https://example.test").search, "reports", "GB"))
       .not.toContain("malformedRefreshTimestampProvider");
+    expect(adminContentUrl(new URL(allRegionsLink, "https://example.test").search, "reports", "GB"))
+      .not.toContain("malformedRefreshTimestampAllRegions");
   });
 
   it("shares the current malformed-timestamp page and resets it when filters change", () => {
@@ -261,42 +273,24 @@ describe("admin content URL", () => {
       .toMatchObject({ ownership: "provider", aliasPage: 1, aliasCursor: null });
   });
 
-  it("keeps the snapshot cursor when navigating back to the first alternate-title page", () => {
-    const cursor = "00000000-0000-0000-0000-000000000001:0";
-    expect(readAdminContentUrl(`?tab=content&aliasPage=1&aliasCursor=${cursor}`))
-      .toMatchObject({ aliasPage: 1, aliasCursor: cursor });
-  });
-
   it("resets invalid alternate-title page numbers and oversized cursors", () => {
-    const cursor = "00000000-0000-0000-0000-000000000001:0";
+    const firstSnapshotPage = "12345678-1234-1234-1234-123456789abc:0";
+    expect(readAdminContentUrl(`?tab=content&aliasPage=1&aliasCursor=${firstSnapshotPage}`))
+      .toMatchObject({ aliasPage: 1, aliasCursor: firstSnapshotPage });
     for (const invalidPage of ["0", "-1", "1.5", "invalid", "9007199254740992"]) {
-      expect(readAdminContentUrl(`?tab=content&aliasPage=${invalidPage}&aliasCursor=${cursor}`))
+      expect(readAdminContentUrl(`?tab=content&aliasPage=${invalidPage}&aliasCursor=${firstSnapshotPage}`))
         .toMatchObject({ aliasPage: 1, aliasCursor: null });
     }
+    const firstPageLink = adminContentUrl(
+      "?tab=content&region=FR&aliasPage=2&aliasCursor=previous",
+      "content", "FR", undefined, undefined, undefined, undefined, undefined,
+      undefined, 1, firstSnapshotPage,
+    );
+    expect(readAdminContentUrl(new URL(firstPageLink, "https://example.test").search))
+      .toMatchObject({ aliasPage: 1, aliasCursor: firstSnapshotPage });
     expect(readAdminContentUrl("?tab=content&aliasPage=1&aliasCursor=bad"))
       .toMatchObject({ aliasPage: 1, aliasCursor: null });
     expect(readAdminContentUrl(`?tab=content&aliasPage=3&aliasCursor=${"x".repeat(4097)}`))
       .toMatchObject({ aliasPage: 1, aliasCursor: null });
-  });
-
-  it("preserves the snapshot cursor when returning to the first alternate-title page", () => {
-    const cursor = "00000000-0000-0000-0000-000000000001:0";
-    const firstPage = adminContentUrl(
-      "?tab=content&region=FR&aliasPage=2&aliasCursor=previous",
-      "content",
-      "FR",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      1,
-      cursor,
-    );
-    expect(readAdminContentUrl(new URL(firstPage, "https://example.test").search))
-      .toMatchObject({ aliasPage: 1, aliasCursor: cursor });
-    expect(readAdminContentUrl(`?tab=content&aliasPage=1&aliasCursor=${cursor}`))
-      .toMatchObject({ aliasPage: 1, aliasCursor: cursor });
   });
 });

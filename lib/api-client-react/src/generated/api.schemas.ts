@@ -1250,6 +1250,10 @@ malformedRefreshTimestamp?: boolean;
  */
 malformedRefreshTimestampProvider?: string;
 /**
+ * When enabled with malformedRefreshTimestamp and a provider, review matching malformed selected ratings across every rating region
+ */
+malformedRefreshTimestampAllRegions?: boolean;
+/**
  * Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
  * @minimum 0
  */

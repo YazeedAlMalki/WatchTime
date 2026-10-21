@@ -105,6 +105,7 @@ export default function AdminPage() {
     ownership,
     malformedRefreshTimestamp,
     malformedRefreshTimestampProvider,
+    malformedRefreshTimestampAllRegions,
     contentOffset,
     aliasId,
     aliasPage,
@@ -124,6 +125,12 @@ export default function AdminPage() {
   };
   const selectMalformedRefreshTimestamp = (enabled: boolean) => {
     setLocation(adminContentUrl(search, "content", region, undefined, undefined, undefined, enabled, 0));
+  };
+  const selectMalformedRefreshTimestampAllRegions = (enabled: boolean) => {
+    setLocation(adminContentUrl(
+      search, "content", region, undefined, undefined, undefined, undefined,
+      0, undefined, undefined, undefined, enabled,
+    ));
   };
   const selectContentPage = (offset: number) => {
     setLocation(adminContentUrl(search, "content", region, undefined, undefined, undefined, undefined, offset));
@@ -167,6 +174,9 @@ export default function AdminPage() {
       true,
       0,
       provider,
+      undefined,
+      undefined,
+      true,
     );
 
   if (meLoading)
@@ -382,7 +392,9 @@ export default function AdminPage() {
             onAliasOwnershipChange={selectAliasOwnership}
             malformedRefreshTimestamp={malformedRefreshTimestamp}
             malformedRefreshTimestampProvider={malformedRefreshTimestampProvider}
+            malformedRefreshTimestampAllRegions={malformedRefreshTimestampAllRegions}
             onMalformedRefreshTimestampChange={selectMalformedRefreshTimestamp}
+            onMalformedRefreshTimestampAllRegionsChange={selectMalformedRefreshTimestampAllRegions}
             contentOffset={contentOffset}
             onContentOffsetChange={selectContentPage}
             reviewUrl={adminContentUrl(
@@ -395,6 +407,9 @@ export default function AdminPage() {
               malformedRefreshTimestamp,
               contentOffset,
               malformedRefreshTimestampProvider,
+              undefined,
+              undefined,
+              malformedRefreshTimestampAllRegions,
             )}
             aliasId={aliasId}
             aliasPage={aliasPage}
@@ -1105,7 +1120,9 @@ function ContentTab({
   onAliasOwnershipChange,
   malformedRefreshTimestamp,
   malformedRefreshTimestampProvider,
+  malformedRefreshTimestampAllRegions,
   onMalformedRefreshTimestampChange,
+  onMalformedRefreshTimestampAllRegionsChange,
   contentOffset,
   onContentOffsetChange,
   reviewUrl,
@@ -1122,7 +1139,9 @@ function ContentTab({
   onAliasOwnershipChange: (ownership: AliasOwnershipFilter) => void;
   malformedRefreshTimestamp: boolean;
   malformedRefreshTimestampProvider: string;
+  malformedRefreshTimestampAllRegions: boolean;
   onMalformedRefreshTimestampChange: (enabled: boolean) => void;
+  onMalformedRefreshTimestampAllRegionsChange: (enabled: boolean) => void;
   contentOffset: number;
   onContentOffsetChange: (offset: number) => void;
   reviewUrl: string;
@@ -1170,11 +1189,14 @@ function ContentTab({
     refetch: retryContent,
   } = useSearchAdminContent(
     {
-      region: ratingRegion,
+      ...(malformedRefreshTimestampAllRegions ? {} : { region: ratingRegion }),
       ...(debouncedQ ? { q: debouncedQ } : {}),
       ...(malformedRefreshTimestamp ? { malformedRefreshTimestamp: true } : {}),
       ...(malformedRefreshTimestampProvider
         ? { malformedRefreshTimestampProvider }
+        : {}),
+      ...(malformedRefreshTimestampAllRegions
+        ? { malformedRefreshTimestampAllRegions: true }
         : {}),
       ...(malformedRefreshTimestamp ? { offset: contentOffset } : {}),
     },
@@ -1742,6 +1764,7 @@ function ContentTab({
         <Select
           value={ratingRegion}
           onValueChange={(value: RatingRegion) => onRatingRegionChange(value)}
+          disabled={malformedRefreshTimestampAllRegions}
         >
           <SelectTrigger
             id="admin-rating-region"
@@ -1759,7 +1782,9 @@ function ContentTab({
           </SelectContent>
         </Select>
         <span className="text-xs text-muted-foreground">
-          Titles below use the selected official classification.
+          {malformedRefreshTimestampAllRegions
+            ? "The review includes every region."
+            : "Titles below use the selected official classification."}
         </span>
         <label className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
           <Checkbox
@@ -1769,6 +1794,22 @@ function ContentTab({
           />
           Only ratings with malformed refresh timestamps
         </label>
+        {malformedRefreshTimestamp && (
+          <label className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
+            <Checkbox
+              checked={malformedRefreshTimestampAllRegions}
+              onCheckedChange={(checked) =>
+                onMalformedRefreshTimestampAllRegionsChange(checked === true)
+              }
+              disabled={!malformedRefreshTimestampProvider}
+              aria-label="Review malformed ratings across all regions"
+            />
+            Across all regions
+            {malformedRefreshTimestampAllRegions && malformedRefreshTimestampProvider
+              ? ` · ${malformedRefreshTimestampProvider}`
+              : ""}
+          </label>
+        )}
         <Button
           type="button"
           variant="outline"
@@ -1784,10 +1825,12 @@ function ContentTab({
       ) : contentError ? (
         <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
           <p className="font-medium text-foreground">
-            Could not load titles for {ratingRegion}.
+            Could not load titles for {malformedRefreshTimestampAllRegions
+              ? `all regions (${malformedRefreshTimestampProvider})`
+              : ratingRegion}.
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            The regional content request failed. Try again to review these titles.
+            The content request failed. Try again to review these titles.
           </p>
           <Button
             type="button"
@@ -1797,7 +1840,9 @@ function ContentTab({
             disabled={contentFetching}
           >
             <RefreshCw className="mr-2 h-4 w-4" />
-            {contentFetching ? "Retrying…" : `Retry ${ratingRegion} titles`}
+            {contentFetching
+              ? "Retrying…"
+              : `Retry ${malformedRefreshTimestampAllRegions ? "all-region" : ratingRegion} titles`}
           </Button>
         </div>
       ) : !content?.length ? (
@@ -1810,7 +1855,7 @@ function ContentTab({
         <div className="flex flex-col gap-3">
           {visibleContent.map((item) => (
             <div
-              key={item.id}
+              key={`${item.id}-${item.selectedRating?.region ?? ratingRegion}`}
               className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center gap-4"
             >
               <div className="flex-1 min-w-0">
@@ -1842,7 +1887,8 @@ function ContentTab({
                 </div>
                 <div className="mt-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
                   <span className="font-semibold text-foreground">
-                    Selected {ratingRegion} Wikidata rating:
+                    Selected {item.selectedRating?.region ?? ratingRegion}{" "}
+                    {item.selectedRating?.sourceName ?? "Wikidata"} rating:
                   </span>{" "}
                   {item.selectedRating ? (
                     <>
@@ -1850,7 +1896,7 @@ function ContentTab({
                         {item.selectedRating.label}
                       </span>
                       <span className="text-muted-foreground">
-                        {" "}· {item.selectedRating.countryName} ·{" "}
+                        {" "}· {item.selectedRating.region} · {item.selectedRating.countryName} ·{" "}
                         {item.selectedRating.system} ·{" "}
                         {item.selectedRating.sourceName} · safety record #
                         {item.selectedRating.recordId ?? "unknown"} · refreshed{" "}

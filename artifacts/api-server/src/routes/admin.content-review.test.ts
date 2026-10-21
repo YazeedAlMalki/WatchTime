@@ -181,6 +181,57 @@ describe("admin Content review timestamp filter", () => {
     ]);
   });
 
+  it("reviews a provider's malformed ratings across regions with result-based pagination", async () => {
+    const fixturePrefix = "timestamp-all-regions-fixture-20261018";
+    const titles = await db.insert(titlesTable).values(
+      Array.from({ length: 26 }, (_, index) => ({
+        name: `${fixturePrefix}-${String(index + 1).padStart(2, "0")}`,
+        type: "movie" as const,
+        popularity: 100 - index,
+      })),
+    ).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    const records = await db.insert(safetyRecordsTable).values(
+      titles.map(({ id }) => ({
+        titleId: id,
+        sourceName: "Timestamp Fixture Provider",
+        status: "available" as const,
+        isCommunity: false,
+        url: `https://provider.example/ratings/${id}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [
+          { category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null },
+          { category: "BBFC", label: "12A", score: null, maxScore: null, description: null },
+        ],
+      })),
+    ).returning({ id: safetyRecordsTable.id });
+    await markMalformedTimestamp(records.map(({ id }) => id));
+
+    const firstPage = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Timestamp+Fixture+Provider&malformedRefreshTimestampAllRegions=true&offset=0`)
+      .expect(200);
+    expect(firstPage.body).toHaveLength(51);
+    expect(firstPage.body.slice(0, 50).every((item: any) =>
+      item.selectedRating.refreshTimestampMalformed &&
+      item.selectedRating.sourceName === "Timestamp Fixture Provider" &&
+      ["GB", "US"].includes(item.selectedRating.region),
+    )).toBe(true);
+    expect(new Set(firstPage.body.slice(0, 50).map(
+      (item: any) => item.selectedRating.region,
+    ))).toEqual(new Set(["GB", "US"]));
+
+    const secondPage = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Timestamp+Fixture+Provider&malformedRefreshTimestampAllRegions=true&offset=50`)
+      .expect(200);
+    expect(secondPage.body).toHaveLength(2);
+    expect(secondPage.body.map((item: any) => item.selectedRating.region)).toEqual(["GB", "US"]);
+    expect(secondPage.body.map((item: any) => item.name)).toEqual([
+      `${fixturePrefix}-26`,
+      `${fixturePrefix}-26`,
+    ]);
+  });
+
   it("finds a late malformed-timestamp match in a large catalog", async () => {
     const fixturePrefix = "timestamp-large-catalog-fixture-20261004";
     const candidateCount = 2_000;
@@ -230,6 +281,9 @@ describe("admin Content review timestamp filter", () => {
       .expect(400);
     await request(app)
       .get("/api/admin/content?malformedRefreshTimestamp=true&offset=-1")
+      .expect(400);
+    await request(app)
+      .get("/api/admin/content?malformedRefreshTimestamp=true&malformedRefreshTimestampAllRegions=true")
       .expect(400);
   });
 });

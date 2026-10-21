@@ -936,6 +936,10 @@ paths:
           in: query
           description: When malformed refresh timestamp filtering is enabled, restrict results to selected ratings from this provider
           schema: { type: string }
+        - name: malformedRefreshTimestampAllRegions
+          in: query
+          description: When enabled with malformedRefreshTimestamp and a provider, review matching malformed selected ratings across every rating region
+          schema: { type: boolean, default: false }
         - name: offset
           in: query
           description: Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
