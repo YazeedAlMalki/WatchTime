@@ -244,6 +244,44 @@ describe("admin title aliases", () => {
     expect(editorialResponse.body.items.every((alias: { isEditorial: boolean }) => alias.isEditorial)).toBe(true);
   });
 
+  it("finds aliases when accents or punctuation differ without changing their display spelling", async () => {
+    const aliases = [
+      {
+        titleId: createdTitleIds[0],
+        alias: "Amélie: L'été!",
+        normalizedAlias: "amelielete",
+        language: "fr",
+        sourceName: "Editorial test",
+        sourceUrl: "https://example.test/amelie",
+        isEditorial: true,
+      },
+      {
+        titleId: createdTitleIds[1],
+        alias: "Spider-Man: No Way Home",
+        normalizedAlias: "spidermannowayhome",
+        language: "en",
+        sourceName: "Editorial test",
+        sourceUrl: "https://example.test/spider-man",
+        isEditorial: true,
+      },
+    ];
+    await db.insert(titleAliasesTable).values(aliases);
+
+    const accentInsensitiveResponse = await request(app)
+      .get("/api/admin/content-aliases?q=Amelie%20lete")
+      .expect(200);
+    const punctuationInsensitiveResponse = await request(app)
+      .get("/api/admin/content-aliases?q=Spider%20Man%20No%20Way%20Home")
+      .expect(200);
+
+    expect(accentInsensitiveResponse.body.items).toEqual([
+      expect.objectContaining({ alias: "Amélie: L'été!" }),
+    ]);
+    expect(punctuationInsensitiveResponse.body.items).toEqual([
+      expect.objectContaining({ alias: "Spider-Man: No Way Home" }),
+    ]);
+  });
+
   it("shows the remaining provider citation after another provider withdraws a shared alias", async () => {
     const tvMazeCitation = {
       sourceName: "TVMaze",
