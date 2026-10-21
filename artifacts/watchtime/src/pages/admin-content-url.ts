@@ -53,10 +53,19 @@ export function readAdminContentUrl(search: string): {
         Number(rawAliasPage) >= 1
       ? Number(rawAliasPage)
       : null;
+  const cursorParts = rawAliasCursor?.match(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:(\d+)(?::(\d+))?$/i,
+  );
+  const cursorOffset = cursorParts ? Number(cursorParts[1]) : -1;
+  const previousOffset = cursorParts?.[2] === undefined ? undefined : Number(cursorParts[2]);
   const aliasCursor = rawAliasCursor &&
-      rawAliasCursor.length <= 4096 &&
-      /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:(?:0|[1-9]\d*)(?::(?:0|[1-9]\d*))?|[A-Za-z0-9_-]{16,})$/i.test(rawAliasCursor) &&
-      parsedAliasPage !== null
+      rawAliasCursor.length <= 64 &&
+      cursorParts &&
+      Number.isSafeInteger(cursorOffset) &&
+      (previousOffset === undefined ||
+        (Number.isSafeInteger(previousOffset) && previousOffset < cursorOffset)) &&
+      parsedAliasPage !== null &&
+      (parsedAliasPage > 1 || cursorOffset === 0)
     ? rawAliasCursor
     : null;
   const malformedRefreshTimestamp = tab === "content" && params.get("malformedRefreshTimestamp") === "true";

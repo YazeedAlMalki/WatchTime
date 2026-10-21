@@ -41,7 +41,11 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl(new URL(shared, "https://example.test").search)).toMatchObject({
       tab: "content", region: "GB", q: "Star Wars & Friends", ownership: "all",
     });
-    const changedRegion = adminContentUrl(new URL(shared, "https://example.test").search, "content", "FR");
+    const changedRegion = adminContentUrl(
+      new URL(filtered, "https://example.test").search,
+      "content",
+      "FR",
+    );
     expect(readAdminContentUrl(new URL(changedRegion, "https://example.test").search)).toMatchObject({
       tab: "content", region: "FR", q: "Star Wars & Friends", ownership: "all",
     });
@@ -64,8 +68,17 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl(new URL(selected, "https://example.test").search)).toMatchObject({
       tab: "content", region: "GB", q: "Alien", ownership: "provider",
     });
-    const changedSearch = adminContentUrl(new URL(selected, "https://example.test").search, "content", "GB", "Arrival");
-    const changedRegion = adminContentUrl(new URL(changedSearch, "https://example.test").search, "content", "FR");
+    const changedSearch = adminContentUrl(
+      new URL(current, "https://example.test").search,
+      "content",
+      "FR",
+      "Arrival",
+    );
+    const changedRegion = adminContentUrl(
+      new URL(filtered, "https://example.test").search,
+      "content",
+      "FR",
+    );
     expect(readAdminContentUrl(new URL(changedRegion, "https://example.test").search)).toMatchObject({
       tab: "content", region: "FR", q: "Arrival", ownership: "provider",
     });
@@ -180,14 +193,10 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl("?tab=content&region=GB&malformedRefreshTimestamp=true&offset=1.5").contentOffset).toBe(0);
 
     const changedSearch = adminContentUrl(
-      new URL(pageTwo, "https://example.test").search,
+      new URL(current, "https://example.test").search,
       "content",
-      "GB",
+      "FR",
       "Arrival",
-      undefined,
-      undefined,
-      undefined,
-      0,
     );
     expect(changedSearch).not.toContain("offset");
     expect(readAdminContentUrl(new URL(changedSearch, "https://example.test").search)).toMatchObject({
@@ -243,14 +252,14 @@ describe("admin content URL", () => {
       undefined,
       undefined,
       3,
-      "eyJ2IjoxLCJpZCI6MjE3fQ",
+      "01234567-89ab-4def-8123-456789abcdef:100:50",
     );
     const restored = readAdminContentUrl(new URL(current, "https://example.test").search);
     expect(restored).toMatchObject({
       q: "Alien",
       ownership: "editorial",
       aliasPage: 3,
-      aliasCursor: "eyJ2IjoxLCJpZCI6MjE3fQ",
+      aliasCursor: "01234567-89ab-4def-8123-456789abcdef:100:50",
     });
 
     const changedSearch = adminContentUrl(
@@ -292,5 +301,12 @@ describe("admin content URL", () => {
       .toMatchObject({ aliasPage: 1, aliasCursor: null });
     expect(readAdminContentUrl(`?tab=content&aliasPage=3&aliasCursor=${"x".repeat(4097)}`))
       .toMatchObject({ aliasPage: 1, aliasCursor: null });
+    for (const cursor of [
+      "01234567-89ab-4def-8123-456789abcdef:9007199254740992",
+      "01234567-89ab-4def-8123-456789abcdef:50:50",
+    ]) {
+      expect(readAdminContentUrl(`?tab=content&aliasPage=2&aliasCursor=${cursor}`))
+        .toMatchObject({ aliasPage: 1, aliasCursor: null });
+    }
   });
 });

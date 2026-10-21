@@ -7,7 +7,7 @@ During conflict resolution, inspect each side's behavior, not just whether the c
 
 **Why:** An overlapping admin merge contained route and test code with undefined values and broken control flow; choosing the coherent side alone also dropped an independent alias-correction edit.
 
-**How to apply:** Compare both conflict stages and their tests, retain the coherent implementation, port independent behavior from the other side, and run focused route, UI, type, and contract checks before continuing the merge. Confirm routes are actively registered at the expected method/path and use matching parameter and body schemas; commented duplicate blocks can leave source valid while requests fail with 404/400. Also run a full API-app import or route test: an isolated router test can pass while another route prevents app startup.
+**How to apply:** Compare both conflict stages and their tests, retain the coherent implementation, port independent behavior from the other side, and run focused route, UI, type, and contract checks before continuing the merge. Confirm routes are actively registered at the expected method/path and use matching parameter and body schemas; commented duplicate blocks can leave source valid while requests fail with 404/400. Also run the full shared-router suites and API-app import: an isolated router test can pass while another route prevents app startup.
 
 Do not choose a historical recovery point using a parser check alone. A parse-clean revision can already contain handlers copied into unrelated routes.
 

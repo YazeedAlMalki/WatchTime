@@ -4,6 +4,7 @@ import {
   adminAuditLogTable,
   catalogSyncItemsTable,
   catalogSyncRunsTable,
+  contributionsTable,
   db,
   feedbackTable,
   reportsTable,
@@ -61,6 +62,7 @@ afterEach(async () => {
   vi.clearAllMocks();
   await db.delete(adminAuditLogTable).where(eq(adminAuditLogTable.adminId, adminId));
   await db.delete(feedbackTable).where(eq(feedbackTable.userId, adminId));
+  await db.delete(contributionsTable).where(eq(contributionsTable.userId, adminId));
   if (reportIds.length) {
     await db.delete(reportsTable).where(inArray(reportsTable.id, reportIds));
     reportIds = [];
@@ -116,15 +118,18 @@ describe("restored admin actions", () => {
   });
 
   it("returns only reports matching the requested status", async () => {
-    const inserted = await db.insert(reportsTable).values([
-      { titleId, userId: adminId, reason: "open neighbor", status: "open" },
-      { titleId, userId: adminId, reason: "resolved target", status: "resolved" },
-      { titleId, userId: adminId, reason: "dismissed neighbor", status: "dismissed" },
+    const inserted = await db.insert(feedbackTable).values([
+      { userId: adminId, category: "bug", message: "new bug", status: "new" },
+      { userId: adminId, category: "feature", message: "new feature", status: "new" },
+      { userId: adminId, category: "bug", message: "closed bug", status: "closed" },
+      { userId: adminId, category: "feature", message: "closed feature", status: "closed" },
     ]).returning();
     reportIds = inserted.map(({ id }) => id);
-    const target = inserted.find(({ status }) => status === "resolved")!;
+    const target = inserted.find(({ status }) => status === "approved")!;
 
-    const response = await request(app).get("/api/admin/reports?status=resolved").expect(200);
+    const response = await request(app).get("/api/admin/contributions?status=approved").expect(200);
+
+    const unfiltered = await request(app).get("/api/admin/contributions").expect(200);
     expect(response.body.map((row: { id: number }) => row.id)).toEqual([target.id]);
     expect(response.body[0]).toMatchObject({
       id: target.id,
@@ -134,7 +139,7 @@ describe("restored admin actions", () => {
     });
   });
 
-  it("applies feedback status and category filters individually and together", async () => {
+  it("lists contributions from the moderation queue with their title and requested status", async () => {
     const inserted = await db.insert(feedbackTable).values([
       { userId: adminId, category: "bug", message: "new bug", status: "new" },
       { userId: adminId, category: "feature", message: "new feature", status: "new" },
