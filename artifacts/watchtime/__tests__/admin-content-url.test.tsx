@@ -42,7 +42,7 @@ describe("admin content URL", () => {
       tab: "content", region: "GB", q: "Star Wars & Friends", ownership: "all",
     });
     const changedRegion = adminContentUrl(
-      new URL(filtered, "https://example.test").search,
+      new URL(shared, "https://example.test").search,
       "content",
       "FR",
     );
@@ -69,13 +69,13 @@ describe("admin content URL", () => {
       tab: "content", region: "GB", q: "Alien", ownership: "provider",
     });
     const changedSearch = adminContentUrl(
-      new URL(current, "https://example.test").search,
+      new URL(selected, "https://example.test").search,
       "content",
       "FR",
       "Arrival",
     );
     const changedRegion = adminContentUrl(
-      new URL(filtered, "https://example.test").search,
+      new URL(changedSearch, "https://example.test").search,
       "content",
       "FR",
     );
@@ -193,10 +193,14 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl("?tab=content&region=GB&malformedRefreshTimestamp=true&offset=1.5").contentOffset).toBe(0);
 
     const changedSearch = adminContentUrl(
-      new URL(current, "https://example.test").search,
+      new URL(pageTwo, "https://example.test").search,
       "content",
       "FR",
       "Arrival",
+      undefined,
+      undefined,
+      undefined,
+      0,
     );
     expect(changedSearch).not.toContain("offset");
     expect(readAdminContentUrl(new URL(changedSearch, "https://example.test").search)).toMatchObject({

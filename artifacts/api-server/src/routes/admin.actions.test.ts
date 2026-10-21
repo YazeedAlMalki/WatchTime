@@ -118,24 +118,27 @@ describe("restored admin actions", () => {
   });
 
   it("returns only reports matching the requested status", async () => {
-    const inserted = await db.insert(feedbackTable).values([
-      { userId: adminId, category: "bug", message: "new bug", status: "new" },
-      { userId: adminId, category: "feature", message: "new feature", status: "new" },
-      { userId: adminId, category: "bug", message: "closed bug", status: "closed" },
-      { userId: adminId, category: "feature", message: "closed feature", status: "closed" },
+    const inserted = await db.insert(reportsTable).values([
+      { userId: adminId, titleId, reason: "incorrect_info", status: "open" },
+      { userId: adminId, titleId, reason: "wrong_rating", status: "dismissed" },
     ]).returning();
     reportIds = inserted.map(({ id }) => id);
-    const target = inserted.find(({ status }) => status === "approved")!;
+    const target = inserted.find(({ status }) => status === "dismissed")!;
 
-    const response = await request(app).get("/api/admin/contributions?status=approved").expect(200);
+    const response = await request(app).get("/api/admin/reports?status=dismissed").expect(200);
 
-    const unfiltered = await request(app).get("/api/admin/contributions").expect(200);
-    expect(response.body.map((row: { id: number }) => row.id)).toEqual([target.id]);
+    const unfiltered = await request(app).get("/api/admin/reports").expect(200);
+    const fixtureIds = new Set(reportIds);
+    expect(response.body.filter((row: { id: number }) => fixtureIds.has(row.id))
+      .map((row: { id: number }) => row.id)).toEqual([target.id]);
+    expect(unfiltered.body.filter((row: { id: number }) => fixtureIds.has(row.id))
+      .map((row: { id: number }) => row.id).sort((a: number, b: number) => a - b))
+      .toEqual([...fixtureIds].sort((a, b) => a - b));
     expect(response.body[0]).toMatchObject({
       id: target.id,
       titleId,
       titleName: "Admin actions test title",
-      status: "resolved",
+      status: "dismissed",
     });
   });
 
