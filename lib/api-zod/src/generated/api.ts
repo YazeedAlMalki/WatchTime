@@ -1005,8 +1005,19 @@ export const UpdateAdminContributionResponse = zod.object({
 /**
  * @summary List safety issue reports
  */
+export const listAdminReportsQueryLimitDefault = 50;
+export const listAdminReportsQueryLimitMax = 100;
+
+export const listAdminReportsQueryOffsetDefault = 0;
+export const listAdminReportsQueryOffsetMin = 0;
+export const listAdminReportsQueryOffsetMax = 1000000;
+
+
+
 export const ListAdminReportsQueryParams = zod.object({
-  "status": zod.enum(['open', 'resolved', 'dismissed']).optional()
+  "status": zod.enum(['open', 'resolved', 'dismissed']).optional(),
+  "limit": zod.coerce.number().int().min(1).max(listAdminReportsQueryLimitMax).default(listAdminReportsQueryLimitDefault).describe('Maximum number of reports to return'),
+  "offset": zod.coerce.number().int().min(listAdminReportsQueryOffsetMin).max(listAdminReportsQueryOffsetMax).default(listAdminReportsQueryOffsetDefault).describe('Zero-based offset into matching reports')
 })
 
 export const ListAdminReportsResponseItem = zod.object({
@@ -1048,9 +1059,20 @@ export const UpdateAdminReportResponse = zod.object({
 /**
  * @summary List user feedback
  */
+export const listAdminFeedbackQueryLimitDefault = 50;
+export const listAdminFeedbackQueryLimitMax = 100;
+
+export const listAdminFeedbackQueryOffsetDefault = 0;
+export const listAdminFeedbackQueryOffsetMin = 0;
+export const listAdminFeedbackQueryOffsetMax = 1000000;
+
+
+
 export const ListAdminFeedbackQueryParams = zod.object({
   "status": zod.enum(['new', 'reviewing', 'resolved', 'closed']).optional(),
-  "category": zod.enum(['bug', 'feature', 'general']).optional()
+  "category": zod.enum(['bug', 'feature', 'general']).optional(),
+  "limit": zod.coerce.number().int().min(1).max(listAdminFeedbackQueryLimitMax).default(listAdminFeedbackQueryLimitDefault).describe('Maximum number of feedback items to return'),
+  "offset": zod.coerce.number().int().min(listAdminFeedbackQueryOffsetMin).max(listAdminFeedbackQueryOffsetMax).default(listAdminFeedbackQueryOffsetDefault).describe('Zero-based offset into matching feedback items')
 })
 
 export const ListAdminFeedbackResponseItem = zod.object({

@@ -10,6 +10,9 @@ import {
 
 // Mounted behind the parent admin router's authorization middleware.
 const router: IRouter = Router();
+const DEFAULT_MODERATION_PAGE_SIZE = 50;
+const MAX_MODERATION_PAGE_SIZE = 100;
+const MAX_MODERATION_PAGE_OFFSET = 1_000_000;
 
 router.get("/contributions", async (req, res) => {
   const status = req.query.status;
@@ -52,10 +55,17 @@ router.patch("/contributions/:contributionId", async (req, res) => {
 router.get("/reports", async (req, res) => {
   const parsed = ListAdminReportsQueryParams.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: "Invalid report filters" });
+  const limit = parsed.data.limit ?? DEFAULT_MODERATION_PAGE_SIZE;
+  const offset = parsed.data.offset ?? 0;
+  if (limit > MAX_MODERATION_PAGE_SIZE || offset > MAX_MODERATION_PAGE_OFFSET) {
+    return res.status(400).json({ error: "Invalid report pagination" });
+  }
   const rows = await db.select({ report: reportsTable, titleName: titlesTable.name })
     .from(reportsTable).innerJoin(titlesTable, eq(titlesTable.id, reportsTable.titleId))
     .where(parsed.data.status ? eq(reportsTable.status, parsed.data.status) : undefined)
-    .orderBy(desc(reportsTable.createdAt));
+    .orderBy(desc(reportsTable.createdAt), desc(reportsTable.id))
+    .limit(limit)
+    .offset(offset);
   return res.json(rows.map(({ report, titleName }) => ({
     ...report, titleName, createdAt: report.createdAt.toISOString(),
   })));
@@ -87,12 +97,19 @@ router.get("/feedback", async (req, res) => {
   const parsed = ListAdminFeedbackQueryParams.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: "Invalid feedback filters" });
   const { status, category } = parsed.data;
+  const limit = parsed.data.limit ?? DEFAULT_MODERATION_PAGE_SIZE;
+  const offset = parsed.data.offset ?? 0;
+  if (limit > MAX_MODERATION_PAGE_SIZE || offset > MAX_MODERATION_PAGE_OFFSET) {
+    return res.status(400).json({ error: "Invalid feedback pagination" });
+  }
   const rows = await db.select({ feedback: feedbackTable, userEmail: usersTable.email })
     .from(feedbackTable).leftJoin(usersTable, eq(usersTable.id, feedbackTable.userId))
     .where(and(
       status ? eq(feedbackTable.status, status) : undefined,
       category ? eq(feedbackTable.category, category) : undefined,
-    )).orderBy(desc(feedbackTable.createdAt));
+    )).orderBy(desc(feedbackTable.createdAt), desc(feedbackTable.id))
+    .limit(limit)
+    .offset(offset);
   return res.json(rows.map(({ feedback, userEmail }) => ({
     ...feedback, userEmail, createdAt: feedback.createdAt.toISOString(),
   })));

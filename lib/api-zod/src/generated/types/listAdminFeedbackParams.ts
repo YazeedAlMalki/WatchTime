@@ -11,4 +11,16 @@ import type { ListAdminFeedbackStatus } from './listAdminFeedbackStatus';
 export type ListAdminFeedbackParams = {
 status?: ListAdminFeedbackStatus;
 category?: ListAdminFeedbackCategory;
+/**
+ * Maximum number of feedback items to return
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Zero-based offset into matching feedback items
+ * @minimum 0
+ * @maximum 1000000
+ */
+offset?: number;
 };

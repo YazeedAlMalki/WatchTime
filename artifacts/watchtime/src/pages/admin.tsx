@@ -94,6 +94,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 
 const ALIAS_REFRESH_RECOVERY_TIMEOUT_MS = 30_000;
+const MODERATION_QUEUE_PAGE_SIZE = 50;
 
 export default function AdminPage() {
   const [, setLocation] = useLocation();
@@ -664,14 +665,65 @@ function ModerationTab() {
 
 /* ─── Reports ─── */
 
+function AdminQueuePagination({
+  offset,
+  pageSize,
+  resultCount,
+  isLoading,
+  onOffsetChange,
+}: {
+  offset: number;
+  pageSize: number;
+  resultCount: number;
+  isLoading: boolean;
+  onOffsetChange: (offset: number) => void;
+}) {
+  if (offset === 0 && resultCount <= pageSize) return null;
+
+  return (
+    <nav
+      className="flex items-center justify-center gap-3"
+      aria-label="Moderation queue pagination"
+    >
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="rounded-xl gap-1.5"
+        onClick={() => onOffsetChange(Math.max(0, offset - pageSize))}
+        disabled={offset === 0 || isLoading}
+      >
+        <ChevronLeft className="w-4 h-4" /> Previous
+      </Button>
+      <span className="text-sm text-muted-foreground" aria-live="polite">
+        Page {Math.floor(offset / pageSize) + 1}
+      </span>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="rounded-xl gap-1.5"
+        onClick={() => onOffsetChange(offset + pageSize)}
+        disabled={resultCount <= pageSize || isLoading}
+      >
+        Next <ChevronRight className="w-4 h-4" />
+      </Button>
+    </nav>
+  );
+}
+
 function ReportsTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<string>("open");
-  const { data: reports, isLoading } = useListAdminReports(
-    statusFilter !== "all" ? { status: statusFilter as any } : undefined,
-  );
+  const [offset, setOffset] = useState(0);
+  const { data: reports, isLoading } = useListAdminReports({
+    ...(statusFilter !== "all" ? { status: statusFilter as any } : {}),
+    limit: MODERATION_QUEUE_PAGE_SIZE + 1,
+    offset,
+  } as any);
   const updateReport = useUpdateAdminReport();
+  const visibleReports = reports?.slice(0, MODERATION_QUEUE_PAGE_SIZE) ?? [];
 
   const act = (reportId: number, status: string) =>
     updateReport.mutate(
@@ -700,7 +752,13 @@ function ReportsTab() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-display font-bold">Safety Reports</h2>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select
+          value={statusFilter}
+          onValueChange={(value) => {
+            setStatusFilter(value);
+            setOffset(0);
+          }}
+        >
           <SelectTrigger className="w-36">
             <SelectValue />
           </SelectTrigger>
@@ -714,7 +772,7 @@ function ReportsTab() {
       </div>
       {isLoading ? (
         <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
-      ) : !reports?.length ? (
+      ) : !visibleReports.length ? (
         <EmptyState
           icon={AlertTriangle}
           title="No reports"
@@ -722,7 +780,7 @@ function ReportsTab() {
         />
       ) : (
         <div className="flex flex-col gap-3">
-          {reports.map((r) => (
+          {visibleReports.map((r) => (
             <div
               key={r.id}
               className="bg-card border border-border rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-start gap-4"
@@ -780,6 +838,13 @@ function ReportsTab() {
           ))}
         </div>
       )}
+      <AdminQueuePagination
+        offset={offset}
+        pageSize={MODERATION_QUEUE_PAGE_SIZE}
+        resultCount={reports?.length ?? 0}
+        isLoading={isLoading}
+        onOffsetChange={setOffset}
+      />
     </div>
   );
 }
@@ -791,11 +856,15 @@ function FeedbackTab() {
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<string>("new");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [offset, setOffset] = useState(0);
   const { data: feedback, isLoading } = useListAdminFeedback({
     ...(statusFilter !== "all" ? { status: statusFilter } : {}),
     ...(categoryFilter !== "all" ? { category: categoryFilter } : {}),
+    limit: MODERATION_QUEUE_PAGE_SIZE + 1,
+    offset,
   } as any);
   const updateFeedback = useUpdateAdminFeedback();
+  const visibleFeedback = feedback?.slice(0, MODERATION_QUEUE_PAGE_SIZE) ?? [];
 
   const setStatus = (feedbackId: number, status: string) =>
     updateFeedback.mutate(
@@ -816,7 +885,13 @@ function FeedbackTab() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-display font-bold">User Feedback</h2>
         <div className="flex gap-2">
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+          <Select
+            value={categoryFilter}
+            onValueChange={(value) => {
+              setCategoryFilter(value);
+              setOffset(0);
+            }}
+          >
             <SelectTrigger className="w-32">
               <SelectValue placeholder="Category" />
             </SelectTrigger>
@@ -827,7 +902,13 @@ function FeedbackTab() {
               <SelectItem value="general">General</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => {
+              setStatusFilter(value);
+              setOffset(0);
+            }}
+          >
             <SelectTrigger className="w-32">
               <SelectValue />
             </SelectTrigger>
@@ -843,7 +924,7 @@ function FeedbackTab() {
       </div>
       {isLoading ? (
         <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
-      ) : !feedback?.length ? (
+      ) : !visibleFeedback.length ? (
         <EmptyState
           icon={MessageSquare}
           title="No feedback"
@@ -851,7 +932,7 @@ function FeedbackTab() {
         />
       ) : (
         <div className="flex flex-col gap-3">
-          {feedback.map((f) => (
+          {visibleFeedback.map((f) => (
             <div
               key={f.id}
               className="bg-card border border-border rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-start gap-4"
@@ -907,6 +988,13 @@ function FeedbackTab() {
           ))}
         </div>
       )}
+      <AdminQueuePagination
+        offset={offset}
+        pageSize={MODERATION_QUEUE_PAGE_SIZE}
+        resultCount={feedback?.length ?? 0}
+        isLoading={isLoading}
+        onOffsetChange={setOffset}
+      />
     </div>
   );
 }

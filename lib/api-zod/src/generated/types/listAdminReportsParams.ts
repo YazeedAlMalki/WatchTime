@@ -9,4 +9,16 @@ import type { ListAdminReportsStatus } from './listAdminReportsStatus';
 
 export type ListAdminReportsParams = {
 status?: ListAdminReportsStatus;
+/**
+ * Maximum number of reports to return
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Zero-based offset into matching reports
+ * @minimum 0
+ * @maximum 1000000
+ */
+offset?: number;
 };

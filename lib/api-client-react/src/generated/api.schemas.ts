@@ -1200,6 +1200,18 @@ export const ListAdminContributionsStatus = {
 
 export type ListAdminReportsParams = {
 status?: ListAdminReportsStatus;
+/**
+ * Maximum number of reports to return
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Zero-based offset into matching reports
+ * @minimum 0
+ * @maximum 1000000
+ */
+offset?: number;
 };
 
 export type ListAdminReportsStatus = typeof ListAdminReportsStatus[keyof typeof ListAdminReportsStatus];
@@ -1214,6 +1226,18 @@ export const ListAdminReportsStatus = {
 export type ListAdminFeedbackParams = {
 status?: ListAdminFeedbackStatus;
 category?: ListAdminFeedbackCategory;
+/**
+ * Maximum number of feedback items to return
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Zero-based offset into matching feedback items
+ * @minimum 0
+ * @maximum 1000000
+ */
+offset?: number;
 };
 
 export type ListAdminFeedbackStatus = typeof ListAdminFeedbackStatus[keyof typeof ListAdminFeedbackStatus];

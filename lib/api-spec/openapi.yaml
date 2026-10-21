@@ -762,6 +762,14 @@ paths:
         - name: status
           in: query
           schema: { type: string, enum: [open, resolved, dismissed] }
+        - name: limit
+          in: query
+          description: Maximum number of reports to return
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          description: Zero-based offset into matching reports
+          schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 }
       responses:
         "200":
           description: Reports
@@ -810,6 +818,14 @@ paths:
         - name: category
           in: query
           schema: { type: string, enum: [bug, feature, general] }
+        - name: limit
+          in: query
+          description: Maximum number of feedback items to return
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          description: Zero-based offset into matching feedback items
+          schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 }
       responses:
         "200":
           description: Feedback items
