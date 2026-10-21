@@ -634,6 +634,48 @@ describe("catalog refresh recovery", () => {
       client.release();
     }
   });
+
+  it("recovers unrelated stale queued runs while one run is owned by another worker", async () => {
+    const staleAt = new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000);
+    const runs = await db.insert(catalogSyncRunsTable).values([
+      { trigger: "manual", status: "queued", createdAt: staleAt },
+      { trigger: "manual", status: "queued", createdAt: staleAt },
+    ]).returning();
+    createdRunIds.push(...runs.map((run) => run.id));
+
+    const lockProbe = await pool.connect();
+    try {
+      await lockProbe.query(
+        "select pg_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1)", [runs[0].id],
+      );
+
+      await recoverInterruptedRuns();
+
+      const [protectedRun, unrelatedRun] = await Promise.all(runs.map(async (run) => {
+        const [current] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, run.id));
+        return current;
+      }));
+      expect(protectedRun).toEqual(runs[0]);
+      expect(unrelatedRun.status).toBe("failed");
+      expect(unrelatedRun.error).toContain("retry the failed titles");
+      expect(unrelatedRun.finishedAt).toBeInstanceOf(Date);
+
+      await lockProbe.query(
+        "select pg_advisory_unlock(hashtext('watchtime:catalog-refresh-worker'), $1)", [runs[0].id],
+      );
+      await recoverInterruptedRuns();
+
+      const [recoveredProtectedRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runs[0].id));
+      expect(recoveredProtectedRun.status).toBe("failed");
+      expect(recoveredProtectedRun.error).toContain("retry the failed titles");
+      expect(recoveredProtectedRun.finishedAt).toBeInstanceOf(Date);
+    } finally {
+      await lockProbe.query("select pg_advisory_unlock_all()");
+      lockProbe.release();
+    }
+  });
 });
 
 describe("catalog refresh history cleanup failure", () => {
