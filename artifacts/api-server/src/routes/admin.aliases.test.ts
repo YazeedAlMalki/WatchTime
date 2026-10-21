@@ -351,6 +351,50 @@ describe("admin title aliases", () => {
     expect(new Set(pageIds).size).toBe(103);
   });
 
+  it("keeps normalized-alias collision counts consistent across cursor pages", async () => {
+    await db.insert(titleAliasesTable).values([
+      {
+        titleId: createdTitleIds[0],
+        alias: "Cursor Collision Page",
+        normalizedAlias: "cursorcollisionpage",
+        sourceName: "Cursor collision test",
+        isEditorial: true,
+      },
+      {
+        titleId: createdTitleIds[1],
+        alias: "Cursor Collision Page!",
+        normalizedAlias: "cursorcollisionpage",
+        sourceName: "Cursor collision test",
+        isEditorial: true,
+      },
+    ]);
+
+    const firstPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "cursorcollisionpage", ownership: "editorial", limit: 1 })
+      .expect(200);
+    const secondPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "cursorcollisionpage",
+        ownership: "editorial",
+        limit: 1,
+        cursor: firstPage.body.nextCursor,
+      })
+      .expect(200);
+
+    expect([
+      firstPage.body.items[0].collisionTitleCount,
+      secondPage.body.items[0].collisionTitleCount,
+    ]).toEqual([2, 2]);
+    expect([
+      firstPage.body.items[0].collision,
+      secondPage.body.items[0].collision,
+    ]).toEqual([true, true]);
+    expect(firstPage.body.nextCursor).toBeTruthy();
+    expect(secondPage.body.nextCursor).toBeNull();
+  });
+
   it("continues through a stable alphabetical snapshot when aliases change between pages", async () => {
     const aliases = [
       "Snapshot Review Zulu",
