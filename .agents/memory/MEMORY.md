@@ -39,3 +39,4 @@
 - [React Native event simulation](react-native-event-simulation.md) — await version 14 fireEvent calls; disabled nested controls can make simulators target different handlers.
 - [React Query retry test timers](react-query-retry-test-timers.md) — failed mutations replaced by retries can leave garbage-collection timers; use infinite test cache lifetimes.
 - [Timestamp-review SQL ranking](timestamp-review-sql-ranking.md) — SQL filtering must mirror the shared rating resolver's millisecond precision and deterministic tie-breaks.
+- [Scheduler timer isolation](scheduler-timer-test-isolation.md) — database recovery adds timers; existing timer spies can survive fake-timer restoration and contaminate later tests.
