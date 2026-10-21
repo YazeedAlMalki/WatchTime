@@ -124,7 +124,7 @@ describe('Home network refetch failures with a real query client', () => {
   });
 
   it.each(['cards', 'empty sections'] as const)(
-    'keeps cached %s after pull-to-refresh fails and clears only the successfully retried warning',
+    'keeps cached %s through a failed focused retry and clears only the successfully retried warning',
     async (cachedContent) => {
     const empty = cachedContent === 'empty sections';
     const feeds = feedCases.map((feed) => ({
@@ -181,6 +181,54 @@ describe('Home network refetch failures with a real query client', () => {
     }
 
     for (const [index, feed] of feeds.entries()) {
+      const callsBeforeRetry = 3 + index * 2;
+      const unrelatedStates = feeds.map((other) => client.getQueryState(other.key));
+      const expectUnrelatedSectionsUnchanged = () => {
+        for (const [otherIndex, other] of feeds.entries()) {
+          if (otherIndex === index) continue;
+          expect(client.getQueryState(other.key)).toBe(unrelatedStates[otherIndex]);
+          expect(screen.getByText(otherIndex < index ? other.recoveredCard : other.card)).toBeTruthy();
+          expect(screen.queryByTestId(other.fullError)).toBeNull();
+          if (otherIndex > index) expect(screen.getByTestId(other.warning)).toBeTruthy();
+          else expect(screen.queryByTestId(other.warning)).toBeNull();
+        }
+      };
+
+      // Fail the focused retry too: cached content and each section's own
+      // warning must survive until that section actually recovers.
+      let rejectResponse!: (error: Error) => void;
+      fetchSpy.mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => {
+        rejectResponse = reject;
+      }));
+      await fireEvent.press(within(screen.getByTestId(feed.warning)).getByRole('button', {
+        name: `Retry ${feed.section}`,
+      }));
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(callsBeforeRetry + 1));
+      expect(fetchSpy.mock.calls[callsBeforeRetry][0]).toBe(feed.path);
+      expect(client.getQueryState(feed.key)?.fetchStatus).toBe('fetching');
+      expect(client.getQueryData(feed.key)).toEqual(feed.data);
+      expect(screen.getByText(feed.card)).toBeTruthy();
+      expect(screen.getByTestId(feed.warning)).toBeTruthy();
+      expect(screen.queryByTestId(feed.fullError)).toBeNull();
+      expectUnrelatedSectionsUnchanged();
+
+      const retryError = new TypeError('Focused retry network request failed');
+      await act(async () => rejectResponse(retryError));
+      await waitFor(() => {
+        expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
+        expect(client.getQueryState(feed.key)?.status).toBe('error');
+        expect(client.getQueryState(feed.key)?.error).toBe(retryError);
+        expect(within(screen.getByTestId(feed.warning)).getByText(
+          `Couldn't refresh ${feed.section}. Results may be out of date.`,
+        )).toBeTruthy();
+      });
+      expect(client.getQueryData(feed.key)).toEqual(feed.data);
+      expect(screen.getByText(feed.card)).toBeTruthy();
+      expect(screen.queryByTestId(feed.fullError)).toBeNull();
+      if (!empty) expect(screen.queryByText(feed.empty)).toBeNull();
+      expectUnrelatedSectionsUnchanged();
+      expect(fetchSpy).toHaveBeenCalledTimes(callsBeforeRetry + 1);
+
       let resolveResponse!: (response: Response) => void;
       fetchSpy.mockImplementationOnce(() => new Promise<Response>((resolve) => {
         resolveResponse = resolve;
@@ -188,12 +236,13 @@ describe('Home network refetch failures with a real query client', () => {
       await fireEvent.press(within(screen.getByTestId(feed.warning)).getByRole('button', {
         name: `Retry ${feed.section}`,
       }));
-      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(4 + index));
-      expect(fetchSpy.mock.calls[3 + index][0]).toBe(feed.path);
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(callsBeforeRetry + 2));
+      expect(fetchSpy.mock.calls[callsBeforeRetry + 1][0]).toBe(feed.path);
       expect(client.getQueryState(feed.key)?.fetchStatus).toBe('fetching');
       expect(screen.getByText(feed.card)).toBeTruthy();
       expect(screen.getByTestId(feed.warning)).toBeTruthy();
       expect(screen.queryByTestId(feed.fullError)).toBeNull();
+      expectUnrelatedSectionsUnchanged();
 
       await act(async () => {
         resolveResponse(new Response(JSON.stringify(feed.recoveredData), {
@@ -205,9 +254,11 @@ describe('Home network refetch failures with a real query client', () => {
         expect(screen.queryByTestId(feed.warning)).toBeNull();
         expect(screen.getByText(feed.recoveredCard)).toBeTruthy();
         expect(client.getQueryState(feed.key)?.status).toBe('success');
+        expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
       });
       if (!empty) expect(screen.queryByText(feed.card)).toBeNull();
       expect(client.getQueryData(feed.key)).toEqual(feed.recoveredData);
+      expectUnrelatedSectionsUnchanged();
       // Other sections must not refetch or lose their independent warning.
       for (const [otherIndex, other] of feeds.entries()) {
         expect(screen.getByText(otherIndex <= index ? other.recoveredCard : other.card)).toBeTruthy();
@@ -215,7 +266,7 @@ describe('Home network refetch failures with a real query client', () => {
         if (otherIndex > index) expect(screen.getByTestId(other.warning)).toBeTruthy();
         else expect(screen.queryByTestId(other.warning)).toBeNull();
       }
-      expect(fetchSpy).toHaveBeenCalledTimes(4 + index);
+      expect(fetchSpy).toHaveBeenCalledTimes(callsBeforeRetry + 2);
     }
   });
 });
