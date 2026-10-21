@@ -206,6 +206,46 @@ describe('public browsing while authentication is unavailable', () => {
     expect(mockRouter.push).not.toHaveBeenCalled();
   });
 
+  it('opens a shared title URL directly while sign-in is unavailable', async () => {
+    mockRoute.current = { id: '771' };
+    mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
+
+    const detail = await render(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(mockTitleFetch).toHaveBeenCalledWith(771);
+
+    await fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
+
+    expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
+    mockTitleQueryState.current = {
+      data: mockPublicTitle,
+      isLoading: false,
+      isError: false,
+    };
+    await detail.rerender(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    await waitFor(() => {
+      expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+      expect(
+        detail.getByText('A public synopsis remains available while sign-in is down.'),
+      ).toBeTruthy();
+    });
+    expect(mockTitleFetch).toHaveBeenCalledWith(771);
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+
   it('opens a trending title publicly without sign-in or personal-data requests', async () => {
     const home = await render(
       <AppAuthUnavailableProvider>
@@ -222,28 +262,8 @@ describe('public browsing while authentication is unavailable', () => {
     expect(mockRouter.push).not.toHaveBeenCalledWith(
       expect.objectContaining({ pathname: '/(auth)/sign-in' }),
     );
-
-    const pushedPath = mockRouter.push.mock.calls[0][0];
-    mockRoute.current = { id: pushedPath.split('/').at(-1) };
-    mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
-    const detail = await render(
-      <AppAuthUnavailableProvider>
-        <TitleDetailScreen />
-      </AppAuthUnavailableProvider>,
-    );
-
-    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
-    expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
-    expect(mockTitleFetch).toHaveBeenCalledWith(771);
-
-    fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
-
-    expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
     expect(mockPrivateQueryCalls).toEqual([]);
     expect(mockRouter.push).toHaveBeenCalledTimes(1);
-    expect(mockRouter.push).not.toHaveBeenCalledWith(
-      expect.objectContaining({ pathname: '/(auth)/sign-in' }),
-    );
     expect(mockRouter.replace).not.toHaveBeenCalled();
   });
 });
