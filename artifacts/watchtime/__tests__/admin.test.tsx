@@ -734,6 +734,57 @@ describe("admin alternate-title review", () => {
     );
   });
 
+  it("clears the stale warning when the original timed-out refresh eventually succeeds", async () => {
+    await saveAliasToTriggerRefresh(["aliases"]);
+    mocks.queryClient.invalidateQueries.mockClear();
+
+    let resolvePendingRefresh!: () => void;
+    const pendingRefresh = new Promise<void>((resolve) => {
+      resolvePendingRefresh = resolve;
+    });
+    mocks.queryClient.invalidateQueries.mockReturnValue(pendingRefresh);
+
+    vi.useFakeTimers();
+    act(() => button(container, "Retry refresh").click());
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+    expect(
+      container.textContent,
+    ).not.toContain("Alternate-title refresh is taking longer than expected");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(container.textContent).toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).toContain(
+      "The alternate-title list may be stale; collision results refreshed successfully.",
+    );
+
+    await act(async () => {
+      resolvePendingRefresh();
+      await pendingRefresh;
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+    expect(container.textContent).not.toContain(
+      "The alternate-title list may be stale; collision results refreshed successfully.",
+    );
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+  });
+
   it("retries only the catalog request and updates its failure state", async () => {
     await saveAliasToTriggerRefresh(["catalog"]);
     expectRefreshCalls(["aliases", "catalog"]);
