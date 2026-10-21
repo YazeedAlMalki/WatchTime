@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Text, View } from 'react-native';
+import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useGetSeason } from '@workspace/api-client-react';
 
@@ -199,6 +199,53 @@ function SeasonRows({ season }: { season: number }) {
     </View>
   );
 }
+
+it.each([1, 2, 4])('leaves the full episode summary free to wrap in a narrow card at %sx text', async (fontScale) => {
+  const originalWindow = Dimensions.get('window');
+  const originalScreen = Dimensions.get('screen');
+  Dimensions.set({
+    window: { width: 320, height: 640, scale: 1, fontScale },
+    screen: { width: 320, height: 640, scale: 1, fontScale },
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity, retry: false } },
+  });
+  const episodeName = 'The One Where Everyone Finally Finds Their Way Home';
+  const { getGetMyShowsQueryKey } = require('@workspace/api-client-react');
+  client.setQueryData(getGetMyShowsQueryKey(), [{
+    title: { id: 42, name: 'Example Show' },
+    nextEpisode: { id: 201, seasonNumber: 12, episodeNumber: 24, name: episodeName },
+    totalEpisodes: 24,
+    watchedEpisodes: 0,
+  }]);
+  try {
+    const home = await render(
+      <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+    );
+    // Native test rendering does not measure glyphs. Guard the layout contract:
+    // no line cap or scaling limit, and auto-height content before the actions.
+    const summary = await home.findByText(`S12 · E24 — ${episodeName}`);
+    expect(summary.props.numberOfLines).toBeUndefined();
+    expect(summary.props.allowFontScaling).not.toBe(false);
+    expect(summary.props.maxFontSizeMultiplier).toBeUndefined();
+    expect(StyleSheet.flatten(summary.props.style)).not.toHaveProperty('height');
+    const content = summary.parent!;
+    expect(StyleSheet.flatten(content.props.style)).not.toHaveProperty('height');
+    expect(StyleSheet.flatten(content.props.style)).not.toHaveProperty('position', 'absolute');
+    const actions = home.getByTestId('upnext-actions-42');
+    expect(actions.parent).toBe(content);
+    expect(content.children.indexOf(summary)).toBeLessThan(content.children.indexOf(actions));
+    expect(StyleSheet.flatten(actions.props.style)).toEqual(
+      expect.objectContaining({ flexWrap: 'wrap' }),
+    );
+    expect(home.getByTestId('mark-watched-201')).toBeEnabled();
+    await act(async () => home.unmount());
+  } finally {
+    await cleanup();
+    client.clear();
+    Dimensions.set({ window: originalWindow, screen: originalScreen });
+  }
+});
 
 it('shows a failed Home mark and refreshes title, seasons, and activity after a successful retry', async () => {
   mockWatched.clear();

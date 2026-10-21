@@ -89,7 +89,7 @@ function UpNextCard({ show }: { show: TrackedShow }) {
           {show.title.name}
         </Text>
         {ep ? (
-          <Text numberOfLines={1} style={{ color: c.mutedForeground, fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+          <Text style={{ color: c.mutedForeground, fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
             S{ep.seasonNumber} · E{ep.episodeNumber} — {ep.name}
           </Text>
         ) : (
