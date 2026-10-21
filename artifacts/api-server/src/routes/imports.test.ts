@@ -208,10 +208,11 @@ describe("private, idempotent watch-history imports", () => {
   });
 
   it.each([
-    { name: "keeps shared regional episode titles ambiguous and preserves reviewed matches after alias refresh", freshImport: false, removeAlias: false },
-    { name: "matches a fresh regional import to the current alias owner after a refresh", freshImport: true, removeAlias: false },
-    { name: "leaves a fresh import unmatched after its regional alias is removed without changing an earlier preview", freshImport: true, removeAlias: true },
-  ])("$name", async ({ freshImport, removeAlias }) => {
+    { name: "keeps shared regional episode titles ambiguous and preserves reviewed matches after alias refresh", freshImport: false, removeAlias: false, resolveEpisode: false },
+    { name: "matches a fresh regional import to the current alias owner after a refresh", freshImport: true, removeAlias: false, resolveEpisode: false },
+    { name: "leaves a fresh import unmatched after its regional alias is removed without changing an earlier preview", freshImport: true, removeAlias: true, resolveEpisode: false },
+    { name: "records only the chosen show's episode and parent history after reviewing a shared regional title", freshImport: false, removeAlias: false, resolveEpisode: true },
+  ])("$name", async ({ freshImport, removeAlias, resolveEpisode }) => {
     // Catalog-refresh scenarios must not consume the quota of later import tests.
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
@@ -251,7 +252,7 @@ describe("private, idempotent watch-history imports", () => {
     const healthSnapshot = await db.select().from(integrationHealthTable);
     let importId: number | undefined;
     let freshImportId: number | undefined;
-    let regionalTitleId: number | undefined;
+    let regionalTitleIds: number[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
       const fixture = fixtures.find((item) => String(input).includes(`/shows/${item.tvmazeId}?`));
       if (!fixture) throw new Error(`Unexpected catalog request: ${input}`);
@@ -284,7 +285,7 @@ describe("private, idempotent watch-history imports", () => {
       expect(titles).toHaveLength(2);
       const primaryId = titles.find((title) => title.imdbId === "tt9990091")!.id;
       const secondaryId = titles.find((title) => title.imdbId === "tt9990092")!.id;
-      regionalTitleId = primaryId;
+      regionalTitleIds = [primaryId, secondaryId];
       const aliases = await db.select().from(titleAliasesTable).where(inArray(titleAliasesTable.titleId, [primaryId, secondaryId]));
       expect(aliases.find((alias) => alias.titleId === primaryId && alias.alias === "地域限定タイトル")).toMatchObject({
         language: "ja",
@@ -304,6 +305,72 @@ describe("private, idempotent watch-history imports", () => {
       ));
       expect(matchingEpisodes.map((episode) => episode.titleId).sort((a, b) => a - b))
         .toEqual([primaryId, secondaryId].sort((a, b) => a - b));
+
+      if (resolveEpisode) {
+        // Both shows offer S2E3. Choose the second candidate so a resolver
+        // that accidentally uses the first show's episode cannot pass.
+        const created = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
+          source: "generic",
+          fileName: "reviewed-shared-episode.csv",
+          content: "kind,title,type,year,season,episode\nwatched_episode,共通タイトル,tv,2020,2,3",
+        });
+        expect(created.status).toBe(201);
+        importId = created.body.id;
+        expect(created.body.items).toHaveLength(1);
+        const item = created.body.items[0];
+        expect(item).toMatchObject({
+          kind: "watched_episode",
+          classification: "ambiguous",
+          titleId: null,
+          episodeId: null,
+          selected: false,
+          errorCode: "multiple_titles",
+        });
+        expect(item.candidates.map((candidate: { titleId: number }) => candidate.titleId).sort((a: number, b: number) => a - b))
+          .toEqual([primaryId, secondaryId].sort((a, b) => a - b));
+        const chosenCandidate = item.candidates[1];
+        const chosenEpisode = matchingEpisodes.find((episode) => episode.titleId === chosenCandidate.titleId)!;
+        expect(chosenEpisode).toBeDefined();
+        const historyFilter = and(
+          eq(watchedEpisodesTable.userId, USER_A),
+          inArray(watchedEpisodesTable.titleId, regionalTitleIds),
+        );
+        const parentHistoryFilter = and(
+          eq(watchedTitlesTable.userId, USER_A),
+          inArray(watchedTitlesTable.titleId, regionalTitleIds),
+        );
+        const resolved = await supertest(app)
+          .patch(`/api/imports/${importId}/items/${item.id}`)
+          .set("x-test-user", USER_A)
+          .send({ titleId: chosenCandidate.titleId });
+        expect(resolved.status).toBe(200);
+        const resolvedMatch = {
+          id: item.id,
+          kind: "watched_episode",
+          classification: "matched",
+          titleId: chosenCandidate.titleId,
+          episodeId: chosenEpisode.id,
+          selected: true,
+          errorCode: null,
+        };
+        expect(resolved.body).toMatchObject(resolvedMatch);
+        // Reviewing a candidate changes only the import, not watch history.
+        expect(await db.select().from(watchedEpisodesTable).where(historyFilter)).toEqual([]);
+        expect(await db.select().from(watchedTitlesTable).where(parentHistoryFilter)).toEqual([]);
+
+        const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
+        expect(confirmed.status).toBe(200);
+        expect(confirmed.body.status).toBe("confirmed");
+        expect(confirmed.body.summary).toMatchObject({ selected: 1, applied: 1, duplicates: 0, skipped: 0 });
+        expect(confirmed.body.items).toHaveLength(1);
+        expect(confirmed.body.items[0]).toMatchObject(resolvedMatch);
+        const watched = await db.select().from(watchedEpisodesTable).where(historyFilter);
+        expect(watched).toHaveLength(1);
+        expect(watched[0]).toMatchObject({ titleId: chosenCandidate.titleId, episodeId: chosenEpisode.id });
+        const parents = await db.select().from(watchedTitlesTable).where(parentHistoryFilter);
+        expect(parents.map((row) => row.titleId)).toEqual([chosenCandidate.titleId]);
+        return;
+      }
 
       const created = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
         source: "generic",
@@ -460,9 +527,13 @@ describe("private, idempotent watch-history imports", () => {
       ]));
       if (freshImportId !== undefined) await db.delete(importsTable).where(eq(importsTable.id, freshImportId));
       if (importId !== undefined) await db.delete(importsTable).where(eq(importsTable.id, importId));
-      if (regionalTitleId !== undefined) await db.delete(watchedEpisodesTable).where(and(
+      if (regionalTitleIds.length) await db.delete(watchedEpisodesTable).where(and(
         eq(watchedEpisodesTable.userId, USER_A),
-        eq(watchedEpisodesTable.titleId, regionalTitleId),
+        inArray(watchedEpisodesTable.titleId, regionalTitleIds),
+      ));
+      if (regionalTitleIds.length) await db.delete(watchedTitlesTable).where(and(
+        eq(watchedTitlesTable.userId, USER_A),
+        inArray(watchedTitlesTable.titleId, regionalTitleIds),
       ));
       await db.delete(titlesTable).where(inArray(titlesTable.imdbId, ["tt9990091", "tt9990092"]));
       await db.delete(integrationHealthTable);
