@@ -64,7 +64,7 @@ const trackedShow = {
   watchedEpisodes: 0,
 };
 const accountKey = (key: readonly unknown[]) => [...key, 'account', 'home-network-user'];
-const feeds = [
+const feedCases = [
   {
     key: accountKey(getGetMyShowsQueryKey()),
     path: '/api/me/shows',
@@ -72,6 +72,7 @@ const feeds = [
     recoveredData: [{ ...trackedShow, title: { ...trackedShow.title, name: 'Updated Up Next Show' } }],
     card: 'Up Next Show',
     recoveredCard: 'Updated Up Next Show',
+    empty: 'Nothing to watch yet',
     warning: 'up-next-refresh-warning',
     fullError: 'up-next-error',
     section: 'Up Next',
@@ -83,6 +84,7 @@ const feeds = [
     recoveredData: [{ id: 8, name: 'Updated Saved Show' }],
     card: 'Saved Show',
     recoveredCard: 'Updated Saved Show',
+    empty: 'Watchlist is empty',
     warning: 'watchlist-refresh-warning',
     fullError: 'watchlist-error',
     section: 'your watchlist',
@@ -94,6 +96,7 @@ const feeds = [
     recoveredData: [{ reason: 'Because you watch drama', titles: [{ id: 9, name: 'Updated Suggested Show' }] }],
     card: 'Suggested Show',
     recoveredCard: 'Updated Suggested Show',
+    empty: 'No recommendations yet',
     warning: 'recommendations-refresh-warning',
     fullError: 'recommendations-error',
     section: 'recommendations',
@@ -111,7 +114,6 @@ describe('Home network refetch failures with a real query client', () => {
         mutations: { retry: false, gcTime: Infinity },
       },
     });
-    for (const feed of feeds) client.setQueryData(feed.key, feed.data);
     fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Network request failed'));
   });
 
@@ -121,13 +123,29 @@ describe('Home network refetch failures with a real query client', () => {
     fetchSpy.mockRestore();
   });
 
-  it('keeps cached cards after pull-to-refresh fails and clears only the successfully retried warning', async () => {
+  it.each(['cards', 'empty sections'] as const)(
+    'keeps cached %s after pull-to-refresh fails and clears only the successfully retried warning',
+    async (cachedContent) => {
+    const empty = cachedContent === 'empty sections';
+    const feeds = feedCases.map((feed) => ({
+      ...feed,
+      data: empty ? [] : feed.data,
+      recoveredData: empty ? [] : feed.recoveredData,
+      card: empty ? feed.empty : feed.card,
+      recoveredCard: empty ? feed.empty : feed.recoveredCard,
+    }));
+    for (const feed of feeds) {
+      client.setQueryData(feed.key, feed.data);
+      expect(client.getQueryState(feed.key)?.status).toBe('success');
+      expect(client.getQueryState(feed.key)?.dataUpdatedAt).toBeGreaterThan(0);
+    }
     const screen = await render(
       <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
     );
     for (const feed of feeds) {
       expect(screen.getByText(feed.card)).toBeTruthy();
       expect(screen.queryByTestId(feed.warning)).toBeNull();
+      expect(screen.queryByTestId(feed.fullError)).toBeNull();
     }
     // Seeded data is fresh: every network call below must come from an
     // actual refresh or section retry, rather than an incidental mount.
@@ -157,8 +175,9 @@ describe('Home network refetch failures with a real query client', () => {
         `Couldn't refresh ${feed.section}. Results may be out of date.`,
       )).toBeTruthy();
     }
-    for (const empty of ['Nothing to watch yet', 'Watchlist is empty', 'No recommendations yet']) {
-      expect(screen.queryByText(empty)).toBeNull();
+    for (const feed of feedCases) {
+      if (empty) expect(screen.queryByText(feed.card)).toBeNull();
+      else expect(screen.queryByText(feed.empty)).toBeNull();
     }
 
     for (const [index, feed] of feeds.entries()) {
@@ -174,6 +193,7 @@ describe('Home network refetch failures with a real query client', () => {
       expect(client.getQueryState(feed.key)?.fetchStatus).toBe('fetching');
       expect(screen.getByText(feed.card)).toBeTruthy();
       expect(screen.getByTestId(feed.warning)).toBeTruthy();
+      expect(screen.queryByTestId(feed.fullError)).toBeNull();
 
       await act(async () => {
         resolveResponse(new Response(JSON.stringify(feed.recoveredData), {
@@ -186,11 +206,12 @@ describe('Home network refetch failures with a real query client', () => {
         expect(screen.getByText(feed.recoveredCard)).toBeTruthy();
         expect(client.getQueryState(feed.key)?.status).toBe('success');
       });
-      expect(screen.queryByText(feed.card)).toBeNull();
+      if (!empty) expect(screen.queryByText(feed.card)).toBeNull();
       expect(client.getQueryData(feed.key)).toEqual(feed.recoveredData);
       // Other sections must not refetch or lose their independent warning.
       for (const [otherIndex, other] of feeds.entries()) {
         expect(screen.getByText(otherIndex <= index ? other.recoveredCard : other.card)).toBeTruthy();
+        expect(screen.queryByTestId(other.fullError)).toBeNull();
         if (otherIndex > index) expect(screen.getByTestId(other.warning)).toBeTruthy();
         else expect(screen.queryByTestId(other.warning)).toBeNull();
       }
