@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { catalogSyncItemsTable, catalogSyncRunsTable, db, pool } from "@workspace/db";
+import * as databaseModule from "@workspace/db";
 import { logger } from "./logger";
 import { pruneCatalogRefreshHistory, recoverInterruptedRuns, startCatalogRefresh, STALE_QUEUED_REFRESH_MS } from "./catalog-refresh";
 
@@ -386,7 +387,7 @@ describe("catalog refresh recovery", () => {
   it("does not restart a recovered run when a delayed startup resumes and releases local ownership", async () => {
     // Model another API process: share the real database, but load a separate
     // refresh module so recovery cannot see the delayed worker's local set.
-    const database = await import("@workspace/db");
+    const database = databaseModule;
     vi.resetModules();
     vi.doMock("@workspace/db", () => database);
     const { recoverInterruptedRuns: recoverFromOtherProcess } = await import("./catalog-refresh");
@@ -453,6 +454,135 @@ describe("catalog refresh recovery", () => {
       }
       startupSpy.mockRestore();
       cleanupSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+      vi.doUnmock("@workspace/db");
+      vi.resetModules();
+    }
+  });
+
+  it("waits for in-progress recovery to commit before a delayed startup resumes", async () => {
+    // Model another API process: share the real database, but load a separate
+    // refresh module so recovery cannot see the delayed worker's local set.
+    const database = databaseModule;
+    vi.resetModules();
+    vi.doMock("@workspace/db", () => database);
+    const { recoverInterruptedRuns: recoverFromOtherProcess } = await import("./catalog-refresh");
+    let finishStartup!: () => void;
+    const startupGate = new Promise<void>((resolve) => { finishStartup = resolve; });
+    let commitRecovery!: () => void;
+    const recoveryCommitGate = new Promise<void>((resolve) => { commitRecovery = resolve; });
+    let signalRecoveryWritten!: (run: typeof catalogSyncRunsTable.$inferSelect) => void;
+    const recoveryWritten = new Promise<typeof catalogSyncRunsTable.$inferSelect>((resolve) => {
+      signalRecoveryWritten = resolve;
+    });
+    let signalStartupLockAttempt!: () => void;
+    const startupLockAttempted = new Promise<void>((resolve) => { signalStartupLockAttempt = resolve; });
+    let signalStartupFinished!: () => void;
+    const startupCompletion = new Promise<void>((resolve) => { signalStartupFinished = resolve; });
+    const transaction = db.transaction.bind(db);
+    const startupSpy = vi.spyOn(db, "transaction")
+      .mockImplementationOnce(async (callback, config) => {
+        await startupGate;
+        return transaction(async (tx) => {
+          const execute = tx.execute.bind(tx);
+          const executeSpy = vi.spyOn(tx, "execute").mockImplementation((query) => {
+            const pending = execute(query);
+            signalStartupLockAttempt();
+            return pending;
+          });
+          try {
+            return await callback(tx);
+          } finally {
+            executeSpy.mockRestore();
+          }
+        }, config);
+      })
+      .mockImplementationOnce((callback, config) =>
+        transaction(async (tx) => {
+          const result = await callback(tx);
+          const [writtenRun] = await tx.select().from(catalogSyncRunsTable)
+            .where(eq(catalogSyncRunsTable.id, runId!));
+          signalRecoveryWritten(writtenRun);
+          await recoveryCommitGate;
+          return result;
+        }, config),
+      );
+    const cleanupSpy = vi.spyOn(db, "delete").mockImplementationOnce(() => {
+      signalStartupFinished();
+      return {
+        where: () => ({ returning: async () => [] }),
+      } as unknown as ReturnType<typeof db.delete>;
+    });
+    const lockProbe = await pool.connect();
+    runCatalogSyncMock.mockResolvedValue({
+      selected: 0, succeeded: 0, episodes: 0, failures: [],
+    });
+    let runId: number | undefined;
+    let recoveryPromise: Promise<void> | undefined;
+    try {
+      runId = await startCatalogRefresh("manual", []);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(startupSpy).toHaveBeenCalledTimes(1));
+      await db.update(catalogSyncRunsTable).set({
+        createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
+      }).where(eq(catalogSyncRunsTable.id, runId));
+
+      recoveryPromise = recoverFromOtherProcess();
+      const uncommittedRun = await recoveryWritten;
+      expect(uncommittedRun.status).toBe("failed");
+      expect(uncommittedRun.error).toBe(
+        "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles",
+      );
+      expect(uncommittedRun.finishedAt).toBeInstanceOf(Date);
+
+      const heldLock = await lockProbe.query<{ locked: boolean }>(
+        "select pg_try_advisory_xact_lock(hashtext('watchtime:catalog-refresh-worker'), $1) as locked",
+        [runId],
+      );
+      expect(heldLock.rows[0].locked).toBe(false);
+
+      finishStartup();
+      await startupLockAttempted;
+      const completedBeforeRecoveryCommit = await Promise.race([
+        startupCompletion.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+      ]);
+      expect(completedBeforeRecoveryCommit).toBe(false);
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+
+      commitRecovery();
+      await recoveryPromise;
+      await startupCompletion;
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+      const [recovered] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(recovered.status).toBe("failed");
+      expect(recovered.error).toBe(uncommittedRun.error);
+      expect(recovered.finishedAt).toEqual(uncommittedRun.finishedAt);
+
+      // If the startup's finally block retained local ownership, this recovery
+      // would leave the same stale queued run untouched.
+      await db.update(catalogSyncRunsTable).set({
+        status: "queued", error: null, finishedAt: null,
+      }).where(eq(catalogSyncRunsTable.id, runId));
+      await recoverInterruptedRuns();
+      const [recoveredAgain] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(recoveredAgain.status).toBe("failed");
+      expect(recoveredAgain.error).toBe(uncommittedRun.error);
+      expect(recoveredAgain.finishedAt).toBeInstanceOf(Date);
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+    } finally {
+      finishStartup();
+      commitRecovery();
+      await recoveryPromise?.catch(() => {});
+      if (runId !== undefined) {
+        await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+      }
+      startupSpy.mockRestore();
+      cleanupSpy.mockRestore();
+      await lockProbe.query("select pg_advisory_unlock_all()");
+      lockProbe.release();
       runCatalogSyncMock.mockReset();
       vi.doUnmock("@workspace/db");
       vi.resetModules();
