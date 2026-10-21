@@ -7,7 +7,7 @@ import {
   db,
   usersTable,
 } from "@workspace/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, getTableName, inArray } from "drizzle-orm";
 
 const adminId = "test-catalog-refresh-audit";
 const runCatalogSync = vi.hoisted(() => vi.fn());
@@ -69,13 +69,14 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
     const { path, sourceRunId } = await prepareRequest();
     const realTransaction = db.transaction.bind(db);
     let queuedRunId: number | undefined;
-    const transactionSpy = vi.spyOn(db, "transaction").mockImplementationOnce(
+    const transactionSpy = vi.spyOn(db, "transaction");
+    transactionSpy.mockImplementationOnce(
       (fn: Parameters<typeof db.transaction>[0]) => realTransaction((tx) => {
         const wrapped = new Proxy(tx, {
           get(target, prop) {
             if (prop === "insert") {
               return (table: unknown) => {
-                if (table === adminAuditLogTable) {
+                if (getTableName(table as any) === getTableName(adminAuditLogTable)) {
                   return { values: async (audit: { entityId: number }) => {
                     expect(audit).toMatchObject({
                       adminId,
@@ -85,7 +86,6 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
                     });
                     queuedRunId = audit.entityId;
                     createdRunIds.push(audit.entityId);
-                    // Ensure the failure happens after real queue writes.
                     const items = await tx.select().from(catalogSyncItemsTable)
                       .where(eq(catalogSyncItemsTable.runId, audit.entityId));
                     expect(items).toHaveLength(1);
@@ -172,10 +172,12 @@ describe("other catalog refresh starts", () => {
 
   it("still starts scheduled refreshes without an audit prerequisite", async () => {
     runCatalogSync.mockResolvedValueOnce({ selected: 0, succeeded: 0, episodes: 0, failures: [] });
+    const transactionSpy = vi.spyOn(db, "transaction");
     const runId = await startCatalogRefresh("scheduled", []);
     createdRunIds.push(runId);
     await waitForFinishedRun(runId);
     expect(runCatalogSync).toHaveBeenCalledOnce();
+    expect(transactionSpy).toHaveBeenCalledOnce();
     expect(await db.select().from(adminAuditLogTable).where(and(
       eq(adminAuditLogTable.entityType, "catalog_sync"),
       eq(adminAuditLogTable.entityId, runId),

@@ -1,3 +1,4 @@
+import express from "express";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const USER_ID = "test-in-progress-collection";
@@ -6,19 +7,8 @@ vi.mock("../middlewares/auth", () => ({
   requireAdmin: (_req: any, res: any) => res.sendStatus(403),
   optionalAuth: (_req: any, _res: any, next: any) => next(),
 }));
-vi.mock("../lib/logger", () => ({
-  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn() }) },
-}));
-vi.mock("pino-http", () => ({ default: () => (_req: any, _res: any, next: any) => next() }));
-vi.mock("@clerk/express", () => ({ clerkMiddleware: () => (_req: any, _res: any, next: any) => next() }));
-vi.mock("../middlewares/clerkProxyMiddleware", () => ({
-  CLERK_PROXY_PATH: "/__clerk",
-  clerkProxyMiddleware: () => (_req: any, _res: any, next: any) => next(),
-  getClerkProxyHost: () => null,
-}));
 
 import supertest from "supertest";
-import express from "express";
 import trackingRouter from "./tracking";
 import { db, episodesTable, titlesTable, usersTable, watchedEpisodesTable, watchedTitlesTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
@@ -154,7 +144,7 @@ describe("in-progress show discovery across large libraries", () => {
     }
   });
 
-  it("serves updated progress and history to web and mobile after a watched-episode write", async () => {
+  it("serves updated progress, status filters, and history after watched-episode writes", async () => {
     const titleId = titleIds[68];
     const watchedEpisodeId = episodeIds[136];
     await db.delete(watchedEpisodesTable).where(
@@ -189,6 +179,27 @@ describe("in-progress show discovery across large libraries", () => {
           episodeLabel: "S1E1",
         }),
       ]));
+
+      const finalWrite = await supertest(app)
+        .post(`/api/episodes/${episodeIds[137]}/watched`)
+        .send({});
+      expect(finalWrite.status).toBe(200);
+
+      const [upNext, caughtUp] = await Promise.all([
+        supertest(app).get("/api/me/shows").query({ q: "progress_page_68", status: "up-next" }),
+        supertest(app).get("/api/me/shows").query({ q: "progress_page_68", status: "caught-up" }),
+      ]);
+      expect(upNext.status).toBe(200);
+      expect(upNext.body).toEqual([]);
+      expect(caughtUp.status).toBe(200);
+      expect(caughtUp.body).toEqual([
+        expect.objectContaining({
+          title: expect.objectContaining({ id: titleId }),
+          watchedEpisodes: 2,
+          totalEpisodes: 2,
+          nextEpisode: null,
+        }),
+      ]);
     } finally {
       await db.delete(watchedEpisodesTable).where(
         and(eq(watchedEpisodesTable.userId, USER_ID), eq(watchedEpisodesTable.titleId, titleId)),

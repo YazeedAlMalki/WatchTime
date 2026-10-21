@@ -129,7 +129,7 @@ it("restores the saved alias page and keeps its cursor with the saved filters", 
   window.history.replaceState(
     {},
     "",
-    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=2&aliasCursor=after-149",
+    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=2&aliasCursor=00000000-0000-0000-0000-000000000001:50:0",
   );
   const requests: URL[] = [];
   const originalFetch = window.fetch;
@@ -157,7 +157,7 @@ it("restores the saved alias page and keeps its cursor with the saved filters", 
       limit: 50,
       offset: 0,
       nextCursor: null,
-      previousCursor: "before-150",
+      previousCursor: "00000000-0000-0000-0000-000000000001:0",
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
 
@@ -169,7 +169,7 @@ it("restores the saved alias page and keeps its cursor with the saved filters", 
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
     await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 51 matching aliases");
     await expect.element(page.getByText("Lighthouse resumed page alias")).toBeVisible();
-    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("after-149");
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("00000000-0000-0000-0000-000000000001:50:0");
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
   } finally {
@@ -186,7 +186,7 @@ it("restarts from page one when a saved alias continuation is invalid or stale",
   window.history.replaceState(
     {},
     "",
-    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=4&aliasCursor=stale-cursor",
+    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=4&aliasCursor=00000000-0000-0000-0000-000000000099:150:100",
   );
   const requests: URL[] = [];
   const originalFetch = window.fetch;
@@ -218,7 +218,8 @@ it("restarts from page one when a saved alias continuation is invalid or stale",
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
     await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load alternate titles.");
-    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("stale-cursor");
+    expect(requests.at(-1)?.searchParams.get("cursor"))
+      .toBe("00000000-0000-0000-0000-000000000099:150:100");
     await userEvent.click(page.getByRole("button", { name: "Restart alternate-title review" }));
     await expect.element(page.getByText("No alternate titles found")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();

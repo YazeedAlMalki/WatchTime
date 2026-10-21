@@ -54,12 +54,9 @@ export function readAdminContentUrl(search: string): {
       ? Number(rawAliasPage)
       : null;
   const aliasCursor = rawAliasCursor &&
-      rawAliasCursor.length >= 4 &&
       rawAliasCursor.length <= 4096 &&
-      parsedAliasPage !== null &&
-      // A previous-page cursor can return to the first frozen snapshot page.
-      (parsedAliasPage > 1 ||
-        /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}:0$/i.test(rawAliasCursor))
+      /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:(?:0|[1-9]\d*)(?::(?:0|[1-9]\d*))?|[A-Za-z0-9_-]{16,})$/i.test(rawAliasCursor) &&
+      parsedAliasPage !== null
     ? rawAliasCursor
     : null;
   const malformedRefreshTimestamp = tab === "content" && params.get("malformedRefreshTimestamp") === "true";
@@ -90,7 +87,6 @@ export function readAdminContentUrl(search: string): {
     aliasCursor: tab === "content" ? aliasCursor : null,
   };
 }
-
 export function adminContentUrl(
   search: string,
   tab: AdminTab,

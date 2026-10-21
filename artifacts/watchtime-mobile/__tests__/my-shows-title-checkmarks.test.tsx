@@ -101,7 +101,7 @@ jest.mock('@workspace/api-client-react', () => {
     getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
     getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
     getGetTitleSafetyQueryKey: () => ['/api/safety'],
-    getMyShows: jest.fn(async (params?: { q?: string }) => {
+    getMyShows: jest.fn(async (params?: { q?: string; status?: string }) => {
       if (params?.q?.toLowerCase() === 'local title') {
         return [{
           title: { id: 43, name: 'Different Canonical Name' },
@@ -111,7 +111,7 @@ jest.mock('@workspace/api-client-react', () => {
         }];
       }
       const nextEpisode = mockEpisodes.find((episode) => !mockWatched.has(episode.id)) ?? null;
-      return [{
+      const shows = [{
         title: { id: 42, name: 'Example Show' },
         nextEpisode: nextEpisode ? { ...nextEpisode } : null,
         totalEpisodes: 4,
@@ -122,6 +122,12 @@ jest.mock('@workspace/api-client-react', () => {
         totalEpisodes: mockOtherEpisodes.length,
         watchedEpisodes: mockOtherEpisodes.filter((ep) => mockWatched.has(ep.id)).length,
       }];
+      return shows.filter((show) => {
+        if (params?.q && !show.title.name.toLowerCase().includes(params.q.toLowerCase())) return false;
+        if (params?.status === 'up-next' && !show.nextEpisode) return false;
+        if (params?.status === 'caught-up' && show.nextEpisode) return false;
+        return true;
+      });
     }),
     getMyInProgressShows: async () => [],
     getMyMovies: async () => [],
@@ -293,6 +299,13 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   ]);
   let showsFetchesBeforeWatch = api.getMyShows.mock.calls.length;
   let historyFetchesBeforeWatch = mockRecentActivityFetch.mock.calls.length;
+
+  const showsBaseKey = [
+    ...getGetMyShowsQueryKey(),
+    'account',
+    'checkmarks-user',
+    'infinite',
+  ];
   const invalidate = jest.spyOn(client, 'invalidateQueries');
   mockMarkRequest.mockRejectedValueOnce(new Error('Network unavailable'));
   const stopPropagation = jest.fn();
@@ -396,6 +409,20 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   expect(invalidate).not.toHaveBeenCalled();
 
   const successfulRetry = deferredMarkResponse();
+
+  const countShowsRequestsForStatus = (status: 'up-next' | 'caught-up') =>
+    api.getMyShows.mock.calls.filter(
+      (call: [{ q?: string; status?: string }]) => call[0].status === status,
+    ).length;
+  const caughtUpQueries = client.getQueryCache().findAll({
+    queryKey: getGetMyShowsQueryKey(),
+  }).filter((query) => {
+    const params = query.queryKey.at(-1) as { q?: string; status?: string };
+    return params?.status === 'caught-up';
+  });
+  expect(caughtUpQueries.length).toBeGreaterThan(0);
+  const upNextFetchesBeforePartialSuccess = countShowsRequestsForStatus('up-next');
+
   mockMarkRequest.mockImplementationOnce(() => successfulRetry.promise);
   await fireEvent.press(shows.getByTestId('mark-watched-201'));
   await expectPendingRetry(4);
@@ -403,12 +430,18 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   await waitFor(() => {
     expect([...mockWatched].sort()).toEqual([101, 102, 201, 301]);
     expect(api.getMyShows.mock.calls.length).toBeGreaterThan(showsFetchesBeforeWatch);
+    expect(countShowsRequestsForStatus('up-next')).toBeGreaterThan(upNextFetchesBeforePartialSuccess);
     expect(mockRecentActivityFetch.mock.calls.length).toBeGreaterThan(historyFetchesBeforeWatch);
     expect(shows.getByTestId('mark-watched-202')).toBeTruthy();
     expect(shows.getByText('3 / 4 episodes')).toBeTruthy();
+    expect(shows.getByText('S2 E2 · Fourth')).toBeTruthy();
     expect(client.getQueryState(getGetTitleQueryKey(42))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetSeasonQueryKey(42, 1))?.isInvalidated).toBe(true);
     expect(client.getQueryState(getGetSeasonQueryKey(42, 2))?.isInvalidated).toBe(true);
+    caughtUpQueries.forEach((query) => {
+      expect(query.queryKey.slice(0, showsBaseKey.length)).toEqual(showsBaseKey);
+      expect(query.state.isInvalidated).toBe(true);
+    });
   });
   expect(mockMarkRequest).toHaveBeenCalledTimes(4);
   expect(mockMarkRequest).toHaveBeenNthCalledWith(1, {
@@ -428,6 +461,24 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   expect(shows.queryByText('Retry')).toBeNull();
   expect(client.getQueryState(getGetSeasonQueryKey(420, 1))?.isInvalidated).toBe(false);
 
+  const upNextFetchesBeforeFinalEpisode = countShowsRequestsForStatus('up-next');
+  await fireEvent.press(shows.getByTestId('mark-watched-202'));
+  await waitFor(() => {
+    expect(mockWatched.has(202)).toBe(true);
+    expect(shows.queryByTestId('show-row-42')).toBeNull();
+    expect(countShowsRequestsForStatus('up-next')).toBeGreaterThan(upNextFetchesBeforeFinalEpisode);
+  });
+  expect(caughtUpQueries.every((query) => query.state.isInvalidated)).toBe(true);
+
+  const caughtUpFetchesBeforeFilterChange = countShowsRequestsForStatus('caught-up');
+  fireEvent.press(shows.getByTestId('filter-chip-caught-up'));
+  await waitFor(() => {
+    expect(shows.getByTestId('show-row-42')).toBeTruthy();
+    expect(shows.getByText('All caught up!')).toBeTruthy();
+    expect(shows.getByText('4 / 4 episodes')).toBeTruthy();
+    expect(countShowsRequestsForStatus('caught-up')).toBeGreaterThan(caughtUpFetchesBeforeFilterChange);
+  });
+
   fireEvent.press(shows.getByTestId('tab-history'));
   await waitFor(() => {
     expect(shows.getByTestId('history-item-42')).toBeTruthy();
@@ -435,7 +486,7 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   });
   fireEvent.press(shows.getByTestId('history-item-42'));
   expect(mockRouter.push).toHaveBeenCalledWith('/title/42');
-  await cleanup();
+  await act(async () => shows.unmount());
 
   const detail = await render(
     <QueryClientProvider client={client}>
@@ -445,16 +496,17 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
     </QueryClientProvider>,
   );
   await waitFor(() => {
-    expect(detail.getByText('2/2 watched')).toBeTruthy();
-    expect(detail.getByText('1/2 watched')).toBeTruthy();
+    expect(detail.getAllByText('2/2 watched')).toHaveLength(2);
     expect(detail.getByTestId('episode-state-101').props.children).toEqual(['✓', ' ', 'Pilot']);
     expect(detail.getByTestId('episode-state-102').props.children).toEqual(['✓', ' ', 'Second']);
     expect(detail.getByTestId('episode-state-201').props.children).toEqual(['✓', ' ', 'Third']);
-    expect(detail.getByTestId('episode-state-202').props.children).toEqual(['○', ' ', 'Fourth']);
+    expect(detail.getByTestId('episode-state-202').props.children).toEqual(['✓', ' ', 'Fourth']);
   });
   expect(mockTitleFetch).toHaveBeenCalled();
   expect(mockSeasonFetch).toHaveBeenCalledWith(1);
   expect(mockSeasonFetch).toHaveBeenCalledWith(2);
-  await cleanup();
+  await act(async () => detail.unmount());
   client.clear();
 });
+
+afterEach(cleanup);

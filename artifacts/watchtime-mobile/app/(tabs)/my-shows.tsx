@@ -116,7 +116,8 @@ function ShowRow({ show }: { show: TrackedShow }) {
   const markWatched = useMarkEpisodeWatched({
     mutation: {
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
+        // Search and status filters are appended to this key for the infinite query.
+        queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey(), exact: false });
         queryClient.invalidateQueries({ queryKey: getGetMyInProgressShowsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
