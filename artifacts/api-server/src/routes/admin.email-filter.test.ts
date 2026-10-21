@@ -11,8 +11,10 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 
 const ADMIN_A_ID = "test-email-filter-admin-a";
 const ADMIN_B_ID = "test-email-filter-admin-b";
+const STREAM_ADMIN_ID = "test-audit-stream-admin";
 const ADMIN_A_EMAIL = "alpha-admin@watchtime-test.example";
 const ADMIN_B_EMAIL = "beta-admin@watchtime-test.example";
+const STREAM_ADMIN_EMAIL = "large-export@audit-test.invalid";
 
 // ─── Mock auth (requireAdmin admits any request) ─────────────────────────────
 vi.mock("../middlewares/auth", () => ({
@@ -69,19 +71,22 @@ const sharedEvents = [
   { action: "dismiss_report", entityType: "report", entityId: 72002 },
 ] as const;
 const EXPORT_ACTION = "audit_export_batch";
+const STREAM_EXPORT_ACTION = "audit_export_stream_batch";
 const EXPORT_DAY = "2026-08-16";
 const EXPORT_DAY_START = new Date(`${EXPORT_DAY}T00:00:00.000Z`);
 const EXPORT_DAY_END = new Date(`${EXPORT_DAY}T23:59:59.999Z`);
 const EXPORT_MATCH_ENTITY_BASE = 81000;
 const EXPORT_MATCH_COUNT = 31;
+const STREAM_EXPORT_COUNT = 501;
 let adminARowIds: number[] = [];
 let adminBRowIds: number[] = [];
 let exportMatchRowIds: number[] = [];
+let streamExportRowIds: number[] = [];
 
 beforeAll(async () => {
   // Clear leftovers from an interrupted prior run for these test-only identities.
-  await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.adminId, [ADMIN_A_ID, ADMIN_B_ID]));
-  await db.delete(usersTable).where(inArray(usersTable.id, [ADMIN_A_ID, ADMIN_B_ID]));
+  await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.adminId, [ADMIN_A_ID, ADMIN_B_ID, STREAM_ADMIN_ID]));
+  await db.delete(usersTable).where(inArray(usersTable.id, [ADMIN_A_ID, ADMIN_B_ID, STREAM_ADMIN_ID]));
 
   // This app enforces one current admin at the DB level. The mocked auth
   // middleware authorizes the request while these distinct actor rows exercise
@@ -89,6 +94,7 @@ beforeAll(async () => {
   await db.insert(usersTable).values([
     { id: ADMIN_A_ID, email: ADMIN_A_EMAIL, name: "Alpha Admin", isAdmin: false },
     { id: ADMIN_B_ID, email: ADMIN_B_EMAIL, name: "Beta Admin", isAdmin: false },
+    { id: STREAM_ADMIN_ID, email: STREAM_ADMIN_EMAIL, name: "Large Export Admin", isAdmin: false },
   ]);
 
   // Both admins perform the same actions on the same entities. The email
@@ -112,6 +118,14 @@ beforeAll(async () => {
     entityType: "content",
     entityId: EXPORT_MATCH_ENTITY_BASE + index,
     details: { testBatch: "matching", index },
+    createdAt: new Date(`${EXPORT_DAY}T12:00:00.000Z`),
+  }));
+  const streamingExportRows = Array.from({ length: STREAM_EXPORT_COUNT }, (_, index) => ({
+    adminId: STREAM_ADMIN_ID,
+    action: STREAM_EXPORT_ACTION,
+    entityType: "content",
+    entityId: 83000 + index,
+    details: { testBatch: "streaming", index },
     createdAt: new Date(`${EXPORT_DAY}T12:00:00.000Z`),
   }));
   const exportDecoys = [
@@ -157,17 +171,21 @@ beforeAll(async () => {
     },
   ];
   const additionalRows = await db.insert(adminAuditLogTable)
-    .values([...matchingExportRows, ...exportDecoys])
+    .values([...matchingExportRows, ...streamingExportRows, ...exportDecoys])
     .returning({
       id: adminAuditLogTable.id,
       adminId: adminAuditLogTable.adminId,
       entityId: adminAuditLogTable.entityId,
+      action: adminAuditLogTable.action,
     });
   const exportMatchEntityIds = new Set(
     matchingExportRows.map((row) => row.entityId),
   );
   exportMatchRowIds = additionalRows
     .filter((row) => row.entityId !== null && exportMatchEntityIds.has(row.entityId))
+    .map((row) => row.id);
+  streamExportRowIds = additionalRows
+    .filter((row) => row.action === STREAM_EXPORT_ACTION)
     .map((row) => row.id);
   adminARowIds = [
     ...adminA.map((row) => row.id),
@@ -180,8 +198,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.adminId, [ADMIN_A_ID, ADMIN_B_ID]));
-  await db.delete(usersTable).where(inArray(usersTable.id, [ADMIN_A_ID, ADMIN_B_ID]));
+  await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.adminId, [ADMIN_A_ID, ADMIN_B_ID, STREAM_ADMIN_ID]));
+  await db.delete(usersTable).where(inArray(usersTable.id, [ADMIN_A_ID, ADMIN_B_ID, STREAM_ADMIN_ID]));
 });
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -344,6 +362,31 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
     });
     expect(exportedIds.sort((a, b) => a - b))
       .toEqual([...exportMatchRowIds].sort((a, b) => a - b));
+  });
+
+  it("streams every matching row across multiple batches in stable newest-first order", async () => {
+    const filters = new URLSearchParams({
+      action: STREAM_EXPORT_ACTION,
+      adminEmail: STREAM_ADMIN_EMAIL,
+      entityType: "content",
+      dateFrom: EXPORT_DAY_START.toISOString(),
+      dateTo: EXPORT_DAY_END.toISOString(),
+    });
+    const res = await supertest(app)
+      .get(`/api/admin/audit-log/export?${filters.toString()}`);
+
+    expect(res.status).toBe(200);
+    const lines = res.text.trimEnd().split(/\r?\n/);
+    expect(lines[0]).toContain("Details");
+    const dataLines = lines.slice(1);
+    expect(dataLines).toHaveLength(STREAM_EXPORT_COUNT);
+    expect(dataLines.every((line) => line.includes(STREAM_ADMIN_EMAIL))).toBe(true);
+    const exportedIds = dataLines.map((line) => {
+      const id = line.match(/^"(\d+)"/)?.[1];
+      expect(id).toBeDefined();
+      return Number(id);
+    });
+    expect(exportedIds).toEqual([...streamExportRowIds].sort((a, b) => b - a));
   });
 
   it("returns all rows when no email filter is active", async () => {

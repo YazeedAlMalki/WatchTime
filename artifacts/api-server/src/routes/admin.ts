@@ -66,6 +66,7 @@ const LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS = new Set([
 const CONTENT_REVIEW_PAGE_SIZE = 50;
 const JS_DATE_LIMIT_MS = 8_640_000_000_000_000;
 const CONTENT_ALIAS_EXPORT_BATCH_SIZE = 500;
+const AUDIT_LOG_EXPORT_BATCH_SIZE = 500;
 const AUDIT_LOG_DEFAULT_LIMIT = 50;
 const AUDIT_LOG_MAX_LIMIT = 200;
 const AUDIT_LOG_MAX_OFFSET = 1_000_000;
@@ -1920,29 +1921,11 @@ router.get("/audit-log", async (req, res) => {
 router.get("/audit-log/export", async (req, res) => {
   const where = buildAuditLogWhere(req.query as Record<string, string>);
 
-  const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt));
-
-  const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-
   const header = ["ID", "Timestamp", "Admin", "Action", "Entity Type", "Entity ID", "Details"];
-  const dataRows = rows.map(({ log, adminEmail }) => [
-    log.id,
-    log.createdAt.toISOString(),
-    adminEmail ?? "",
-    log.action,
-    log.entityType ?? "",
-    log.entityId ?? "",
-    log.details ? JSON.stringify(log.details) : "",
-  ]);
-
-  const csv = [header, ...dataRows]
-    .map(row => row.map(escape).join(","))
-    .join("\n");
+  const escapeCsvValue = (value: unknown) =>
+    `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const formatCsvRow = (row: (string | number)[]) =>
+    row.map(escapeCsvValue).join(",");
 
   const dateStr = new Date().toISOString().slice(0, 10);
   const emailPart = (req.query.adminEmail as string | undefined)?.trim();
@@ -1952,7 +1935,79 @@ router.get("/audit-log/export", async (req, res) => {
 
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-  return res.send(csv);
+
+  const writeChunk = async (chunk: string): Promise<boolean> => {
+    if (res.destroyed) return false;
+    if (res.write(chunk)) return true;
+
+    return new Promise<boolean>((resolve) => {
+      const cleanup = () => {
+        res.off("drain", onDrain);
+        res.off("close", onClose);
+      };
+      const onDrain = () => {
+        cleanup();
+        resolve(!res.destroyed);
+      };
+      const onClose = () => {
+        cleanup();
+        resolve(false);
+      };
+      res.once("drain", onDrain);
+      res.once("close", onClose);
+      if (res.destroyed) onClose();
+    });
+  };
+
+  const completed = await db.transaction(async (tx) => {
+    let cursor: { createdAt: string; id: number } | undefined;
+    let headerWritten = false;
+
+    while (!res.destroyed) {
+      // Keep the raw database timestamp text so keyset comparisons preserve
+      // PostgreSQL's full timestamp precision instead of JavaScript's millis.
+      const cursorCondition = cursor
+        ? sql`(${adminAuditLogTable.createdAt}, ${adminAuditLogTable.id}) < (${cursor.createdAt}::timestamp, ${cursor.id})`
+        : undefined;
+      const rows = await tx
+        .select({
+          log: adminAuditLogTable,
+          adminEmail: usersTable.email,
+          cursorCreatedAt: sql<string>`${adminAuditLogTable.createdAt}::text`,
+        })
+        .from(adminAuditLogTable)
+        .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
+        .where(cursorCondition ? and(where, cursorCondition) : where)
+        .orderBy(desc(adminAuditLogTable.createdAt), desc(adminAuditLogTable.id))
+        .limit(AUDIT_LOG_EXPORT_BATCH_SIZE);
+
+      if (!headerWritten) {
+        if (!(await writeChunk(`${formatCsvRow(header)}\n`))) return false;
+        headerWritten = true;
+      }
+      if (rows.length === 0) return true;
+
+      for (const { log, adminEmail, cursorCreatedAt } of rows) {
+        const csvRow = [
+          log.id,
+          log.createdAt.toISOString(),
+          adminEmail ?? "",
+          log.action,
+          log.entityType ?? "",
+          log.entityId ?? "",
+          log.details ? JSON.stringify(log.details) : "",
+        ];
+        if (!(await writeChunk(`${formatCsvRow(csvRow)}\n`))) return false;
+      }
+
+      const lastRow = rows[rows.length - 1];
+      cursor = { createdAt: lastRow.cursorCreatedAt, id: lastRow.log.id };
+      if (rows.length < AUDIT_LOG_EXPORT_BATCH_SIZE) return true;
+    }
+    return false;
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
+
+  if (completed && !res.destroyed) res.end();
 });
 
 export default router;
