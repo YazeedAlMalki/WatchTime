@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 import { catalogSyncItemsTable, catalogSyncRunsTable, db, pool } from "@workspace/db";
 import * as databaseModule from "@workspace/db";
+import * as schema from "@workspace/db/schema";
 import { logger } from "./logger";
 import { sourceItems } from "../seed-real";
 import { pruneCatalogRefreshHistory, recoverInterruptedRuns, retryFailedCatalogTitles, startCatalogRefresh, STALE_QUEUED_REFRESH_MS } from "./catalog-refresh";
@@ -424,6 +426,160 @@ describe("catalog refresh recovery", () => {
       transactionSpy.mockRestore();
       await lockProbe.query("select pg_advisory_unlock_all()");
       lockProbe.release();
+    }
+  });
+
+  it("rolls back an aborted PostgreSQL title update, releases recovery locks, and recovers on retry", async () => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const staleAt = new Date(cutoff.getTime() - 1_000);
+    const runs = await db.insert(catalogSyncRunsTable).values([
+      { trigger: "manual", status: "queued", createdAt: staleAt },
+      { trigger: "manual", status: "running", createdAt: staleAt, startedAt: staleAt },
+    ]).returning();
+    const runIds = runs.map((run) => run.id);
+    createdRunIds.push(...runIds);
+    const items = await db.insert(catalogSyncItemsTable).values(runs.flatMap((run) => [
+      {
+        runId: run.id, itemKey: "unfinished", title: "Unfinished title", provider: "TVMaze",
+        status: run.status, startedAt: run.startedAt,
+      },
+      {
+        runId: run.id, itemKey: "completed", title: "Completed title", provider: "TVMaze",
+        status: "succeeded", startedAt: staleAt, finishedAt: staleAt,
+      },
+      {
+        runId: run.id, itemKey: "previously-failed", title: "Failed title", provider: "TVMaze",
+        status: "failed", error: "original provider error", finishedAt: staleAt,
+      },
+    ])).returning();
+
+    // Keep both sessions checked out throughout: the transaction connection
+    // must be usable after rollback, and the lock probe must never reuse it.
+    const lockProbe = await pool.connect();
+    try {
+      const transactionClient = await pool.connect();
+      const transactionDb = drizzle(transactionClient, { schema });
+      const querySpy = vi.spyOn(transactionClient, "query");
+      let titleUpdates = 0;
+      let statementError: unknown;
+      const transactionSpy = vi.spyOn(db, "transaction").mockImplementationOnce((callback, config) =>
+        transactionDb.transaction(async (tx) => {
+          const update = tx.update.bind(tx);
+          const updateSpy = vi.spyOn(tx, "update").mockImplementation((table) => {
+            if (table === catalogSyncItemsTable && ++titleUpdates === 2) {
+              return {
+                set: () => ({
+                  where: async () => {
+                    const pendingRuns = await tx.select().from(catalogSyncRunsTable)
+                      .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id);
+                    expect(pendingRuns.map((run) => run.status)).toEqual(["failed", "failed"]);
+                    const [updatedItem] = await tx.select().from(catalogSyncItemsTable)
+                      .where(eq(catalogSyncItemsTable.id, items[0].id));
+                    expect(updatedItem.status).toBe("failed");
+                    expect(updatedItem.finishedAt).toBeInstanceOf(Date);
+
+                    // A real statement error on this transaction connection,
+                    // without changing any table, schema, or database setting.
+                    try {
+                      await tx.execute(sql`select 1 / 0`);
+                    } catch (error) {
+                      statementError = error;
+                      expect(error).toMatchObject({
+                        cause: { code: "22012", message: "division by zero" },
+                      });
+                      // Unlike an application rejection, PostgreSQL now refuses
+                      // even a valid statement until the transaction rolls back.
+                      await expect(tx.execute(sql`select 1`)).rejects.toMatchObject({
+                        cause: { code: "25P02" },
+                      });
+                      throw error;
+                    }
+                    throw new Error("Expected PostgreSQL to reject division by zero");
+                  },
+                }),
+              } as unknown as ReturnType<typeof tx.update>;
+            }
+            return update(table);
+          });
+          try {
+            return await callback(tx);
+          } finally {
+            updateSpy.mockRestore();
+          }
+        }, config),
+      );
+
+      try {
+        const outcome = await recoverInterruptedRuns(cutoff).then(
+          () => { throw new Error("Expected recovery to reject the PostgreSQL statement error"); },
+          (error: unknown) => error,
+        );
+        expect(titleUpdates).toBe(2);
+        expect(statementError).toBeDefined();
+        expect(outcome).toBe(statementError);
+        expect(outcome).toMatchObject({
+          cause: { code: "22012", message: "division by zero" },
+        });
+        expect(querySpy).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "rollback" }), expect.any(Array),
+        );
+        // Use the very same retained session, not an arbitrary healthy pool
+        // client, to prove rollback cleared PostgreSQL's aborted state.
+        const healthy = await transactionClient.query<{ value: number }>("select 1 as value");
+        expect(healthy.rows).toEqual([{ value: 1 }]);
+        expect(await db.select().from(catalogSyncRunsTable)
+          .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id)).toEqual(runs);
+        expect(await db.select().from(catalogSyncItemsTable)
+          .where(inArray(catalogSyncItemsTable.runId, runIds)).orderBy(catalogSyncItemsTable.id)).toEqual(items);
+
+        const catalogLock = await lockProbe.query<{ locked: boolean }>(
+          "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+        );
+        expect(catalogLock.rows[0].locked).toBe(true);
+        for (const runId of runIds) {
+          const workerLock = await lockProbe.query<{ locked: boolean }>(
+            "select pg_try_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1) as locked", [runId],
+          );
+          expect(workerLock.rows[0].locked).toBe(true);
+        }
+        await lockProbe.query("select pg_advisory_unlock_all()");
+        transactionSpy.mockRestore();
+
+        await recoverInterruptedRuns(cutoff);
+        const recoveredRuns = await db.select().from(catalogSyncRunsTable)
+          .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id);
+        expect(recoveredRuns.map((run) => run.status)).toEqual(["failed", "failed"]);
+        expect(recoveredRuns[0].error).toContain("retry the failed titles");
+        expect(recoveredRuns[1].error).toBe("Catalog refresh was interrupted by a server restart");
+        expect(recoveredRuns.every((run) => run.finishedAt instanceof Date)).toBe(true);
+        const recoveredItems = await db.select().from(catalogSyncItemsTable)
+          .where(inArray(catalogSyncItemsTable.runId, runIds)).orderBy(catalogSyncItemsTable.id);
+        for (const [index, item] of recoveredItems.entries()) {
+          if (items[index].itemKey === "unfinished") {
+            expect(item.status).toBe("failed");
+            expect(item.error).toBe(recoveredRuns.find((run) => run.id === item.runId)?.error);
+            expect(item.finishedAt).toBeInstanceOf(Date);
+          } else {
+            expect(item).toEqual(items[index]);
+          }
+        }
+      } finally {
+        transactionSpy.mockRestore();
+        querySpy.mockRestore();
+        try {
+          // Also leave a clean session when an assertion fails before rollback.
+          await transactionClient.query("rollback");
+          await transactionClient.query("select pg_advisory_unlock_all()");
+        } finally {
+          transactionClient.release();
+        }
+      }
+    } finally {
+      try {
+        await lockProbe.query("select pg_advisory_unlock_all()");
+      } finally {
+        lockProbe.release();
+      }
     }
   });
 
