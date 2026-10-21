@@ -12,6 +12,7 @@ const mockRoute: { current: { id: string } } = { current: { id: '771' } };
 const mockTrendingEnabled: boolean[] = [];
 const mockPrivateQueryCalls: string[] = [];
 const mockTitleFetch = jest.fn();
+const mockTitleRefetch = jest.fn();
 const mockPublicTitle = {
   id: 771,
   name: 'Public show while sign-in is down',
@@ -24,6 +25,11 @@ const mockPublicTitle = {
   inWatchlist: false,
   watched: false,
   overview: 'A public synopsis remains available while sign-in is down.',
+};
+const mockTitleQueryState: {
+  current: { data: typeof mockPublicTitle | null; isLoading: boolean; isError: boolean };
+} = {
+  current: { data: mockPublicTitle, isLoading: false, isError: false },
 };
 
 jest.mock('expo-router', () => ({
@@ -74,8 +80,9 @@ jest.mock('@workspace/api-client-react', () => ({
   },
   useGetTitle: (id: number) => {
     mockTitleFetch(id);
-    return { data: mockPublicTitle, isLoading: false, isError: false };
+    return { ...mockTitleQueryState.current, refetch: mockTitleRefetch };
   },
+  getGetTitleQueryKey: (id: number) => [`/api/titles/${id}`],
   useGetSimilarTitles: () => ({ data: [] }),
   useGetTitleSafety: () => ({ data: null, isLoading: false }),
   useAddToWatchlist: () => ({ mutate: jest.fn(), isPending: false }),
@@ -90,12 +97,32 @@ jest.mock('@workspace/api-client-react', () => ({
 
 jest.mock('@/components/ui', () => {
   const React = require('react');
-  const { Text: NativeText, View } = require('react-native');
+  const { Pressable, Text: NativeText, View } = require('react-native');
   const actualUi = jest.requireActual('@/components/ui');
 
   return {
     EmptyState: () => <View />,
-    ErrorState: ({ message }: { message: string }) => <NativeText>{message}</NativeText>,
+    ErrorState: ({
+      message,
+      onRetry,
+      retryAccessibilityLabel = 'Retry',
+    }: {
+      message: string;
+      onRetry: () => void;
+      retryAccessibilityLabel?: string;
+    }) => (
+      <View>
+        <NativeText>{message}</NativeText>
+        <Pressable
+          testID="retry-button"
+          accessibilityRole="button"
+          accessibilityLabel={retryAccessibilityLabel}
+          onPress={onRetry}
+        >
+          <NativeText>Retry</NativeText>
+        </Pressable>
+      </View>
+    ),
     Loading: () => <View testID="loading" />,
     PosterCard: actualUi.PosterCard,
     SectionHeader: ({ title }: { title: string }) => <NativeText>{title}</NativeText>,
@@ -145,6 +172,12 @@ describe('public browsing while authentication is unavailable', () => {
     mockTrendingEnabled.length = 0;
     mockPrivateQueryCalls.length = 0;
     mockTitleFetch.mockClear();
+    mockTitleRefetch.mockClear();
+    mockTitleQueryState.current = {
+      data: mockPublicTitle,
+      isLoading: false,
+      isError: false,
+    };
     mockRoute.current = { id: '771' };
   });
 
@@ -192,18 +225,25 @@ describe('public browsing while authentication is unavailable', () => {
 
     const pushedPath = mockRouter.push.mock.calls[0][0];
     mockRoute.current = { id: pushedPath.split('/').at(-1) };
+    mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
     const detail = await render(
       <AppAuthUnavailableProvider>
         <TitleDetailScreen />
       </AppAuthUnavailableProvider>,
     );
 
-    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
-    expect(
-      detail.getByText('A public synopsis remains available while sign-in is down.'),
-    ).toBeTruthy();
+    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
+
+    fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
+
+    expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
     expect(mockPrivateQueryCalls).toEqual([]);
     expect(mockRouter.push).toHaveBeenCalledTimes(1);
+    expect(mockRouter.push).not.toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: '/(auth)/sign-in' }),
+    );
+    expect(mockRouter.replace).not.toHaveBeenCalled();
   });
 });
