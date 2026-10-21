@@ -1189,6 +1189,65 @@ describe("catalog refresh history cleanup failure", () => {
     }
   });
 
+  it("preserves partial results and their diagnostic when history cleanup rejects", async () => {
+    const cleanupError = new Error("history deletion failed");
+    const diagnostic = "TVMaze title lookup timed out";
+    let rejectCleanup!: (error: Error) => void;
+    const cleanupGate = new Promise<never>((_resolve, reject) => {
+      rejectCleanup = reject;
+    });
+    runCatalogSyncMock.mockResolvedValueOnce({
+      selected: 3,
+      succeeded: 2,
+      episodes: 12,
+      failures: [{
+        key: "tvmaze:partial-cleanup",
+        title: "Failed title",
+        provider: "TVMaze",
+        error: diagnostic,
+      }],
+    });
+    const deleteSpy = vi.spyOn(db, "delete").mockReturnValue({
+      where: () => ({ returning: () => cleanupGate }),
+    } as unknown as ReturnType<typeof db.delete>);
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      const runId = await startCatalogRefresh("manual", []);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(deleteSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+      const [beforeCleanup] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(beforeCleanup).toMatchObject({
+        status: "partial",
+        error: diagnostic,
+        processedItems: 3,
+        succeededItems: 2,
+        failedItems: 1,
+        episodesUpdated: 12,
+        finishedAt: expect.any(Date),
+      });
+
+      rejectCleanup(cleanupError);
+      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(
+        { err: cleanupError }, "unable to prune catalog refresh history",
+      ));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const [afterCleanup] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(afterCleanup).toEqual(beforeCleanup);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      deleteSpy.mockRestore();
+      warnSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+    }
+  });
+
   it.each(["skipped", "failed"] as const)(
     "leaves a %s refresh unchanged and logs the cleanup rejection",
     async (status) => {
