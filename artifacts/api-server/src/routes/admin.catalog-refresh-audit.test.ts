@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
+import { randomUUID } from "node:crypto";
 import {
   adminAuditLogTable,
   catalogSyncItemsTable,
@@ -10,6 +11,7 @@ import {
 import { and, eq, getTableName, inArray } from "drizzle-orm";
 
 const adminId = "test-catalog-refresh-audit";
+const missingAdminId = `test-catalog-refresh-audit-missing-${randomUUID()}`;
 const runCatalogSync = vi.hoisted(() => vi.fn());
 vi.mock("../seed-real", () => ({
   sourceItems: [{
@@ -45,7 +47,7 @@ beforeAll(async () => {
 afterEach(async () => {
   vi.restoreAllMocks();
   runCatalogSync.mockReset();
-  await db.delete(adminAuditLogTable).where(eq(adminAuditLogTable.adminId, adminId));
+  await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.adminId, [adminId, missingAdminId]));
   if (createdRunIds.length) {
     await db.delete(catalogSyncRunsTable).where(inArray(catalogSyncRunsTable.id, createdRunIds));
     createdRunIds.length = 0;
@@ -121,6 +123,94 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
       const [sourceItem] = await db.select().from(catalogSyncItemsTable)
         .where(eq(catalogSyncItemsTable.runId, sourceRunId));
       expect(sourceItem.status).toBe("failed");
+    }
+  });
+
+  it("rolls back the queue when PostgreSQL rejects the audit's admin foreign key", async () => {
+    const { path, sourceRunId } = await prepareRequest();
+    const sourceRunsBefore = sourceRunId === undefined ? [] : await db.select()
+      .from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, sourceRunId));
+    const sourceItemsBefore = sourceRunId === undefined ? [] : await db.select()
+      .from(catalogSyncItemsTable).where(eq(catalogSyncItemsTable.runId, sourceRunId));
+    expect(await db.select().from(usersTable)
+      .where(eq(usersTable.id, missingAdminId))).toEqual([]);
+
+    const realTransaction = db.transaction.bind(db);
+    let queuedRunId: number | undefined;
+    let auditInsertError: unknown;
+    const transactionSpy = vi.spyOn(db, "transaction");
+    transactionSpy.mockImplementationOnce(
+      (fn: Parameters<typeof db.transaction>[0]) => realTransaction((tx) => {
+        const wrapped = new Proxy(tx, {
+          get(target, prop) {
+            if (prop === "insert") {
+              return (table: Parameters<typeof tx.insert>[0]) => {
+                if (getTableName(table) === getTableName(adminAuditLogTable)) {
+                  return { values: async (audit: typeof adminAuditLogTable.$inferInsert) => {
+                    expect(audit).toMatchObject({
+                      adminId,
+                      action: trigger === "retry" ? "retry_catalog_refresh" : "start_catalog_refresh",
+                      entityType: "catalog_sync",
+                      ...(sourceRunId === undefined ? {} : { details: { sourceRunId } }),
+                    });
+                    queuedRunId = audit.entityId!;
+                    createdRunIds.push(queuedRunId);
+                    expect(await tx.select().from(catalogSyncRunsTable)
+                      .where(eq(catalogSyncRunsTable.id, queuedRunId))).toEqual([
+                      expect.objectContaining({ status: "queued", trigger, totalItems: 1 }),
+                    ]);
+                    expect(await tx.select().from(catalogSyncItemsTable)
+                      .where(eq(catalogSyncItemsTable.runId, queuedRunId))).toEqual([
+                      expect.objectContaining({
+                        itemKey: "catalog-refresh-audit-item",
+                        status: "queued",
+                      }),
+                    ]);
+                    // Execute the real INSERT, changing only this request's FK value.
+                    // No shared constraint or schema changes are needed to abort the transaction.
+                    try {
+                      await target.insert(adminAuditLogTable).values({ ...audit, adminId: missingAdminId });
+                    } catch (error) {
+                      auditInsertError = error;
+                      throw error;
+                    }
+                  } };
+                }
+                return target.insert(table);
+              };
+            }
+            const value = Reflect.get(target, prop);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return fn(wrapped);
+      }) as ReturnType<typeof db.transaction>,
+    );
+
+    await request(app).post(path).expect(500);
+    expect(auditInsertError).toMatchObject({
+      cause: { code: "23503", table: getTableName(adminAuditLogTable) },
+    });
+    expect(transactionSpy).toHaveBeenCalledOnce();
+    expect(queuedRunId).toBeDefined();
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, queuedRunId!))).toEqual([]);
+    expect(await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, queuedRunId!))).toEqual([]);
+    expect(await db.select().from(adminAuditLogTable).where(inArray(
+      adminAuditLogTable.adminId, [adminId, missingAdminId],
+    ))).toEqual([]);
+    expect(await db.select().from(adminAuditLogTable).where(and(
+      eq(adminAuditLogTable.entityType, "catalog_sync"),
+      eq(adminAuditLogTable.entityId, queuedRunId!),
+    ))).toEqual([]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runCatalogSync).not.toHaveBeenCalled();
+    if (sourceRunId !== undefined) {
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, sourceRunId))).toEqual(sourceRunsBefore);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, sourceRunId))).toEqual(sourceItemsBefore);
     }
   });
 
