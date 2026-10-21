@@ -955,6 +955,115 @@ describe("Wikidata refresh persistence", () => {
     expect(after).toEqual(before);
   });
 
+  it("preserves verified Wikidata data when a later lookup is ambiguous", async () => {
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_ambiguous_mapping_test__",
+      year: 2020,
+      imdbId: "tt7654323",
+      popularity: 0,
+    }).returning();
+    const refreshedAt = new Date("2025-01-01T00:00:00.000Z");
+    const [mapping] = await db.insert(providerMappingsTable).values({
+      titleId: title.id,
+      provider: WIKIDATA_PROVIDER,
+      externalId: "Q42",
+      status: "mapped",
+      lastRefreshedAt: refreshedAt,
+    }).returning();
+    await db.insert(safetyRecordsTable).values([
+      {
+        titleId: title.id,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        url: "https://www.wikidata.org/wiki/Q42",
+        status: "available",
+        items: [{
+          category: "MPAA",
+          label: "PG-13",
+          score: null,
+          maxScore: null,
+          description: "US rating · Wikidata property P1657",
+        }],
+        updatedAt: refreshedAt,
+      },
+      {
+        titleId: title.id,
+        sourceName: "WatchTime Community",
+        tier: 3,
+        isCommunity: true,
+        status: "available",
+        items: [{
+          category: "violence",
+          label: "violence",
+          score: null,
+          maxScore: null,
+          description: "community note",
+          severity: "moderate",
+        }],
+      },
+      {
+        titleId: title.id,
+        sourceName: "Does the Dog Die?",
+        tier: 2,
+        isCommunity: false,
+        status: "available",
+        items: [{
+          category: "animal harm",
+          label: "animal harm",
+          score: 2,
+          maxScore: 3,
+          description: "provider data",
+        }],
+      },
+    ]);
+    const beforeRecords = await db.select().from(safetyRecordsTable)
+      .where(eq(safetyRecordsTable.titleId, title.id));
+    const ambiguity = "Ambiguous Wikidata entity match for IMDb ID tt7654323";
+    const client = createWikidataClient({
+      retries: 0,
+      fetchFn: async () => jsonResponse({
+        results: {
+          bindings: [
+            {
+              item: { value: "https://www.wikidata.org/entity/Q42" },
+              imdbId: { value: "tt7654323" },
+            },
+            {
+              item: { value: "https://www.wikidata.org/entity/Q43" },
+              imdbId: { value: "tt7654323" },
+            },
+          ],
+        },
+      }),
+    });
+
+    try {
+      await expect(refreshWikidataTitle(title.id, client)).resolves.toMatchObject({
+        ok: false,
+        status: "error",
+        error: ambiguity,
+      });
+
+      const [afterMapping] = await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.id, mapping.id));
+      const afterRecords = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id));
+      const [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+
+      expect(afterMapping).toEqual(mapping);
+      expect(afterRecords).toEqual(beforeRecords);
+      expect(health).toMatchObject({
+        status: "failing",
+        lastError: ambiguity,
+      });
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+    }
+  });
+
   it("keeps newer title data when an older successful lookup finishes last", async () => {
     const previousHealthRows = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
