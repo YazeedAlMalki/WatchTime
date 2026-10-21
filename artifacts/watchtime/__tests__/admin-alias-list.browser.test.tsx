@@ -316,12 +316,40 @@ it("restores the saved alias page and keeps its cursor with the saved filters", 
   }
 });
 
-it("restarts from page one when a saved alias continuation is invalid or stale", async () => {
+it.each([
+  {
+    description: "malformed",
+    // The page recognizes the cursor shape, but the API rejects its leading zero.
+    cursor: "00000000-0000-0000-0000-000000000099:0150:100",
+    error: "Invalid alias snapshot cursor",
+    explanation: "The saved page link is invalid, so this review cannot resume.",
+    status: 400,
+  },
+  {
+    description: "created with different filters",
+    cursor: "00000000-0000-0000-0000-000000000099:150:100",
+    error: "Alias snapshot cursor does not match the active filters",
+    explanation: "The saved page was created with different search or ownership filters.",
+    status: 400,
+  },
+  {
+    description: "expired",
+    cursor: "00000000-0000-0000-0000-000000000099:150:100",
+    error: "This alias review snapshot expired. Restart the search.",
+    explanation: "The saved review has expired. Restart the search to load the current results.",
+    status: 409,
+  },
+])("explains why a saved alias continuation cannot resume when it is $description", async ({
+  cursor: savedCursor,
+  error,
+  explanation,
+  status,
+}) => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState(
     {},
     "",
-    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=4&aliasCursor=00000000-0000-0000-0000-000000000099:150:100",
+    `/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=4&aliasCursor=${encodeURIComponent(savedCursor)}`,
   );
   const requests: URL[] = [];
   const originalFetch = window.fetch;
@@ -331,8 +359,8 @@ it("restarts from page one when a saved alias continuation is invalid or stale",
     requests.push(url);
     const cursor = url.searchParams.get("cursor");
     if (cursor) {
-      return new Response(JSON.stringify({ error: "Invalid or stale alias continuation" }), {
-        status: 400,
+      return new Response(JSON.stringify({ error }), {
+        status,
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -352,9 +380,12 @@ it("restarts from page one when a saved alias continuation is invalid or stale",
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load alternate titles.");
-    expect(requests.at(-1)?.searchParams.get("cursor"))
-      .toBe("00000000-0000-0000-0000-000000000099:150:100");
+    const alert = page.getByRole("alert");
+    await expect.element(alert).toHaveTextContent("Could not load alternate titles.");
+    await expect.element(alert).toHaveTextContent(explanation);
+    await expect.element(alert).not.toHaveTextContent(savedCursor);
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(savedCursor);
+    await expect.element(page.getByRole("button", { name: "Restart alternate-title review" })).toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Restart alternate-title review" }));
     await expect.element(page.getByText("No alternate titles found")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();

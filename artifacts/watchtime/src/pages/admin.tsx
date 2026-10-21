@@ -1208,6 +1208,7 @@ function ContentTab({
     data: aliasesPage,
     isLoading: aliasesLoading,
     isError: aliasesError,
+    error: aliasesLoadError,
     isFetching: aliasesFetching,
     refetch: retryAliases,
   } = useListAdminContentAliases({
@@ -1997,6 +1998,7 @@ function ContentTab({
         hasAliasCursor={aliasCursor !== null}
         isLoading={aliasesLoading}
         isError={aliasesError}
+        loadError={aliasesLoadError}
         isFetching={aliasesFetching}
         onRetry={() => void retryAliases()}
         ownership={aliasOwnership}
@@ -2012,6 +2014,24 @@ function ContentTab({
   );
 }
 
+function getAliasReviewLoadExplanation(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("data" in error)) return undefined;
+  const data = (error as { data?: unknown }).data;
+  if (!data || typeof data !== "object" || !("error" in data)) return undefined;
+
+  switch ((data as { error?: unknown }).error) {
+    case "Invalid alias snapshot cursor":
+    case "Invalid alias snapshot offset":
+      return "The saved page link is invalid, so this review cannot resume. Restart the review to load page 1.";
+    case "Alias snapshot cursor does not match the active filters":
+      return "The saved page was created with different search or ownership filters. Restart the review to load page 1 with the current filters.";
+    case "This alias review snapshot expired. Restart the search.":
+      return "The saved review has expired. Restart the search to load the current results.";
+    default:
+      return undefined;
+  }
+}
+
 export function AliasReview({
   aliases,
   q = "",
@@ -2024,6 +2044,7 @@ export function AliasReview({
   hasAliasCursor = false,
   isLoading,
   isError,
+  loadError,
   isFetching,
   onRetry,
   ownership,
@@ -2046,6 +2067,7 @@ export function AliasReview({
   hasAliasCursor?: boolean;
   isLoading: boolean;
   isError: boolean;
+  loadError?: unknown;
   isFetching: boolean;
   onRetry: () => void;
   ownership: ListAdminContentAliasesOwnership | "all";
@@ -2062,6 +2084,7 @@ export function AliasReview({
   const qc = useQueryClient();
   const { toast } = useToast();
   const linkedRowRef = React.useRef<HTMLTableRowElement>(null);
+  const loadExplanation = getAliasReviewLoadExplanation(loadError);
   const [isExporting, setIsExporting] = useState(false);
   const [savedAliasPreviewState, setSavedAliasPreviewState] = useState<{
     alias: AdminContentAlias;
@@ -2802,7 +2825,7 @@ export function AliasReview({
         <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
           <p className="font-medium text-foreground">Could not load alternate titles.</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            The alternate-title request failed. Try again to review these aliases.
+            {loadExplanation ?? "The alternate-title request failed. Try again to review these aliases."}
           </p>
           {hasAliasCursor && (
             <Button
