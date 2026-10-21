@@ -27,6 +27,7 @@ import {
   scheduleCatalogRefresh,
   startCatalogRefresh,
 } from "./lib/catalog-refresh";
+import { logger } from "./lib/logger";
 
 const testImdb = "tt9990001";
 const wikipediaSuccessImdb = "tt9990003";
@@ -1002,6 +1003,66 @@ describe("real catalog sync", () => {
       }
     },
   );
+
+  it("keeps one five-minute retry pending when enqueue and recovery repeatedly fail", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn(() => {
+      throw new Error("Provider requests must not run during an enqueue outage");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const retryDelay = 5 * 60 * 1000;
+    const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+      delay === WEEK_MS || delay === retryDelay
+        ? [{
+            fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+            delay,
+            timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+          }]
+        : []);
+    try {
+      await scheduleCatalogRefresh(WEEK_MS);
+      expect(refreshTimers()).toHaveLength(1);
+      const pendingTimers = vi.getTimerCount();
+      const enqueueFailure = new Error("Database unavailable while enqueueing");
+      const recoveryFailure = new Error("Database unavailable while recovering");
+      const insertSpy = vi.spyOn(db, "insert").mockImplementation(() => {
+        throw enqueueFailure;
+      });
+      const recoverySpy = vi.spyOn(pool, "connect").mockRejectedValue(recoveryFailure);
+      warnSpy.mockClear();
+
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const current = refreshTimers().at(-1)!;
+        // Simulate expiration without advancing a week or five minutes, and
+        // remove the fired fake timer just as the real event loop would.
+        clearTimeout(current.timer);
+        current.fire();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(insertSpy).toHaveBeenCalledTimes(attempt);
+        expect(recoverySpy).toHaveBeenCalledTimes(attempt);
+        expect(errorSpy).toHaveBeenCalledTimes(attempt);
+        expect(errorSpy).toHaveBeenLastCalledWith(
+          { err: enqueueFailure }, "unable to start scheduled catalog refresh",
+        );
+        expect(warnSpy).toHaveBeenCalledTimes(attempt);
+        expect(warnSpy).toHaveBeenLastCalledWith(
+          { err: recoveryFailure }, "unable to recover interrupted catalog refreshes",
+        );
+        expect(refreshTimers()).toHaveLength(attempt + 1);
+        expect(refreshTimers().at(-1)?.delay).toBe(retryDelay);
+        expect(vi.getTimerCount()).toBe(pendingTimers);
+        expect(fetchMock).not.toHaveBeenCalled();
+      }
+    } finally {
+      vi.clearAllTimers();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
 
   it("keeps only one pending refresh when scheduling is initialized twice", async () => {
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
