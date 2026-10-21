@@ -11,7 +11,7 @@ const mockUseQueryForTitle = { current: false };
 const mockSession = { token: 'session-account-a' };
 const mockTitleRequests: Array<{ id: number; token: string }> = [];
 const mockFetchTitle = jest.fn();
-let mockResolveAccountBTitle: ((title: typeof mockTitle) => void) | undefined;
+const mockResolveTitleByToken: Record<string, (title: typeof mockTitle) => void> = {};
 const mockTitle = {
   id: 456,
   name: 'The selected movie',
@@ -113,7 +113,7 @@ describe('title action sign-in return', () => {
     mockSession.token = 'session-account-a';
     mockTitleRequests.length = 0;
     mockFetchTitle.mockReset();
-    mockResolveAccountBTitle = undefined;
+    Object.keys(mockResolveTitleByToken).forEach((token) => delete mockResolveTitleByToken[token]);
     mockRoute.current = { id: '456' };
     mockTitle.inWatchlist = false;
     mockTitle.watched = false;
@@ -140,15 +140,12 @@ describe('title action sign-in return', () => {
     expect(mockMark).not.toHaveBeenCalled();
   });
 
-  it('hides the previous account watch status and fetches title data with the new session without remounting', async () => {
+  it('keeps title watch status scoped to the active account when rapid switches resolve out of order', async () => {
     mockUseQueryForTitle.current = true;
     mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
-    mockFetchTitle.mockImplementation((id: number, token: string) => {
-      if (token === 'session-account-a') {
-        return { ...mockTitle, inWatchlist: true, watched: true };
-      }
+    mockFetchTitle.mockImplementation((_id: number, token: string) => {
       return new Promise((resolve) => {
-        mockResolveAccountBTitle = resolve;
+        mockResolveTitleByToken[token] = resolve;
       });
     });
     const client = new QueryClient({
@@ -161,32 +158,68 @@ describe('title action sign-in return', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('In Watchlist')).toBeTruthy();
-      expect(screen.getByText('Watched')).toBeTruthy();
+      expect(mockTitleRequests).toContainEqual({ id: 456, token: 'session-account-a' });
+      expect(mockResolveTitleByToken['session-account-a']).toEqual(expect.any(Function));
     });
-    expect(mockTitleRequests).toContainEqual({ id: 456, token: 'session-account-a' });
 
-    mockSession.token = 'session-account-b';
-    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-b' };
+    const switchAccount = async (userId: string, token: string) => {
+      mockSession.token = token;
+      mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId };
+      await act(async () => {
+        screen.rerender(
+          <QueryClientProvider client={client}>
+            <TitleDetailScreen />
+          </QueryClientProvider>,
+        );
+      });
+      await waitFor(() => {
+        expect(mockTitleRequests).toContainEqual({ id: 456, token });
+        expect(mockResolveTitleByToken[token]).toEqual(expect.any(Function));
+      });
+      expect(screen.queryByText('In Watchlist')).toBeNull();
+      expect(screen.queryByText('Watched')).toBeNull();
+    };
+
+    await switchAccount('account-b', 'session-account-b');
+    await switchAccount('account-c', 'session-account-c');
+
+    expect(mockTitleRequests).toEqual([
+      { id: 456, token: 'session-account-a' },
+      { id: 456, token: 'session-account-b' },
+      { id: 456, token: 'session-account-c' },
+    ]);
+
     await act(async () => {
-      screen.rerender(
-        <QueryClientProvider client={client}>
-          <TitleDetailScreen />
-        </QueryClientProvider>,
-      );
+      mockResolveTitleByToken['session-account-c']?.({
+        ...mockTitle,
+        inWatchlist: false,
+        watched: true,
+      });
     });
-
-    expect(screen.queryByText('In Watchlist')).toBeNull();
-    expect(screen.queryByText('Watched')).toBeNull();
-    await waitFor(() => {
-      expect(mockTitleRequests).toContainEqual({ id: 456, token: 'session-account-b' });
-    });
-
-    mockResolveAccountBTitle?.({ ...mockTitle, inWatchlist: false, watched: false });
     await waitFor(() => {
       expect(screen.getByText('Watchlist')).toBeTruthy();
-      expect(screen.getByText('Mark watched')).toBeTruthy();
+      expect(screen.getByText('Watched')).toBeTruthy();
     });
+
+    await act(async () => {
+      mockResolveTitleByToken['session-account-b']?.({
+        ...mockTitle,
+        inWatchlist: true,
+        watched: false,
+      });
+    });
+    await act(async () => {
+      mockResolveTitleByToken['session-account-a']?.({
+        ...mockTitle,
+        inWatchlist: true,
+        watched: true,
+      });
+    });
+
+    expect(screen.getByText('Watchlist')).toBeTruthy();
+    expect(screen.getByText('Watched')).toBeTruthy();
+    expect(screen.queryByText('In Watchlist')).toBeNull();
+    expect(screen.queryByText('Mark watched')).toBeNull();
 
     await screen.unmount();
     client.clear();
