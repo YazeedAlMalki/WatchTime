@@ -6,6 +6,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getListAdminContentAliasesQueryKey } from "@workspace/api-client-react";
 import { Toaster } from "@/components/ui/toaster";
 
+const { deleteAliasMutate } = vi.hoisted(() => ({
+  deleteAliasMutate: vi.fn(),
+}));
+
 // Keep the generated alias-list hook and HTTP client intact so retry and
 // ownership/search parameters are checked against real browser requests.
 vi.mock("@workspace/api-client-react", async (importOriginal) => {
@@ -18,13 +22,17 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     useRefreshAdminContent: () => ({ isPending: false, mutate: vi.fn() }),
     useRefreshAdminContentBatch: () => ({ isPending: false, mutate: vi.fn() }),
     useUpdateAdminContentAlias: () => ({ isPending: false, mutate: vi.fn() }),
-    useDeleteAdminContentAlias: () => ({ isPending: false, mutate: vi.fn() }),
+    useDeleteAdminContentAlias: () => ({ isPending: false, mutate: deleteAliasMutate }),
   };
 });
 
 vi.mock("@clerk/react", () => ({ useAuth: () => ({ getToken: async () => null }) }));
 
 import AdminPage from "@/pages/admin";
+
+afterEach(() => {
+  deleteAliasMutate.mockReset();
+});
 
 it("distinguishes an alias-list failure from an empty result and retries the current filters", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
@@ -106,6 +114,108 @@ it("distinguishes an alias-list failure from an empty result and retries the cur
     container.remove();
     client.clear();
     window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("starts a fresh filtered alias page after deleting the last alias on a later page", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174000";
+  const pageCursor = `${snapshotId}:50:0`;
+  window.history.replaceState(
+    {},
+    "",
+    `/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=2&aliasCursor=${pageCursor}`,
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  const firstPageAliases = Array.from({ length: 50 }, (_, index) =>
+    makeAlias(100 + index, `Lighthouse page one alias ${String(index + 1).padStart(2, "0")}`),
+  );
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const isSecondPage = url.searchParams.get("cursor") === pageCursor;
+    const body = isSecondPage
+      ? {
+          items: [makeAlias(151, "Lighthouse final page alias")],
+          total: 51,
+          limit: 50,
+          offset: 50,
+          nextCursor: null,
+          previousCursor: `${snapshotId}:0`,
+        }
+      : {
+          items: firstPageAliases,
+          total: 50,
+          limit: 50,
+          offset: 0,
+          nextCursor: null,
+          previousCursor: null,
+        };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  deleteAliasMutate.mockImplementation(
+    (_variables: unknown, options: { onSuccess?: () => unknown }) => {
+      void options.onSuccess?.();
+    },
+  );
+
+  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 51 matching aliases");
+    await expect.element(page.getByText("Lighthouse final page alias")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Previous aliases" })).toBeEnabled();
+
+    await userEvent.click(page.getByRole("button", { name: "Remove" }));
+    await expect.element(page.getByText("Lighthouse page one alias 01")).toBeVisible();
+    await expect.element(page.getByText("50 aliases")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse final page alias")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Previous aliases" })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Next aliases" })).not.toBeInTheDocument();
+
+    const refreshedRequest = requests.at(-1);
+    expect(refreshedRequest?.searchParams.get("cursor")).toBeNull();
+    expect(refreshedRequest?.searchParams.get("q")).toBe("Lighthouse");
+    expect(refreshedRequest?.searchParams.get("ownership")).toBe("editorial");
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBeNull();
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBeNull();
+    expect(new URLSearchParams(location.search).get("q")).toBe("Lighthouse");
+    expect(new URLSearchParams(location.search).get("ownership")).toBe("editorial");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    confirmSpy.mockRestore();
     window.history.replaceState({}, "", previousUrl);
   }
 });
@@ -374,6 +484,8 @@ it("keeps filtered alias continuation stable when matching records change betwee
 it("keeps the selected alias page when an older page response finishes late", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174001";
+  const nextPageCursor = `${snapshotId}:50:0`;
   const requests: URL[] = [];
   const originalFetch = window.fetch;
   let resolveOlderPage!: (response: Response) => void;
@@ -408,7 +520,7 @@ it("keeps the selected alias page when an older page response finishes late", as
     total: 2,
     limit: 50,
     offset: 0,
-    nextCursor: "after-401",
+    nextCursor: nextPageCursor,
     previousCursor: null,
   };
   const responseFor = (body: typeof firstPage) => new Response(JSON.stringify(body), {
@@ -421,13 +533,13 @@ it("keeps the selected alias page when an older page response finishes late", as
       throw new Error(`Unexpected browser test request: ${url}`);
     }
     requests.push(url);
-    if (url.searchParams.get("cursor") === "after-401") {
+    if (url.searchParams.get("cursor") === nextPageCursor) {
       return Promise.resolve(responseFor({
         ...firstPage,
         items: [makeAlias(402, "Second page alias")],
         offset: 50,
         nextCursor: null,
-        previousCursor: "before-402",
+        previousCursor: `${snapshotId}:0`,
       }));
     }
     markOlderPageRequested();
@@ -450,7 +562,7 @@ it("keeps the selected alias page when an older page response finishes late", as
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
     await expect.element(page.getByText("Page 2 · 2 matching aliases")).toBeVisible();
     await expect.element(page.getByText("Second page alias")).toBeVisible();
-    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("after-401");
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(nextPageCursor);
 
     resolveOlderPage(responseFor(firstPage));
     await olderPageCompleted;

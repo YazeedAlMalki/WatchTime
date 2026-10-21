@@ -2457,6 +2457,9 @@ export function AliasReview({
               };
             },
           );
+          // Cursor pages use a fixed snapshot. Start a fresh one so its total
+          // and navigation reflect the deletion instead of the old snapshot.
+          onAliasPageChange(1, null);
           if (editingId === alias.id) setEditingId(null);
           setRemovedAliasPreviews((current) =>
             current.some((removedAlias) => removedAlias.id === alias.id)
