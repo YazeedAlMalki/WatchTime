@@ -192,6 +192,7 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl("?tab=content&region=GB&malformedRefreshTimestamp=true&offset=-1").contentOffset).toBe(0);
     expect(readAdminContentUrl("?tab=content&region=GB&malformedRefreshTimestamp=true&offset=1.5").contentOffset).toBe(0);
 
+    // Match the Content search handler, which explicitly resets pagination.
     const changedSearch = adminContentUrl(
       new URL(pageTwo, "https://example.test").search,
       "content",

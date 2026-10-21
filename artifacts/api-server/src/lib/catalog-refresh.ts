@@ -110,8 +110,18 @@ async function executeRun(runId: number, items: SourceItem[]) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error({ err: error, runId }, "catalog refresh failed");
     try {
-      await db.update(catalogSyncRunsTable).set({ status: "failed", error: message, finishedAt: new Date() })
-        .where(eq(catalogSyncRunsTable.id, runId));
+      // Keep the run and its retryable titles consistent if recording the
+      // failure also encounters an outage. Completed title results stay intact.
+      await db.transaction(async (tx) => {
+        const finishedAt = new Date();
+        await tx.update(catalogSyncRunsTable).set({ status: "failed", error: message, finishedAt })
+          .where(eq(catalogSyncRunsTable.id, runId));
+        await tx.update(catalogSyncItemsTable).set({ status: "failed", error: message, finishedAt })
+          .where(and(
+            eq(catalogSyncItemsTable.runId, runId),
+            inArray(catalogSyncItemsTable.status, ["queued", "running"]),
+          ));
+      });
     } catch (recordError) {
       logger.error({ err: recordError, runId }, "unable to record catalog refresh failure");
     }

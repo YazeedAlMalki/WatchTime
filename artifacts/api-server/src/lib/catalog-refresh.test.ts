@@ -3,7 +3,8 @@ import { eq, inArray } from "drizzle-orm";
 import { catalogSyncItemsTable, catalogSyncRunsTable, db, pool } from "@workspace/db";
 import * as databaseModule from "@workspace/db";
 import { logger } from "./logger";
-import { pruneCatalogRefreshHistory, recoverInterruptedRuns, startCatalogRefresh, STALE_QUEUED_REFRESH_MS } from "./catalog-refresh";
+import { sourceItems } from "../seed-real";
+import { pruneCatalogRefreshHistory, recoverInterruptedRuns, retryFailedCatalogTitles, startCatalogRefresh, STALE_QUEUED_REFRESH_MS } from "./catalog-refresh";
 
 const runCatalogSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("../seed-real", async (importOriginal) => ({
@@ -68,7 +69,7 @@ describe("pruneCatalogRefreshHistory", () => {
 });
 
 describe("catalog refresh startup failure", () => {
-  it("records and logs a failed startup write without running the sync or rejecting the detached task", async () => {
+  it("makes startup-failed titles retryable after the database recovers without rejecting the detached task", async () => {
     const startupError = new Error("unable to mark refresh running");
     const startupSpy = vi.spyOn(db, "transaction").mockRejectedValueOnce(startupError);
     const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
@@ -77,7 +78,9 @@ describe("catalog refresh startup failure", () => {
     process.on("unhandledRejection", onUnhandledRejection);
 
     try {
-      const runId = await startCatalogRefresh("manual", []);
+      const items = sourceItems.slice(0, 2);
+      expect(items).toHaveLength(2);
+      const runId = await startCatalogRefresh("manual", items);
       createdRunIds.push(runId);
       await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
         { err: startupError, runId }, "catalog refresh failed",
@@ -88,14 +91,93 @@ describe("catalog refresh startup failure", () => {
         expect(run.status).toBe("failed");
         expect(run.error).toBe(startupError.message);
         expect(run.finishedAt).toBeInstanceOf(Date);
+        const failedItems = await db.select().from(catalogSyncItemsTable)
+          .where(eq(catalogSyncItemsTable.runId, runId));
+        expect(failedItems).toHaveLength(items.length);
+        for (const item of failedItems) {
+          expect(item.status).toBe("failed");
+          expect(item.error).toBe(startupError.message);
+          expect(item.startedAt).toBeNull();
+          expect(item.finishedAt).toEqual(run.finishedAt);
+        }
       });
       expect(runCatalogSyncMock).not.toHaveBeenCalled();
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(unhandledRejections).toEqual([]);
 
+      runCatalogSyncMock.mockImplementationOnce(async (
+        ...[_options, retryItems, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+      ) => {
+        if (!retryItems) throw new Error("Expected explicit retry titles");
+        for (const [index, item] of retryItems.entries()) {
+          await onProgress!({ item, status: "succeeded", attempted: index + 1, succeeded: index + 1, episodes: 0 });
+        }
+        return { selected: retryItems.length, succeeded: retryItems.length, episodes: 0, failures: [] };
+      });
+      const retryRunId = await retryFailedCatalogTitles(runId);
+      expect(retryRunId).not.toBeNull();
+      createdRunIds.push(retryRunId!);
+      await vi.waitFor(async () => {
+        const [retryRun] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, retryRunId!));
+        expect(retryRun).toMatchObject({ trigger: "retry", status: "succeeded", totalItems: 2, succeededItems: 2 });
+      });
+      expect(runCatalogSyncMock).toHaveBeenCalledExactlyOnceWith(
+        { dryRun: false, allowPartial: true }, items, expect.any(Function), false,
+      );
+      const retriedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, retryRunId!));
+      expect(retriedItems.map((item) => item.itemKey).sort()).toEqual(items.map((item) => item.key).sort());
+      expect(retriedItems.every((item) => item.status === "succeeded")).toBe(true);
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
       startupSpy.mockRestore();
+      errorSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+    }
+  });
+
+  it("fails only unfinished titles and preserves completed results when a worker throws", async () => {
+    const syncError = new Error("database disconnected during refresh");
+    const items = sourceItems.slice(0, 4);
+    expect(items).toHaveLength(4);
+    let completedItems: typeof catalogSyncItemsTable.$inferSelect[] = [];
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
+    runCatalogSyncMock.mockImplementationOnce(async (
+      ...[_options, selected, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+    ) => {
+      if (!selected) throw new Error("Expected explicit refresh titles");
+      await onProgress!({ item: selected[0], status: "succeeded", attempted: 1, succeeded: 1, episodes: 5 });
+      await onProgress!({
+        item: selected[1], status: "failed", attempted: 2, succeeded: 1, episodes: 5, error: "original provider error",
+      });
+      await onProgress!({ item: selected[2], status: "running", attempted: 3, succeeded: 1, episodes: 5 });
+      completedItems = await db.select().from(catalogSyncItemsTable)
+        .where(inArray(catalogSyncItemsTable.itemKey, selected.slice(0, 2).map((item) => item.key)));
+      throw syncError;
+    });
+
+    try {
+      const runId = await startCatalogRefresh("manual", items);
+      createdRunIds.push(runId);
+      await vi.waitFor(async () => {
+        const [run] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, runId));
+        expect(run.status).toBe("failed");
+        const results = await db.select().from(catalogSyncItemsTable)
+          .where(eq(catalogSyncItemsTable.runId, runId));
+        expect(results).toHaveLength(4);
+        for (const item of results) {
+          if (items.slice(0, 2).some((source) => source.key === item.itemKey)) {
+            expect(item).toEqual(completedItems.find((completed) => completed.id === item.id));
+          } else {
+            expect(item.status).toBe("failed");
+            expect(item.error).toBe(syncError.message);
+            expect(item.finishedAt).toEqual(run.finishedAt);
+          }
+        }
+      });
+    } finally {
       errorSpy.mockRestore();
       runCatalogSyncMock.mockReset();
     }
@@ -156,10 +238,9 @@ describe("catalog refresh startup failure", () => {
   it("logs both errors if recording the startup failure also fails", async () => {
     const startupError = new Error("unable to mark refresh running");
     const recordError = new Error("unable to mark refresh failed");
-    const startupSpy = vi.spyOn(db, "transaction").mockRejectedValueOnce(startupError);
-    const updateSpy = vi.spyOn(db, "update").mockReturnValueOnce({
-      set: () => ({ where: () => Promise.reject(recordError) }),
-    } as unknown as ReturnType<typeof db.update>);
+    const startupSpy = vi.spyOn(db, "transaction")
+      .mockRejectedValueOnce(startupError)
+      .mockRejectedValueOnce(recordError);
     const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
     const unhandledRejections: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
@@ -192,7 +273,6 @@ describe("catalog refresh startup failure", () => {
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
       startupSpy.mockRestore();
-      updateSpy.mockRestore();
       errorSpy.mockRestore();
       runCatalogSyncMock.mockReset();
     }

@@ -25,4 +25,4 @@ Completion can reconcile newer main changes before running validation.
 
 **Why:** A passing local test run can precede a changed test tree with displaced assertions or out-of-scope variables.
 
-**How to apply:** If submission reports different test counts or failures than the local run, compare the resulting current files with main and repair the reconciled test scopes rather than treating the failure as flaky.
+**How to apply:** If submission reports different test counts or failures than the local run, compare the resulting current files with main and repair the reconciled test scopes rather than treating the failure as flaky. Recover verified task-specific blocks without dropping independent incoming tests, then rerun the focused suite and typecheck.
