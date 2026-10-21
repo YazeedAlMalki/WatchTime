@@ -428,7 +428,7 @@ paths:
       operationId: getMyShows
       tags: [tracking]
       summary: Tracked shows with progress and next episode to watch
-      description: Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh. Optional q searches canonical and supported alternate/local titles case-insensitively, and status filters shows with or without a next episode before pagination.
+      description: Ordered by descending, immutable title ID. Pass the last title ID as beforeId for the next page. Progress or membership changes cannot shift the page boundary; newly added titles above it appear on refresh. Optional q searches canonical and supported alternate/local titles case-insensitively, and status filters shows with or without a next episode before pagination. Results include matchedAlternateTitle when q matches an alternate/local title but not the canonical title; it is null otherwise.
       parameters:
         - name: limit
           in: query
@@ -1533,12 +1533,13 @@ components:
         includePrevious: { type: boolean }
     TrackedShow:
       type: object
-      required: [title, watchedEpisodes, totalEpisodes]
+      required: [title, watchedEpisodes, totalEpisodes, matchedAlternateTitle]
       properties:
         title:
           $ref: "#/components/schemas/Title"
         watchedEpisodes: { type: integer }
         totalEpisodes: { type: integer }
+        matchedAlternateTitle: { type: ["string", "null"] }
         nextEpisode:
           oneOf:
             - $ref: "#/components/schemas/Episode"

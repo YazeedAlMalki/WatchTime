@@ -243,6 +243,20 @@ for (const [path, inProgressOnly] of [
   const searchPattern = search
     ? `%${search.replace(/[\\%_]/g, "\\$&")}%`
     : undefined;
+  const matchedAlternateTitle = searchPattern
+    ? sql<string | null>`(
+        select ${titleAliasesTable.alias}
+        from ${titleAliasesTable}
+        where ${titleAliasesTable.titleId} = ${titlesTable.id}
+          and ${titleAliasesTable.alias} ilike ${searchPattern}
+          and ${titlesTable.name} not ilike ${searchPattern}
+        order by
+          case when lower(${titleAliasesTable.alias}) = lower(${search}) then 0 else 1 end,
+          length(${titleAliasesTable.alias}),
+          ${titleAliasesTable.id}
+        limit 1
+      )`
+    : sql<string | null>`null`;
   setPrivateCollectionCache(res);
 
   const watchedCounts = db
@@ -276,6 +290,7 @@ for (const [path, inProgressOnly] of [
       title: titlesTable,
       watchedEpisodes: sql<number>`coalesce(${watchedCounts.watchedEpisodes}, 0)::int`,
       totalEpisodes,
+      matchedAlternateTitle,
       nextEpisodeId: sql<number | null>`(
         select e.id from ${episodesTable} e
         where e.title_id = ${titlesTable.id}
@@ -327,6 +342,7 @@ for (const [path, inProgressOnly] of [
     title: toTitleJson(row.title, { inWatchlist: undefined, watched: true }),
     watchedEpisodes: row.watchedEpisodes,
     totalEpisodes: row.totalEpisodes,
+    matchedAlternateTitle: row.matchedAlternateTitle,
     nextEpisode: row.nextEpisodeId == null
       ? null
       : toEpisodeJson(nextById.get(row.nextEpisodeId)!, false),

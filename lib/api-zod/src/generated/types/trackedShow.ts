@@ -12,5 +12,7 @@ export interface TrackedShow {
   title: Title;
   watchedEpisodes: number;
   totalEpisodes: number;
+  /** @nullable */
+  matchedAlternateTitle: string | null;
   nextEpisode?: Episode | null;
 }

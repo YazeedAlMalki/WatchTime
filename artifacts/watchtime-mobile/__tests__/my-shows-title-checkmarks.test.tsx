@@ -105,6 +105,7 @@ jest.mock('@workspace/api-client-react', () => {
       if (params?.q?.toLowerCase() === 'local title') {
         return [{
           title: { id: 43, name: 'Different Canonical Name' },
+          matchedAlternateTitle: 'Local Title',
           nextEpisode: null,
           totalEpisodes: 1,
           watchedEpisodes: 1,
@@ -113,11 +114,13 @@ jest.mock('@workspace/api-client-react', () => {
       const nextEpisode = mockEpisodes.find((episode) => !mockWatched.has(episode.id)) ?? null;
       const shows = [{
         title: { id: 42, name: 'Example Show' },
+        matchedAlternateTitle: null,
         nextEpisode: nextEpisode ? { ...nextEpisode } : null,
         totalEpisodes: 4,
         watchedEpisodes: mockEpisodes.filter((ep) => mockWatched.has(ep.id)).length,
       }, {
         title: { id: 44, name: 'Other Show' },
+        matchedAlternateTitle: null,
         nextEpisode: mockOtherEpisodes.find((ep) => !mockWatched.has(ep.id)) ?? null,
         totalEpisodes: mockOtherEpisodes.length,
         watchedEpisodes: mockOtherEpisodes.filter((ep) => mockWatched.has(ep.id)).length,
@@ -214,8 +217,43 @@ function deferredMarkResponse() {
   return { promise, resolve, reject };
 }
 
+it('shows the matching alternate title beneath the canonical show title', async () => {
+  mockWatched.clear();
+  mockRouter.push.mockClear();
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const api = require('@workspace/api-client-react');
+  api.getMyShows.mockClear();
+  const shows = await render(
+    <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
+  );
+
+  await waitFor(() => expect(shows.getByTestId('show-row-42')).toBeTruthy());
+  fireEvent.changeText(shows.getByTestId('shows-search-input'), 'Example');
+  await waitFor(() => {
+    expect(api.getMyShows).toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'Example' }),
+      expect.anything(),
+    );
+  });
+  expect(shows.queryByText(/^Matched:/)).toBeNull();
+
+  fireEvent.changeText(shows.getByTestId('shows-search-input'), 'Local Title');
+  await waitFor(() => {
+    expect(shows.getByText('Different Canonical Name')).toBeTruthy();
+    expect(shows.getByText('Matched: Local Title')).toBeTruthy();
+  });
+  fireEvent.press(shows.getByTestId('show-row-43'));
+  expect(mockRouter.push).toHaveBeenCalledWith('/title/43');
+});
+
 it('isolates a failed Up Next mark from another show and refreshes caches after retry', async () => {
   mockWatched.clear();
+  mockRouter.push.mockClear();
   mockWatched.add(101);
   mockWatched.add(102);
   const client = new QueryClient({

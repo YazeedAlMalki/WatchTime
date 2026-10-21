@@ -163,6 +163,11 @@ function ShowRow({ show }: { show: TrackedShow }) {
         <Text numberOfLines={1} style={{ color: c.foreground, fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>
           {show.title.name}
         </Text>
+        {show.matchedAlternateTitle ? (
+          <Text numberOfLines={1} style={{ color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
+            Matched: {show.matchedAlternateTitle}
+          </Text>
+        ) : null}
 
         {/* Progress bar */}
         <View>

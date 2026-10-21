@@ -115,18 +115,21 @@ describe("tracked show search by canonical and alternate titles", () => {
       .query({ q: "sHaReD", limit: 1 });
     expect(firstPage.status).toBe(200);
     expect(getShowIds(firstPage)).toEqual([titleIds[2]]);
+    expect(firstPage.body[0].matchedAlternateTitle).toBe("Shared Local Title");
 
     const secondPage = await supertest(app)
       .get("/api/me/shows")
       .query({ q: "shared", limit: 1, beforeId: titleIds[2] });
     expect(secondPage.status).toBe(200);
     expect(getShowIds(secondPage)).toEqual([titleIds[1]]);
+    expect(secondPage.body[0].matchedAlternateTitle).toBe("Shared Local Title");
 
     const thirdPage = await supertest(app)
       .get("/api/me/shows")
       .query({ q: "shared", limit: 1, beforeId: titleIds[1] });
     expect(thirdPage.status).toBe(200);
     expect(getShowIds(thirdPage)).toEqual([titleIds[0]]);
+    expect(thirdPage.body[0].matchedAlternateTitle).toBeNull();
     expect(new Set([
       ...getShowIds(firstPage),
       ...getShowIds(secondPage),
@@ -137,6 +140,13 @@ describe("tracked show search by canonical and alternate titles", () => {
       .get("/api/me/shows")
       .query({ q: "canonical" });
     expect(getShowIds(canonicalMatch)).toEqual([titleIds[0]]);
+    expect(canonicalMatch.body[0].matchedAlternateTitle).toBeNull();
+
+    const specificAlternateMatch = await supertest(app)
+      .get("/api/me/shows")
+      .query({ q: "Another Shared Regional Name" });
+    expect(getShowIds(specificAlternateMatch)).toEqual([titleIds[1]]);
+    expect(specificAlternateMatch.body[0].matchedAlternateTitle).toBe("Another Shared Regional Name");
 
     const upNextFirstPage = await supertest(app)
       .get("/api/me/shows")
