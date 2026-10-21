@@ -281,6 +281,47 @@ describe("catalog refresh startup failure", () => {
 
 
 describe("catalog refresh recovery", () => {
+  it("propagates a rejected recovery transaction and releases its catalog lock and client", async () => {
+    // Reserve both sessions up front: a lock is reentrant on its owning session,
+    // so probing with a client returned by recovery could hide a leaked lock.
+    const lockProbe = await pool.connect();
+    try {
+      const recoveryClient = await pool.connect();
+      // Retain the session until cleanup so even a missing unlock cannot leak
+      // a session-level lock into later tests through the pool.
+      const releaseSpy = vi.spyOn(recoveryClient, "release").mockImplementation(() => {});
+      const connectSpy = vi.spyOn(pool, "connect").mockImplementationOnce(() => Promise.resolve(recoveryClient));
+      const recoveryError = new Error("recovery transaction rejected");
+      const transactionSpy = vi.spyOn(db, "transaction").mockRejectedValueOnce(recoveryError);
+
+      try {
+        await expect(recoverInterruptedRuns()).rejects.toBe(recoveryError);
+        expect(transactionSpy).toHaveBeenCalledTimes(1);
+        expect(releaseSpy).toHaveBeenCalledTimes(1);
+
+        const catalogLock = await lockProbe.query<{ locked: boolean }>(
+          "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+        );
+        expect(catalogLock.rows[0].locked).toBe(true);
+      } finally {
+        transactionSpy.mockRestore();
+        connectSpy.mockRestore();
+        releaseSpy.mockRestore();
+        try {
+          await recoveryClient.query("select pg_advisory_unlock_all()");
+        } finally {
+          recoveryClient.release();
+        }
+      }
+    } finally {
+      try {
+        await lockProbe.query("select pg_advisory_unlock_all()");
+      } finally {
+        lockProbe.release();
+      }
+    }
+  });
+
   it("rolls back a midway title-update failure, releases recovery locks, and recovers on retry", async () => {
     const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
     const staleAt = new Date(cutoff.getTime() - 1_000);
