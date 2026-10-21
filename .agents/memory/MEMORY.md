@@ -30,7 +30,7 @@
 - [Proxied rate-limit checks](proxied-rate-limit-checks.md) — shared preview proxy may replace a supplied forwarded IP; isolate live counter checks from normal preview traffic.
 - [Mobile cross-screen cache tests](mobile-cross-screen-cache-tests.md) — seed inactive season queries with infinite staleness and verify cross-screen invalidation through a shared query client.
 - [Expo feed mock updates](expo-feed-mock-updates.md) — for changing mocked query results, notify subscribers; parent rerenders may leave feed children unchanged.
-- [Expo Home test remounts](expo-home-test-remounts.md) — in Home feed tests, separate render after cleanup can produce an empty tree; assert state transitions in one mount.
+- [Expo screen test remounts](expo-home-test-remounts.md) — Home and My Shows can render empty in a subsequent test; verify related state transitions in one mount.
 - [Account-scoped mobile query caches](account-scoped-mobile-query-cache.md) — scope personal query keys to the active auth identity; request URLs alone do not distinguish users.
 - [Precise test patches](precise-test-patches.md) — use unique surrounding context when tests repeat, then inspect the full diff before validation.
 - [Targeted API Vitest runs](vitest-targeted-api-tests.md) — use direct `vitest run <path>` execution to isolate one API test file.

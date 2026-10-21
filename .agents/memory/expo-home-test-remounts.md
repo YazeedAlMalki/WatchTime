@@ -1,10 +1,10 @@
 ---
-name: Expo Home test remounts
-description: React Native Home feed test behavior across cleanup and second renders
+name: Expo screen test remounts
+description: React Native screen test behavior across cleanup and subsequent renders
 ---
 
-In the Home feed test harness, a second test rendering the screen after cleaning up the first rendered an empty fragment; startup animation frames were not scheduled. The same scenario passed in isolation.
+In the Home feed and My Shows test harnesses, a second test rendering the screen after cleaning up the first rendered an empty fragment. The same scenario passed in isolation. In Home, startup animation frames were not scheduled; My Shows reproduces the issue without that startup gate.
 
-**Why:** Split first-load and background-refresh cases failed only when run together; the second render had zero queued startup frames, despite the first passing. Combining transitions in one mounted screen gave stable coverage without bypassing the real startup gate.
+**Why:** Separate screen scenarios can pass alone but fail when run together due to test-renderer remount behavior, rather than application behavior. Changing manual unmounts to awaited cleanup did not resolve the My Shows case. Combining transitions in one mounted screen gives stable coverage without replacing real query lifecycles.
 
-**How to apply:** When testing Home feed transitions, notify the existing query mock subscribers while keeping the screen mounted. If splitting tests into separate mounts, first confirm the startup frame scheduling and renderer cleanup work across tests.
+**How to apply:** Prefer one mounted screen for related state transitions, driving real queries or notifying query-mock subscribers. If splitting tests into separate mounts, confirm the cases pass together, not just in isolation. Do not assume an empty subsequent render proves an application startup bug.
