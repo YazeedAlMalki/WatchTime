@@ -6,6 +6,8 @@ let mockWatched = false;
 let mockTitleIsMovie = false;
 let mockMovieWatched = false;
 const mockActivityFetch = jest.fn();
+const mockShowsFetch = jest.fn();
+const mockInProgressFetch = jest.fn();
 const mockMovieFetch = jest.fn();
 const mockMarkRequest = jest.fn();
 const mockUnmarkRequest = jest.fn();
@@ -22,7 +24,16 @@ const mockMovie = {
   genres: [], altTitles: [], providers: [], watched: true,
   collectionCursor: '2026-10-18T00:00:00.000Z:42',
 };
-const mockSeason = { seasonNumber: 1, name: 'Season 1', episodeCount: 1 };
+const mockSeason = { seasonNumber: 1, name: 'Season 1', episodeCount: 2 };
+const mockShows = () => mockTitleIsMovie ? [] : [{
+  title: { id: 42, name: 'Example Show' },
+  totalEpisodes: 2, watchedEpisodes: Number(mockWatched),
+  nextEpisode: {
+    id: mockWatched ? 102 : 101, seasonNumber: 1,
+    episodeNumber: mockWatched ? 2 : 1, name: mockWatched ? 'Second' : 'Pilot',
+  },
+}];
+const mockInProgress = () => mockWatched ? mockShows() : [];
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
@@ -62,8 +73,8 @@ jest.mock('@/hooks/useColors', () => ({
 }));
 jest.mock('@/constants/colors', () => ({ __esModule: true, default: { radius: 8 } }));
 
-// Keep React Query real: infinitely fresh, inactive account-scoped activity must
-// be invalidated by the title screen before My Shows can fetch the changed feed.
+// Keep React Query real: infinitely fresh, inactive account-scoped collection
+// and activity queries must be invalidated before My Shows can fetch new data.
 jest.mock('@workspace/api-client-react', () => {
   const { useQuery, useMutation } = require('@tanstack/react-query');
   const titleKey = (id: number) => [`/api/titles/${id}`];
@@ -136,7 +147,14 @@ jest.mock('@workspace/api-client-react', () => {
         onSuccess: options.mutation.onSuccess,
       }),
     useAddToWatchlist: idleMutation, useRemoveFromWatchlist: idleMutation,
-    getMyShows: async () => [], getMyInProgressShows: async () => [],
+    getMyShows: async () => {
+      mockShowsFetch();
+      return mockShows();
+    },
+    getMyInProgressShows: async () => {
+      mockInProgressFetch();
+      return mockInProgress();
+    },
     getMyMovies: async () => {
       mockMovieFetch();
       return mockMovieWatched ? [mockMovie] : [];
@@ -156,12 +174,16 @@ jest.mock('@workspace/api-client-react', () => {
 
 import TitleDetailScreen from '../app/title/[id]';
 import MyShowsScreen from '../app/(tabs)/my-shows';
-import { getGetMyRecentActivityQueryKey } from '@workspace/api-client-react';
+import {
+  getGetMyShowsQueryKey,
+  getGetMyInProgressShowsQueryKey,
+  getGetMyRecentActivityQueryKey,
+} from '@workspace/api-client-react';
 
 it.each([
   { action: 'mark', initiallyWatched: false },
   { action: 'unmark', initiallyWatched: true },
-])('refreshes cached My Shows History after $action from title detail', async ({ initiallyWatched }) => {
+])('refreshes account-scoped My Shows progress and History after $action from title detail', async ({ initiallyWatched }) => {
   mockTitleIsMovie = false;
   mockMovieWatched = false;
   mockWatched = initiallyWatched;
@@ -173,24 +195,42 @@ it.each([
     },
   });
   const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
+  const showsKey = [
+    ...getGetMyShowsQueryKey(), 'account', 'activity-user', 'infinite',
+    { q: undefined, status: undefined },
+  ];
+  const inProgressKey = [
+    ...getGetMyInProgressShowsQueryKey(), 'account', 'activity-user', 'infinite',
+  ];
+  const infiniteData = (rows: unknown[]) => ({ pages: [rows], pageParams: [undefined] });
   client.setQueryData(activityKey, mockActivity());
+  client.setQueryData(showsKey, infiniteData(mockShows()));
+  client.setQueryData(inProgressKey, infiniteData(mockInProgress()));
   const oldActivity = client.getQueryData(activityKey);
+  const oldShows = client.getQueryData(showsKey);
+  const oldInProgress = client.getQueryData(inProgressKey);
   const detail = await render(
     <QueryClientProvider client={client}><TitleDetailScreen /></QueryClientProvider>,
   );
   await waitFor(() => expect(detail.getByTestId('season-1')).toBeTruthy());
-  fireEvent.press(detail.getByTestId('season-1'));
+  await fireEvent.press(detail.getByTestId('season-1'));
   await waitFor(() => expect(detail.getByTestId('episode-check-101')).toBeTruthy());
-  fireEvent.press(detail.getByTestId('episode-check-101'));
+  await fireEvent.press(detail.getByTestId('episode-check-101'));
   await waitFor(() => {
     expect(mockWatched).toBe(!initiallyWatched);
     expect(client.getQueryState(activityKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(showsKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(inProgressKey)?.isInvalidated).toBe(true);
   });
   expect(initiallyWatched ? mockUnmarkRequest : mockMarkRequest).toHaveBeenCalledWith(
     initiallyWatched ? { episodeId: 101 } : { episodeId: 101, data: {} },
   );
   expect(mockActivityFetch).not.toHaveBeenCalled();
+  expect(mockShowsFetch).not.toHaveBeenCalled();
+  expect(mockInProgressFetch).not.toHaveBeenCalled();
   expect(client.getQueryData(activityKey)).toEqual(oldActivity);
+  expect(client.getQueryData(showsKey)).toEqual(oldShows);
+  expect(client.getQueryData(inProgressKey)).toEqual(oldInProgress);
   await act(async () => detail.unmount());
 
   const shows = await render(
@@ -199,8 +239,16 @@ it.each([
   await waitFor(() => {
     expect(mockActivityFetch).toHaveBeenCalledTimes(1);
     expect(client.getQueryData(activityKey)).toEqual(mockActivity());
+    expect(mockShowsFetch).toHaveBeenCalledTimes(1);
+    expect(mockInProgressFetch).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(showsKey)).toEqual(infiniteData(mockShows()));
+    expect(client.getQueryData(inProgressKey)).toEqual(infiniteData(mockInProgress()));
   });
-  fireEvent.press(shows.getByTestId('tab-history'));
+  await waitFor(() => {
+    expect(shows.getByText(`${Number(mockWatched)} / 2 episodes`)).toBeTruthy();
+    expect(shows.getByTestId(`mark-watched-${mockWatched ? 102 : 101}`)).toBeTruthy();
+  });
+  await fireEvent.press(shows.getByTestId('tab-history'));
   await waitFor(() => {
     if (initiallyWatched) {
       expect(shows.queryByTestId('history-item-42')).toBeNull();

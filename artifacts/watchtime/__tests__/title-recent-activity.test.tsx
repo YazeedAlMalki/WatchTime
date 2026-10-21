@@ -4,6 +4,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";
 import {
   getGetMyMoviesQueryKey,
+  getGetMyShowsQueryKey,
+  getGetMyInProgressShowsQueryKey,
   getGetMyRecentActivityQueryKey,
 } from "@workspace/api-client-react";
 import TitleDetailPage from "../src/pages/title-detail";
@@ -15,6 +17,8 @@ const server = vi.hoisted(() => ({
   movieWatched: false,
   activityFetch: vi.fn(),
   movieFetch: vi.fn(),
+  showsFetch: vi.fn(),
+  inProgressFetch: vi.fn(),
   mark: vi.fn(),
   unmark: vi.fn(),
   markTitle: vi.fn(),
@@ -31,6 +35,16 @@ const movie = {
   genres: [], altTitles: [], providers: [], watched: true,
   collectionCursor: "2026-10-18T00:00:00.000Z:42",
 };
+const shows = () => server.titleIsMovie ? [] : [{
+  title: { id: 42, name: "Example Show", genres: [] },
+  watchedEpisodes: Number(server.watched),
+  totalEpisodes: 2,
+  nextEpisode: {
+    id: server.watched ? 102 : 101, seasonNumber: 1,
+    episodeNumber: server.watched ? 2 : 1, name: server.watched ? "Second" : "Pilot",
+  },
+}];
+const inProgress = () => server.watched ? shows() : [];
 
 vi.mock("wouter", () => ({
   useParams: () => ({ id: "42" }),
@@ -54,7 +68,7 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
           type: server.titleIsMovie ? "movie" : "series",
           genres: [], providers: [], altTitles: [],
           watched: server.movieWatched,
-          seasons: server.titleIsMovie ? [] : [{ seasonNumber: 1, name: "Season 1", episodeCount: 1 }],
+          seasons: server.titleIsMovie ? [] : [{ seasonNumber: 1, name: "Season 1", episodeCount: 2 }],
       },
       isLoading: false,
     }),
@@ -95,8 +109,14 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
         return { ok: true };
       },
     }),
-    getMyShows: async () => [],
-    getMyInProgressShows: async () => [],
+    getMyShows: async () => {
+      server.showsFetch();
+      return shows();
+    },
+    getMyInProgressShows: async () => {
+      server.inProgressFetch();
+      return inProgress();
+    },
     getMyMovies: async () => {
       server.movieFetch();
       return server.movieWatched ? [movie] : [];
@@ -127,15 +147,22 @@ afterEach(() => {
   server.movieWatched = false;
 });
 
-it.each([false, true])("refreshes cached web History when initially watched is %s", async (initiallyWatched) => {
+it.each([false, true])("refreshes cached web show progress and History when initially watched is %s", async (initiallyWatched) => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   server.watched = initiallyWatched;
   const client = new QueryClient({
     defaultOptions: { queries: { staleTime: Infinity, retry: false }, mutations: { retry: false } },
   });
   const key = getGetMyRecentActivityQueryKey();
+  const showsKey = [...getGetMyShowsQueryKey(), "infinite"];
+  const inProgressKey = [...getGetMyInProgressShowsQueryKey(), "infinite"];
+  const infiniteData = (rows: unknown[]) => ({ pages: [rows], pageParams: [undefined] });
   client.setQueryData(key, activity());
+  client.setQueryData(showsKey, infiniteData(shows()));
+  client.setQueryData(inProgressKey, infiniteData(inProgress()));
   const oldActivity = client.getQueryData(key);
+  const oldShows = client.getQueryData(showsKey);
+  const oldInProgress = client.getQueryData(inProgressKey);
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -152,12 +179,18 @@ it.each([false, true])("refreshes cached web History when initially watched is %
     await until(() => {
       expect(server.watched).toBe(!initiallyWatched);
       expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(showsKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(inProgressKey)?.isInvalidated).toBe(true);
     });
     expect(initiallyWatched ? server.unmark : server.mark).toHaveBeenCalledWith(
       initiallyWatched ? { episodeId: 101 } : { episodeId: 101, data: { includePrevious: false } },
     );
     expect(server.activityFetch).not.toHaveBeenCalled();
+    expect(server.showsFetch).not.toHaveBeenCalled();
+    expect(server.inProgressFetch).not.toHaveBeenCalled();
     expect(client.getQueryData(key)).toEqual(oldActivity);
+    expect(client.getQueryData(showsKey)).toEqual(oldShows);
+    expect(client.getQueryData(inProgressKey)).toEqual(oldInProgress);
 
     await act(async () => root.render(
       <QueryClientProvider client={client}><MyShowsPage /></QueryClientProvider>,
@@ -165,6 +198,12 @@ it.each([false, true])("refreshes cached web History when initially watched is %
     await until(() => {
       expect(server.activityFetch).toHaveBeenCalledTimes(1);
       expect(client.getQueryData(key)).toEqual(activity());
+      expect(server.showsFetch).toHaveBeenCalledTimes(1);
+      expect(server.inProgressFetch).toHaveBeenCalledTimes(1);
+      expect(client.getQueryData(showsKey)).toEqual(infiniteData(shows()));
+      expect(client.getQueryData(inProgressKey)).toEqual(infiniteData(inProgress()));
+      expect(container.textContent).toContain(`${Number(server.watched)} / 2`);
+      expect(container.textContent).toContain(server.watched ? "Second" : "Pilot");
     });
     const history = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
       .find(tab => tab.textContent === "History")!;

@@ -252,6 +252,74 @@ describe("in-progress show discovery across large libraries", () => {
     }
   });
 
+  it("serves reduced progress and history to either client after unwatching episodes", async () => {
+    const titleId = titleIds[67];
+    const firstEpisodeId = episodeIds[134];
+    const secondEpisodeId = episodeIds[135];
+    const titleFilter = { q: "progress_page_67" };
+    const clearEpisodes = () => db.delete(watchedEpisodesTable).where(
+      and(eq(watchedEpisodesTable.userId, USER_ID), eq(watchedEpisodesTable.titleId, titleId)),
+    );
+    await clearEpisodes();
+
+    // Separate request agents model clients sharing only their authenticated
+    // account's server state, not a local progress or history cache.
+    const writer = supertest.agent(app);
+    const reader = supertest.agent(app);
+    try {
+      for (const episodeId of [firstEpisodeId, secondEpisodeId]) {
+        expect((await writer.post(`/api/episodes/${episodeId}/watched`).send({})).status).toBe(200);
+      }
+      const completed = await reader.get("/api/me/shows").query(titleFilter);
+      expect(completed.status).toBe(200);
+      expect(completed.body).toEqual([
+        expect.objectContaining({ watchedEpisodes: 2, totalEpisodes: 2, nextEpisode: null }),
+      ]);
+      const initialHistory = await reader.get("/api/me/recent");
+      expect(initialHistory.status).toBe(200);
+      expect(initialHistory.body.filter((item: { titleId: number }) => item.titleId === titleId))
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ kind: "episode", episodeLabel: "S1E1" }),
+          expect.objectContaining({ kind: "episode", episodeLabel: "S1E2" }),
+        ]));
+
+      // A completed show becomes in-progress again, then returns to zero
+      // watched episodes without being removed from the tracked collection.
+      for (const [episodeId, watchedEpisodes, nextEpisodeId, remainingLabels] of [
+        [secondEpisodeId, 1, secondEpisodeId, ["S1E1"]],
+        [firstEpisodeId, 0, firstEpisodeId, []],
+      ] as const) {
+        expect((await writer.delete(`/api/episodes/${episodeId}/watched`)).status).toBe(200);
+        const [shows, history, inProgress, caughtUp] = await Promise.all([
+          reader.get("/api/me/shows").query(titleFilter),
+          reader.get("/api/me/recent"),
+          reader.get("/api/me/shows/in-progress").query({ limit: 50 }),
+          reader.get("/api/me/shows").query({ ...titleFilter, status: "caught-up" }),
+        ]);
+        expect(shows.status).toBe(200);
+        expect(history.status).toBe(200);
+        expect(inProgress.status).toBe(200);
+        expect(caughtUp.status).toBe(200);
+        expect(shows.headers["cache-control"]).toBe("private, no-cache");
+        expect(shows.body).toEqual([
+          expect.objectContaining({
+            title: expect.objectContaining({ id: titleId }),
+            watchedEpisodes,
+            totalEpisodes: 2,
+            nextEpisode: expect.objectContaining({ id: nextEpisodeId }),
+          }),
+        ]);
+        expect(history.body.filter((item: { titleId: number }) => item.titleId === titleId)
+          .map((item: { episodeLabel: string }) => item.episodeLabel)).toEqual(remainingLabels);
+        expect(inProgress.body.filter((show: { title: { id: number } }) => show.title.id === titleId))
+          .toEqual(watchedEpisodes ? shows.body : []);
+        expect(caughtUp.body).toEqual([]);
+      }
+    } finally {
+      await clearEpisodes();
+    }
+  });
+
   it("rejects invalid cursors for the independent feed", async () => {
     expect((await supertest(app).get("/api/me/shows/in-progress").query({ beforeId: -1 })).status).toBe(400);
     expect((await supertest(app).get("/api/me/shows/in-progress").query({ offset: 24 })).status).toBe(400);

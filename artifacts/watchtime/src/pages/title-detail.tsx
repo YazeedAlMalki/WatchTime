@@ -14,6 +14,8 @@ import {
   useCreateSafetyContribution,
   useCreateSafetyReport,
   getGetSeasonQueryKey,
+  getGetMyShowsQueryKey,
+  getGetMyInProgressShowsQueryKey,
   getGetMyMoviesQueryKey,
   getGetMyRecentActivityQueryKey,
   getGetTitleSafetyQueryKey,
@@ -501,6 +503,8 @@ export default function TitleDetailPage() {
                                     const action = checked ? "mark" : "unmark";
                                     const onSuccess = () => {
                                       invalidateSeason(season.seasonNumber);
+                                      queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
+                                      queryClient.invalidateQueries({ queryKey: getGetMyInProgressShowsQueryKey() });
                                       queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
                                       trackEvent("episode_watch_changed", {
                                         action,

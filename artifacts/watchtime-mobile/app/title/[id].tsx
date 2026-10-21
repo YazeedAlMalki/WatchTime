@@ -39,6 +39,7 @@ import {
   getGetSeasonQueryKey,
   getGetMyWatchlistQueryKey,
   getGetMyShowsQueryKey,
+  getGetMyInProgressShowsQueryKey,
   getGetMyMoviesQueryKey,
   getGetMyRecentActivityQueryKey,
   getGetMyRecommendationsQueryKey,
@@ -705,6 +706,7 @@ function SeasonAccordion({
     });
     queryClient.invalidateQueries({ queryKey: getGetTitleQueryKey(titleId) });
     queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetMyInProgressShowsQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
   };
