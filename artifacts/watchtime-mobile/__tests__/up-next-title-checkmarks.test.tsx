@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Dimensions, StyleSheet, Text, View } from 'react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { useGetSeason } from '@workspace/api-client-react';
 
 const mockRouter = { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: jest.fn() };
@@ -42,6 +42,15 @@ const mockSeasonData = (seasonNumber: number) => ({
     .filter((ep) => ep.seasonNumber === seasonNumber)
     .map((ep) => ({ ...ep, watched: mockWatched.has(ep.id) })),
 });
+const mockTrackedShow = () => {
+  const nextEpisode = mockEpisodes.find((episode) => !mockWatched.has(episode.id)) ?? null;
+  return {
+    title: { id: 42, name: 'Example Show' },
+    nextEpisode,
+    totalEpisodes: mockEpisodes.length,
+    watchedEpisodes: mockWatched.size,
+  };
+};
 
 jest.mock('expo-router', () => ({
   useRouter: () => mockRouter,
@@ -114,10 +123,25 @@ jest.mock('@workspace/api-client-react', () => {
     getGetMyRecentActivityQueryKey: activityKey,
     getGetMyInProgressShowsQueryKey: () => ['/api/me/shows/in-progress'],
     getGetMyMoviesQueryKey: () => ['/api/me/movies'],
-    getMyShows: async () => [],
-    getMyInProgressShows: async () => [],
+    getMyShows: async (params?: { status?: string }) => {
+      const show = mockTrackedShow();
+      if (params?.status === 'up-next' && !show.nextEpisode) return [];
+      if (params?.status === 'caught-up' && show.nextEpisode) return [];
+      return [show];
+    },
+    getMyInProgressShows: async () => {
+      const show = mockTrackedShow();
+      return show.watchedEpisodes > 0 && show.nextEpisode ? [show] : [];
+    },
     getMyMovies: async () => [],
-    mergeTrackedShows: (shows: unknown[]) => shows,
+    mergeTrackedShows: (shows: any[], inProgress: any[]) => {
+      const byId = new Map<number, any>();
+      for (const show of inProgress) {
+        if (show.watchedEpisodes > 0 && show.nextEpisode != null) byId.set(show.title.id, show);
+      }
+      for (const show of shows) byId.set(show.title.id, show);
+      return [...byId.values()];
+    },
     useGetMyRecentActivity: (options: { query: { enabled: boolean } }) => useQuery({
       queryKey: activityKey(),
       queryFn: () => {
@@ -144,12 +168,10 @@ jest.mock('@workspace/api-client-react', () => {
     },
     useGetMyShows: () => useQuery({
       queryKey: showsKey(),
-      queryFn: () => [{
-        title: { id: 42, name: 'Example Show' },
-        nextEpisode: { ...mockEpisodes[2] },
-        totalEpisodes: 4,
-        watchedEpisodes: mockWatched.size,
-      }],
+      queryFn: () => {
+        const show = mockTrackedShow();
+        return [mockWatched.size === 0 ? { ...show, nextEpisode: mockEpisodes[2] } : show];
+      },
     }),
     useGetMyWatchlist: () => useQuery({ queryKey: ['/api/me/watchlist'], queryFn: () => [] }),
     useGetMyRecommendations: () => useQuery({ queryKey: recsKey(), queryFn: () => [] }),
@@ -184,6 +206,38 @@ jest.mock('@workspace/api-client-react', () => {
 import HomeScreen from '../app/(tabs)/index';
 import MyShowsScreen from '../app/(tabs)/my-shows';
 import TitleDetailScreen from '../app/title/[id]';
+
+const mockApi = require('@workspace/api-client-react');
+
+function FilteredShowsObserver({ status }: { status: 'up-next' | 'caught-up' }) {
+  const showParams = { q: undefined, status };
+  const shows = useQuery({
+    queryKey: [
+      ...mockApi.getGetMyShowsQueryKey(),
+      'account',
+      'checkmarks-user',
+      'infinite',
+      showParams,
+    ],
+    queryFn: () => mockApi.getMyShows(showParams),
+  });
+  const inProgress = useQuery({
+    queryKey: [
+      ...mockApi.getGetMyInProgressShowsQueryKey(),
+      'account',
+      'checkmarks-user',
+      'infinite',
+    ],
+    queryFn: () => mockApi.getMyInProgressShows(),
+    enabled: status !== 'caught-up',
+  });
+  const rows = mockApi
+    .mergeTrackedShows(shows.data ?? [], inProgress.data ?? [])
+    .filter((show: ReturnType<typeof mockTrackedShow>) =>
+      status === 'up-next' ? show.nextEpisode != null : show.nextEpisode == null,
+    );
+  return <Text testID={`filtered-shows-${status}`}>{rows.map((show: any) => show.title.id).join(',')}</Text>;
+}
 
 function SeasonRows({ season }: { season: number }) {
   // An opened accordion enables this same season query. Render its episode
@@ -245,6 +299,78 @@ it.each([1, 2, 4])('leaves the full episode summary free to wrap in a narrow car
     client.clear();
     Dimensions.set({ window: originalWindow, screen: originalScreen });
   }
+});
+
+it('moves the last watched show out of Up Next and into Caught Up after a Home mark', async () => {
+  mockWatched.clear();
+  [101, 102, 201].forEach((episodeId) => mockWatched.add(episodeId));
+  mockMarkRequest.mockReset();
+  mockMarkRequest.mockResolvedValue({ ok: true });
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const screen = await render(
+    <QueryClientProvider client={client}>
+      <HomeScreen />
+      <FilteredShowsObserver status="up-next" />
+      <FilteredShowsObserver status="caught-up" />
+    </QueryClientProvider>,
+  );
+
+  await waitFor(() => {
+    expect(screen.getByTestId('mark-watched-202')).toBeEnabled();
+    expect(screen.getByTestId('filtered-shows-up-next').props.children).toBe('42');
+    expect(screen.getByTestId('filtered-shows-caught-up').props.children).toBe('');
+  });
+
+  await fireEvent.press(screen.getByTestId('mark-watched-202'));
+  await waitFor(() => {
+    expect(mockWatched.has(202)).toBe(true);
+    expect(screen.getByTestId('filtered-shows-up-next').props.children).toBe('');
+    expect(screen.getByTestId('filtered-shows-caught-up').props.children).toBe('42');
+  });
+
+  await act(async () => screen.unmount());
+  client.clear();
+});
+
+it('moves the last watched show out of Up Next and into Caught Up after a title-detail mark', async () => {
+  mockWatched.clear();
+  [101, 102, 201].forEach((episodeId) => mockWatched.add(episodeId));
+  mockMarkRequest.mockReset();
+  mockMarkRequest.mockResolvedValue({ ok: true });
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const screen = await render(
+    <QueryClientProvider client={client}>
+      <TitleDetailScreen />
+      <FilteredShowsObserver status="up-next" />
+      <FilteredShowsObserver status="caught-up" />
+    </QueryClientProvider>,
+  );
+
+  await waitFor(() => expect(screen.getByTestId('season-2')).toBeTruthy());
+  await fireEvent.press(screen.getByTestId('season-2'));
+  await waitFor(() => expect(screen.getByTestId('episode-check-202')).toBeEnabled());
+
+  await fireEvent.press(screen.getByTestId('episode-check-202'));
+  await waitFor(() => {
+    expect(mockWatched.has(202)).toBe(true);
+    expect(screen.getByTestId('filtered-shows-up-next').props.children).toBe('');
+    expect(screen.getByTestId('filtered-shows-caught-up').props.children).toBe('42');
+  });
+
+  await act(async () => screen.unmount());
+  client.clear();
 });
 
 it('shows a failed Home mark and refreshes title, seasons, and activity after a successful retry', async () => {

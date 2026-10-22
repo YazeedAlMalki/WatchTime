@@ -27,6 +27,7 @@ import {
   useGetTrendingTitles,
   useMarkEpisodeWatched,
   getGetMyShowsQueryKey,
+  getGetMyInProgressShowsQueryKey,
   getGetMyRecentActivityQueryKey,
   getGetMyWatchlistQueryKey,
   getGetMyRecommendationsQueryKey,
@@ -47,6 +48,7 @@ function UpNextCard({ show }: { show: TrackedShow }) {
     mutation: {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetMyInProgressShowsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
         // Invalidate the title detail so the title page reflects the new watched state.

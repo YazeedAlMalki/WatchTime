@@ -125,9 +125,10 @@ describe("admin Content review timestamp filter", () => {
     const beforeRepair = await request(app).get(reviewUrl).expect(200);
     expect(beforeRepair.body.map((item: any) => item.name)).toContain(`${fixturePrefix}-us-broken`);
     await db.update(safetyRecordsTable)
-      .set({ updatedAt: new Date("2026-10-12T03:04:05.000Z") })
+      .set({ updatedAt: new Date("2026-10-22T00:00:00.000Z") })
       .where(inArray(safetyRecordsTable.id, [records[0].id]));
     const afterRepair = await request(app).get(reviewUrl).expect(200);
+    expect(afterRepair.body).toEqual([]);
     expect(afterRepair.body.map((item: any) => item.name)).not.toContain(`${fixturePrefix}-us-broken`);
   });
 
