@@ -1117,6 +1117,71 @@ describe("real catalog sync", () => {
     },
   );
 
+  it.each(["recovery", "latest-run read"] as const)(
+    "keeps exactly one five-minute retry when replacement %s fails before a pending start rejects",
+    async (failurePoint) => {
+      let rejectStart!: (error: Error) => void;
+      const startGate = new Promise<never>((_resolve, reject) => { rejectStart = reject; });
+      const returning = vi.fn(() => startGate);
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const retryDelay = 5 * 60 * 1000;
+      const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+        delay === WEEK_MS || delay === retryDelay
+          ? [{
+              fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+              delay,
+              timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+            }]
+          : []);
+
+      try {
+        await scheduleCatalogRefresh(WEEK_MS);
+        const first = refreshTimers()[0];
+        expect(first).toBeDefined();
+        const insertSpy = vi.spyOn(db, "insert").mockReturnValueOnce({
+          values: () => ({ returning }),
+        } as unknown as ReturnType<typeof db.insert>);
+        // Hold enqueueing itself pending while another initialization fails.
+        first.fire();
+        expect(returning).toHaveBeenCalledOnce();
+
+        const replacementFailure = new Error(`Replacement ${failurePoint} failed`);
+        if (failurePoint === "recovery") {
+          vi.spyOn(db, "transaction").mockRejectedValueOnce(replacementFailure);
+        } else {
+          vi.spyOn(db, "select").mockImplementationOnce(() => { throw replacementFailure; });
+        }
+        await expect(scheduleCatalogRefresh()).rejects.toBe(replacementFailure);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(first.timer);
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS]);
+
+        const enqueueFailure = new Error("Original scheduled enqueue failed");
+        rejectStart(enqueueFailure);
+        await vi.waitFor(() => {
+          expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, retryDelay]);
+        });
+        // Drain remaining continuations to catch a duplicate reschedule.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const retry = refreshTimers()[1];
+        expect(refreshTimers()).toHaveLength(2);
+        expect(retry.timer).not.toBe(first.timer);
+        expect(clearTimeoutSpy).toHaveBeenCalledWith(first.timer);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(retry.timer);
+        expect(insertSpy).toHaveBeenCalledOnce();
+        expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+          { err: enqueueFailure }, "unable to start scheduled catalog refresh",
+        );
+      } finally {
+        rejectStart(new Error("release pending start during cleanup"));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
   it("does not replace a newer schedule when an older scheduled run finishes", async () => {
     const originalItems = [...sourceItems];
     let releaseFetch!: () => void;
