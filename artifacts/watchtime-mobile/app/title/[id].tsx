@@ -835,6 +835,7 @@ export default function TitleDetailScreen() {
     invalidateTitle();
     queryClient.invalidateQueries({ queryKey: getGetMyMoviesQueryKey() });
     queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
   };
   const addWatchlist = useAddToWatchlist({ mutation: { onSuccess: invalidateTitle } });
   const removeWatchlist = useRemoveFromWatchlist({ mutation: { onSuccess: invalidateTitle } });

@@ -9,6 +9,7 @@ const mockActivityFetch = jest.fn();
 const mockShowsFetch = jest.fn();
 const mockInProgressFetch = jest.fn();
 const mockMovieFetch = jest.fn();
+const mockRecommendationsFetch = jest.fn();
 const mockMarkRequest = jest.fn();
 const mockUnmarkRequest = jest.fn();
 const mockMarkTitleRequest = jest.fn();
@@ -35,6 +36,9 @@ const mockShows = () => mockTitleIsMovie ? [] : [{
   },
 }];
 const mockInProgress = () => mockWatched ? mockShows() : [];
+const mockRecommendations = () => mockMovieWatched
+  ? [{ reason: 'Because you watched this movie', titles: [{ id: 51, name: 'Watched Recommendation' }] }]
+  : [{ reason: 'Because you have not watched this movie', titles: [{ id: 52, name: 'Unwatched Recommendation' }] }];
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
@@ -56,6 +60,13 @@ jest.mock('expo-haptics', () => ({
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
+jest.mock('@/lib/home-startup', () => ({
+  startHomeStartup: (setStartupReady: (ready: boolean) => void) => {
+    setStartupReady(true);
+    return () => {};
+  },
+}));
+jest.mock('@/lib/startup-metrics', () => ({ markStartup: jest.fn() }));
 jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
 jest.mock('@/components/ui', () => {
   const { Text } = require('react-native');
@@ -112,6 +123,18 @@ jest.mock('@workspace/api-client-react', () => {
       }),
     useGetSimilarTitles: () => ({ data: [] }),
     useGetTitleSafety: () => ({ data: null, isLoading: false }),
+    useGetMyShows: (_params: unknown, options: { query: { enabled: boolean; queryKey: readonly unknown[] } }) =>
+      useQuery({ ...options.query, queryFn: async () => [] }),
+    useGetMyWatchlist: (_params: unknown, options: { query: { enabled: boolean; queryKey: readonly unknown[] } }) =>
+      useQuery({ ...options.query, queryFn: async () => [] }),
+    useGetMyRecommendations: (options: { query: { enabled: boolean; queryKey: readonly unknown[] } }) =>
+      useQuery({
+        ...options.query,
+        queryFn: async () => {
+          mockRecommendationsFetch();
+          return mockRecommendations();
+        },
+      }),
     useMarkEpisodeWatched: (options: { mutation: { onSuccess: () => void } }) =>
       useMutation({
         mutationFn: async (request: unknown) => {
@@ -175,11 +198,13 @@ jest.mock('@workspace/api-client-react', () => {
 });
 
 import TitleDetailScreen from '../app/title/[id]';
+import HomeScreen from '../app/(tabs)/index';
 import MyShowsScreen from '../app/(tabs)/my-shows';
 import {
   getGetMyShowsQueryKey,
   getGetMyInProgressShowsQueryKey,
   getGetMyRecentActivityQueryKey,
+  getGetMyRecommendationsQueryKey,
 } from '@workspace/api-client-react';
 
 it.each([
@@ -339,6 +364,62 @@ it.each([
     }
   });
   await act(async () => shows.unmount());
+  client.clear();
+  mockTitleIsMovie = false;
+});
+
+it.each([
+  { action: 'marking', initiallyWatched: false, expectedName: 'Watched Recommendation' },
+  { action: 'unmarking', initiallyWatched: true, expectedName: 'Unwatched Recommendation' },
+])('fetches updated recommendations after returning to Home from title detail after $action a movie', async ({
+  initiallyWatched,
+  expectedName,
+}) => {
+  mockTitleIsMovie = true;
+  mockMovieWatched = initiallyWatched;
+  mockWatched = false;
+  jest.clearAllMocks();
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const recommendationsKey = [
+    ...getGetMyRecommendationsQueryKey(),
+    'account',
+    'activity-user',
+  ];
+  client.setQueryData(recommendationsKey, [
+    { reason: 'Based on the previous watch history', titles: [{ id: 50, name: 'Old Recommendation' }] },
+  ]);
+
+  const detail = await render(
+    <QueryClientProvider client={client}><TitleDetailScreen /></QueryClientProvider>,
+  );
+  await waitFor(() => expect(detail.getByTestId('watched-toggle')).toBeTruthy());
+  await fireEvent.press(detail.getByTestId('watched-toggle'));
+  await waitFor(() => {
+    expect(mockMovieWatched).toBe(!initiallyWatched);
+    expect(client.getQueryState(recommendationsKey)?.isInvalidated).toBe(true);
+  });
+  expect(mockRecommendationsFetch).not.toHaveBeenCalled();
+  await act(async () => detail.unmount());
+
+  const home = await render(
+    <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+  );
+  await waitFor(() => {
+    expect(mockRecommendationsFetch).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(recommendationsKey)).toEqual([
+      expect.objectContaining({
+        titles: [expect.objectContaining({ name: expectedName })],
+      }),
+    ]);
+  });
+
+  await act(async () => home.unmount());
   client.clear();
   mockTitleIsMovie = false;
 });
