@@ -4,7 +4,7 @@ import {
   db, contributionsTable, reportsTable, feedbackTable, titlesTable, usersTable, adminAuditLogTable,
 } from "@workspace/db";
 import {
-  ListAdminReportsQueryParams, ListAdminFeedbackQueryParams,
+  ListAdminContributionsQueryParams, ListAdminReportsQueryParams, ListAdminFeedbackQueryParams,
   UpdateAdminContributionBody, UpdateAdminReportBody, UpdateAdminFeedbackBody,
 } from "@workspace/api-zod";
 
@@ -15,15 +15,20 @@ const MAX_MODERATION_PAGE_SIZE = 100;
 const MAX_MODERATION_PAGE_OFFSET = 1_000_000;
 
 router.get("/contributions", async (req, res) => {
-  const status = req.query.status;
-  if (status !== undefined &&
-    (typeof status !== "string" || !["pending", "approved", "rejected", "flagged"].includes(status))) {
-    return res.status(400).json({ error: "Invalid contribution status" });
+  const parsed = ListAdminContributionsQueryParams.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid contribution filters" });
+  const { status } = parsed.data;
+  const limit = parsed.data.limit ?? DEFAULT_MODERATION_PAGE_SIZE;
+  const offset = parsed.data.offset ?? 0;
+  if (limit > MAX_MODERATION_PAGE_SIZE || offset > MAX_MODERATION_PAGE_OFFSET) {
+    return res.status(400).json({ error: "Invalid contribution pagination" });
   }
   const rows = await db.select({ contribution: contributionsTable, titleName: titlesTable.name })
     .from(contributionsTable).innerJoin(titlesTable, eq(titlesTable.id, contributionsTable.titleId))
-    .where(status ? eq(contributionsTable.status, status as typeof contributionsTable.$inferSelect.status) : undefined)
-    .orderBy(desc(contributionsTable.createdAt));
+    .where(status ? eq(contributionsTable.status, status) : undefined)
+    .orderBy(desc(contributionsTable.createdAt), desc(contributionsTable.id))
+    .limit(limit)
+    .offset(offset);
   return res.json(rows.map(({ contribution, titleName }) => ({
     ...contribution, titleName, createdAt: contribution.createdAt.toISOString(),
   })));

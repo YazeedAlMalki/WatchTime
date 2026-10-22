@@ -717,6 +717,14 @@ paths:
         - name: status
           in: query
           schema: { type: string, enum: [pending, approved, rejected, flagged] }
+        - name: limit
+          in: query
+          description: Maximum contributions to return (newest first, then descending ID)
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          description: Zero-based offset into matching contributions
+          schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 }
       responses:
         "200":
           description: Contributions
@@ -726,6 +734,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SafetyContribution"
+        "400":
+          description: Invalid contribution filters or pagination
         "403":
           description: Forbidden
   /admin/contributions/{contributionId}:

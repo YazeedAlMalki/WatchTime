@@ -960,8 +960,19 @@ export const GetAdminDashboardResponse = zod.object({
 /**
  * @summary List community contributions by status
  */
+export const listAdminContributionsQueryLimitDefault = 50;
+export const listAdminContributionsQueryLimitMax = 100;
+
+export const listAdminContributionsQueryOffsetDefault = 0;
+export const listAdminContributionsQueryOffsetMin = 0;
+export const listAdminContributionsQueryOffsetMax = 1000000;
+
+
+
 export const ListAdminContributionsQueryParams = zod.object({
-  "status": zod.enum(['pending', 'approved', 'rejected', 'flagged']).optional()
+  "status": zod.enum(['pending', 'approved', 'rejected', 'flagged']).optional(),
+  "limit": zod.coerce.number().int().min(1).max(listAdminContributionsQueryLimitMax).default(listAdminContributionsQueryLimitDefault).describe('Maximum contributions to return (newest first, then descending ID)'),
+  "offset": zod.coerce.number().int().min(listAdminContributionsQueryOffsetMin).max(listAdminContributionsQueryOffsetMax).default(listAdminContributionsQueryOffsetDefault).describe('Zero-based offset into matching contributions')
 })
 
 export const ListAdminContributionsResponseItem = zod.object({

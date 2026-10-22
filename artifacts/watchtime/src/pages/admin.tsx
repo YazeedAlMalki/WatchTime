@@ -523,13 +523,19 @@ function EmptyState({
 
 /* ─── Moderation ─── */
 
-function ModerationTab() {
+export function ModerationTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<string>("pending");
+  const [offset, setOffset] = useState(0);
   const { data: contributions, isLoading } = useListAdminContributions(
-    statusFilter !== "all" ? { status: statusFilter as any } : undefined,
+    {
+      ...(statusFilter !== "all" ? { status: statusFilter as any } : {}),
+      limit: MODERATION_QUEUE_PAGE_SIZE + 1,
+      offset,
+    },
   );
+  const visibleContributions = contributions?.slice(0, MODERATION_QUEUE_PAGE_SIZE) ?? [];
   const updateContribution = useUpdateAdminContribution();
 
   const mod = (contributionId: number, status: string) =>
@@ -554,7 +560,10 @@ function ModerationTab() {
         <h2 className="text-xl font-display font-bold">
           Community Contributions
         </h2>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select value={statusFilter} onValueChange={(value) => {
+          setStatusFilter(value);
+          setOffset(0);
+        }}>
           <SelectTrigger className="w-36">
             <SelectValue />
           </SelectTrigger>
@@ -569,7 +578,7 @@ function ModerationTab() {
       </div>
       {isLoading ? (
         <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
-      ) : !contributions?.length ? (
+      ) : !visibleContributions.length ? (
         <EmptyState
           icon={CheckCircle}
           title="No contributions"
@@ -577,7 +586,7 @@ function ModerationTab() {
         />
       ) : (
         <div className="flex flex-col gap-3">
-          {contributions.map((c) => (
+          {visibleContributions.map((c) => (
             <div
               key={c.id}
               className="bg-card border border-border rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-start gap-4"
@@ -665,6 +674,13 @@ function ModerationTab() {
           ))}
         </div>
       )}
+      <AdminQueuePagination
+        offset={offset}
+        pageSize={MODERATION_QUEUE_PAGE_SIZE}
+        resultCount={contributions?.length ?? 0}
+        isLoading={isLoading}
+        onOffsetChange={setOffset}
+      />
     </div>
   );
 }

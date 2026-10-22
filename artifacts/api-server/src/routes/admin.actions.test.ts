@@ -229,6 +229,52 @@ describe("restored admin actions", () => {
       body.length === 1 && body[0].status === "new" && body[0].category === "bug")).toBe(true);
   });
 
+  it("bounds contribution pages and filters before paging with deterministic timestamp ties", async () => {
+    const createdAt = new Date("2099-01-01T00:00:00.000Z");
+    const inserted = await db.insert(contributionsTable).values(
+      Array.from({ length: 105 }, (_, index) => ({
+        userId: adminId,
+        titleId,
+        category: "violence" as const,
+        severity: "mild" as const,
+        status: index % 2 === 0 ? "pending" as const : "approved" as const,
+        createdAt,
+      })),
+    ).returning();
+    const descending = [...inserted].sort((a, b) => b.id - a.id);
+    const ids = (rows: Array<{ id: number }>) => rows.map(({ id }) => id);
+
+    const defaultPage = await request(app).get("/api/admin/contributions").expect(200);
+    expect(ids(defaultPage.body)).toEqual(ids(descending.slice(0, 50)));
+    const maxPage = await request(app).get("/api/admin/contributions?limit=100").expect(200);
+    expect(ids(maxPage.body)).toEqual(ids(descending.slice(0, 100)));
+
+    const pending = descending.filter(({ status }) => status === "pending");
+    const first = await request(app)
+      .get("/api/admin/contributions?status=pending&limit=50&offset=0").expect(200);
+    const second = await request(app)
+      .get("/api/admin/contributions?status=pending&limit=50&offset=50").expect(200);
+    expect(ids([...first.body, ...second.body].slice(0, pending.length))).toEqual(ids(pending));
+    expect(first.body.every((row: { status: string }) => row.status === "pending")).toBe(true);
+    expect(second.body.every((row: { status: string }) => row.status === "pending")).toBe(true);
+    expect(first.body[0]).toMatchObject({
+      id: pending[0].id,
+      titleName: "Admin actions test title",
+      createdAt: createdAt.toISOString(),
+    });
+    const beyondEnd = await request(app)
+      .get("/api/admin/contributions?limit=1&offset=1000000").expect(200);
+    expect(beyondEnd.body).toEqual([]);
+  });
+
+  it.each([
+    "limit=0", "limit=101", "limit=-1", "limit=1.5", "limit=nope",
+    "offset=-1", "offset=1000001", "offset=0.5", "offset=nope",
+    "status=unknown", "status=pending&status=approved", "limit=1&limit=2",
+  ])("rejects unsupported contribution filters: %s", async (query) => {
+    await request(app).get(`/api/admin/contributions?${query}`).expect(400);
+  });
+
   it("rejects report and feedback pagination outside the supported bounds", async () => {
     await request(app).get("/api/admin/reports?limit=0").expect(400);
     await request(app).get("/api/admin/reports?limit=101").expect(400);
