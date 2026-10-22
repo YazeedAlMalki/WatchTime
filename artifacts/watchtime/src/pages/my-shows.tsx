@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   getMyMovies,
   getMyShows,
@@ -15,28 +15,44 @@ import {
 import { PosterCard } from "@/components/ui/poster-card";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { PlaySquare, Check, Clock } from "lucide-react";
+import { PlaySquare, Check, Clock, Search } from "lucide-react";
 import { Link } from "wouter";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OptimizedImage } from "@/components/ui/optimized-image";
 import { useUser } from "@clerk/react";
+import { Input } from "@/components/ui/input";
 
 const PAGE_SIZE = 24;
 
+type ShowFilter = "all" | "up-next" | "caught-up";
+
 export default function MyShowsPage() {
   const { isSignedIn } = useUser();
+  const [showSearch, setShowSearch] = useState("");
+  const [debouncedShowSearch, setDebouncedShowSearch] = useState("");
+  const [showFilter, setShowFilter] = useState<ShowFilter>("all");
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebouncedShowSearch(showSearch.trim()), 350);
+    return () => clearTimeout(timeout);
+  }, [showSearch]);
+
+  const showQueryParams = {
+    q: debouncedShowSearch || undefined,
+    status: showFilter === "all" ? undefined : showFilter,
+  };
   const showsQuery = useInfiniteQuery({
-    queryKey: [...getGetMyShowsQueryKey(), "infinite"],
+    queryKey: [...getGetMyShowsQueryKey(), "infinite", showQueryParams],
     initialPageParam: undefined as number | undefined,
     queryFn: ({ pageParam, signal }) =>
-      getMyShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
+      getMyShows({ limit: PAGE_SIZE, beforeId: pageParam, ...showQueryParams }, { signal }),
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.title.id : undefined,
   });
   const inProgressQuery = useInfiniteQuery({
     queryKey: [...getGetMyInProgressShowsQueryKey(), "infinite"],
-    enabled: !!isSignedIn,
+    enabled: !!isSignedIn && showFilter === "all" && !debouncedShowSearch,
     initialPageParam: undefined as number | undefined,
     queryFn: ({ pageParam, signal }) =>
       getMyInProgressShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
@@ -51,7 +67,16 @@ export default function MyShowsPage() {
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.collectionCursor : undefined,
   });
-  const shows = mergeTrackedShows(showsQuery.data?.pages.flat() ?? [], inProgressQuery.data?.pages.flat() ?? []);
+  const useMergedInProgress = showFilter === "all" && !debouncedShowSearch;
+  const shows = useMergedInProgress
+    ? mergeTrackedShows(showsQuery.data?.pages.flat() ?? [], inProgressQuery.data?.pages.flat() ?? [])
+    : showsQuery.data?.pages.flat() ?? [];
+  const filteredShows = shows.filter((show) =>
+    showFilter === "all" ||
+    (showFilter === "up-next" && show.nextEpisode !== null) ||
+    (showFilter === "caught-up" && show.nextEpisode === null)
+  );
+  const hasShowCriteria = showFilter !== "all" || !!debouncedShowSearch;
   const movies = moviesQuery.data?.pages.flat() ?? [];
   const showsLoading = showsQuery.isLoading;
   const moviesLoading = moviesQuery.isLoading;
@@ -89,23 +114,83 @@ export default function MyShowsPage() {
         </TabsList>
 
         <TabsContent value="shows" className="mt-0 outline-none">
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative w-full sm:max-w-sm">
+              <Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                data-testid="input-search-shows"
+                aria-label="Search tracked shows"
+                placeholder="Search my shows…"
+                value={showSearch}
+                onChange={(event) => setShowSearch(event.target.value)}
+                maxLength={100}
+                className="pl-9"
+              />
+            </div>
+            <div role="group" aria-label="Filter shows by progress" className="flex flex-wrap gap-2">
+              {([
+                { key: "all", label: "All" },
+                { key: "up-next", label: "Up Next" },
+                { key: "caught-up", label: "Caught Up" },
+              ] as const).map(({ key, label }) => (
+                <Button
+                  key={key}
+                  type="button"
+                  data-testid={`filter-shows-${key}`}
+                  aria-pressed={showFilter === key}
+                  variant={showFilter === key ? "secondary" : "outline"}
+                  className="rounded-full"
+                  onClick={() => setShowFilter(key)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          </div>
           {showsLoading ? (
             <div className="flex flex-col gap-6">
               {Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="h-40 rounded-2xl bg-secondary/30 animate-pulse" />
               ))}
             </div>
-          ) : shows.length === 0 ? (
+          ) : filteredShows.length === 0 ? (
             <div className="text-center py-20 text-muted-foreground border-2 border-dashed border-border rounded-3xl">
-              <p>You aren't tracking any shows yet.</p>
-              {inProgressQuery.isError && <p role="alert">Could not load in-progress shows. <Button variant="link" onClick={() => inProgressQuery.refetch()}>Retry</Button></p>}
-              <Link href="/browse"><Button variant="outline" className="mt-4 rounded-full">Find Shows</Button></Link>
+              <p>{hasShowCriteria ? "No shows match your search and filters." : "You aren't tracking any shows yet."}</p>
+              {hasShowCriteria ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  data-testid="button-clear-show-filters"
+                  className="mt-4 rounded-full"
+                  onClick={() => {
+                    setShowSearch("");
+                    setShowFilter("all");
+                  }}
+                >
+                  Clear search and filters
+                </Button>
+              ) : (
+                <Link href="/browse"><Button variant="outline" className="mt-4 rounded-full">Find Shows</Button></Link>
+              )}
+              {useMergedInProgress && inProgressQuery.isError && (
+                <p role="alert" className="mt-3">
+                  Could not load in-progress shows. <Button variant="link" onClick={() => inProgressQuery.refetch()}>Retry</Button>
+                </p>
+              )}
             </div>
           ) : (
             <div className="flex flex-col gap-6">
-               <p className="text-sm text-muted-foreground">In-progress shows appear first, including titles beyond your loaded pages.</p>
-               {inProgressQuery.isError && <p role="alert" className="text-sm text-destructive">Could not load all in-progress shows. <Button variant="link" onClick={() => inProgressQuery.refetch()}>Retry</Button></p>}
-              {shows.map(show => {
+              {useMergedInProgress && (
+                <>
+                  <p className="text-sm text-muted-foreground">In-progress shows appear first, including titles beyond your loaded pages.</p>
+                  {inProgressQuery.isError && (
+                    <p role="alert" className="text-sm text-destructive">
+                      Could not load all in-progress shows. <Button variant="link" onClick={() => inProgressQuery.refetch()}>Retry</Button>
+                    </p>
+                  )}
+                </>
+              )}
+              {filteredShows.map(show => {
                 const progress = Math.round((show.watchedEpisodes / show.totalEpisodes) * 100) || 0;
                 return (
                   <div key={show.title.id} className="flex flex-col sm:flex-row bg-card border border-border rounded-2xl overflow-hidden shadow-sm hover-elevate transition-all">
@@ -145,7 +230,7 @@ export default function MyShowsPage() {
                   </div>
                 );
               })}
-               {inProgressQuery.hasNextPage && (
+               {useMergedInProgress && inProgressQuery.hasNextPage && (
                  <Button
                    variant="outline"
                    className="self-center rounded-full px-8"
@@ -162,7 +247,7 @@ export default function MyShowsPage() {
                   disabled={showsQuery.isFetchingNextPage}
                   onClick={() => showsQuery.fetchNextPage()}
                 >
-                  {showsQuery.isFetchingNextPage ? "Loading more…" : "Load more shows"}
+                  {showsQuery.isFetchingNextPage ? "Loading more…" : showFilter === "all" ? "Load more shows" : `Load more ${showFilter === "up-next" ? "up-next" : "caught-up"} shows`}
                 </Button>
               )}
             </div>

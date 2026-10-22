@@ -45,20 +45,12 @@ async function markMalformedTimestamp(recordIds: number[]) {
 
 describe("admin Content review timestamp filter", () => {
   it("stops returning a title and region after its malformed timestamp is repaired", async () => {
-    const fixturePrefix = "timestamp-large-catalog-fixture-20261004";
-
-    const [title] = await db.insert(titlesTable).values({
-      name: fixturePrefix,
-      type: "movie",
-      popularity: 1,
-    }).returning({ id: titlesTable.id });
-    const titles = await db.insert(titlesTable).values(
-      Array.from({ length: candidateCount }, (_, index) => ({
-        name: `${fixturePrefix}-${String(index + 1).padStart(4, "0")}`,
-        type: "movie" as const,
-        popularity: 10,
-      })),
-    ).returning({ id: titlesTable.id });
+    const fixturePrefix = "timestamp-filter-fixture-20260929";
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-us-broken`, type: "movie", popularity: 3 },
+      { name: `${fixturePrefix}-gb-broken`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-us-healthy`, type: "movie", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
     titleIds.push(...titles.map(({ id }) => id));
     const earlierTitles = await db.insert(titlesTable).values(
       Array.from({ length: 51 }, (_, index) => ({
@@ -72,21 +64,30 @@ describe("admin Content review timestamp filter", () => {
     const records = await db.insert(safetyRecordsTable).values([
       {
         titleId: titles[0].id,
-        sourceName: provider,
+        sourceName: "Wikidata",
         status: "available",
         isCommunity: false,
-        url: `https://provider.example/ratings/${titles[0].id}`,
-        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        url: "https://www.wikidata.org/wiki/QUSBroken",
+        updatedAt: new Date("2026-09-01T00:00:00.000Z"),
         items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
       },
       {
         titleId: titles[1].id,
-        sourceName: provider,
+        sourceName: "Wikidata",
         status: "available",
         isCommunity: false,
-        url: `https://provider.example/ratings/${titles[1].id}`,
-        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
-        items: [{ category: "UNSUPPORTED_SYSTEM", label: "12", score: null, maxScore: null, description: null }],
+        url: "https://www.wikidata.org/wiki/QGBBroken",
+        updatedAt: new Date("2026-09-02T00:00:00.000Z"),
+        items: [{ category: "BBFC", label: "12A", score: null, maxScore: null, description: null }],
+      },
+      {
+        titleId: titles[2].id,
+        sourceName: "Wikidata",
+        status: "available",
+        isCommunity: false,
+        url: "https://www.wikidata.org/wiki/QUSHealthy",
+        updatedAt: new Date("2026-09-03T00:00:00.000Z"),
+        items: [{ category: "MPAA", label: "PG", score: null, maxScore: null, description: null }],
       },
     ]).returning({ id: safetyRecordsTable.id });
     await markMalformedTimestamp([records[0].id, records[1].id]);
@@ -118,23 +119,28 @@ describe("admin Content review timestamp filter", () => {
     expect(unfilteredResponse.body.some((item: any) =>
       item.name === `${fixturePrefix}-us-broken` || item.name === `${fixturePrefix}-us-healthy`,
     )).toBe(false);
+
+    const reviewUrl =
+      `/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true`;
+    const beforeRepair = await request(app).get(reviewUrl).expect(200);
+    expect(beforeRepair.body.map((item: any) => item.name)).toContain(`${fixturePrefix}-us-broken`);
+    await db.update(safetyRecordsTable)
+      .set({ updatedAt: new Date("2026-10-12T03:04:05.000Z") })
+      .where(inArray(safetyRecordsTable.id, [records[0].id]));
+    const afterRepair = await request(app).get(reviewUrl).expect(200);
+    expect(afterRepair.body.map((item: any) => item.name)).not.toContain(`${fixturePrefix}-us-broken`);
   });
 
   it("matches finite out-of-range timestamps and preserves resolver ordering at the JavaScript date limit", async () => {
-    const fixturePrefix = "timestamp-large-catalog-fixture-20261004";
-
-    const [title] = await db.insert(titlesTable).values({
-      name: fixturePrefix,
-      type: "movie",
-      popularity: 1,
-    }).returning({ id: titlesTable.id });
-    const titles = await db.insert(titlesTable).values(
-      Array.from({ length: candidateCount }, (_, index) => ({
-        name: `${fixturePrefix}-${String(index + 1).padStart(4, "0")}`,
-        type: "movie" as const,
-        popularity: 10,
-      })),
-    ).returning({ id: titlesTable.id });
+    const fixturePrefix = "timestamp-date-range-fixture";
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-far-outside`, type: "movie", popularity: 6 },
+      { name: `${fixturePrefix}-valid-competitor`, type: "movie", popularity: 5 },
+      { name: `${fixturePrefix}-malformed-tie`, type: "movie", popularity: 4 },
+      { name: `${fixturePrefix}-at-limit`, type: "movie", popularity: 3 },
+      { name: `${fixturePrefix}-beyond-limit`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-submillisecond-limit`, type: "movie", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
     titleIds.push(...titles.map(({ id }) => id));
     const rating = (titleId: number, timestamp: string, label = "PG-13", tier = 1) => ({
       titleId,
@@ -151,26 +157,16 @@ describe("admin Content review timestamp filter", () => {
       await db.transaction(async (tx) => {
         // Keep legacy duplicate rows and the index change inside a rollback-only transaction.
         await tx.execute(sql`DROP INDEX safety_records_title_source_unique_idx`);
-    const records = await db.insert(safetyRecordsTable).values([
-      {
-        titleId: titles[0].id,
-        sourceName: provider,
-        status: "available",
-        isCommunity: false,
-        url: `https://provider.example/ratings/${titles[0].id}`,
-        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
-        items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
-      },
-      {
-        titleId: titles[1].id,
-        sourceName: provider,
-        status: "available",
-        isCommunity: false,
-        url: `https://provider.example/ratings/${titles[1].id}`,
-        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
-        items: [{ category: "UNSUPPORTED_SYSTEM", label: "12", score: null, maxScore: null, description: null }],
-      },
-    ]).returning({ id: safetyRecordsTable.id });
+        const records = await tx.insert(safetyRecordsTable).values([
+          rating(titles[0].id, "294276-12-31 23:59:59.999999"),
+          rating(titles[1].id, "294276-12-31 23:59:59.999999"),
+          rating(titles[1].id, "2026-10-01 00:00:00", "PG", 3),
+          rating(titles[2].id, "294276-12-31 23:59:59.999999", "PG-13", 2),
+          rating(titles[2].id, "infinity", "R", 1),
+          rating(titles[3].id, "275760-09-13 00:00:00"),
+          rating(titles[4].id, "275760-09-13 00:00:00.001"),
+          rating(titles[5].id, "275760-09-13 00:00:00.000999"),
+        ]).returning({ id: safetyRecordsTable.id });
         const selectSpy = vi.spyOn(db, "select").mockImplementation(tx.select.bind(tx));
         const executeSpy = vi.spyOn(db, "execute").mockImplementation(tx.execute.bind(tx));
         try {
@@ -201,44 +197,29 @@ describe("admin Content review timestamp filter", () => {
   });
 
   it("continues through malformed-timestamp matches beyond the first 50 results", async () => {
-    const fixturePrefix = "timestamp-large-catalog-fixture-20261004";
-
-    const [title] = await db.insert(titlesTable).values({
-      name: fixturePrefix,
-      type: "movie",
-      popularity: 1,
-    }).returning({ id: titlesTable.id });
+    const fixturePrefix = "timestamp-pagination-fixture-20261004";
     const titles = await db.insert(titlesTable).values(
-      Array.from({ length: candidateCount }, (_, index) => ({
-        name: `${fixturePrefix}-${String(index + 1).padStart(4, "0")}`,
+      Array.from({ length: 602 }, (_, index) => ({
+        name: `${fixturePrefix}-${String(index + 1).padStart(3, "0")}`,
         type: "movie" as const,
-        popularity: 10,
+        popularity: 100 - index,
       })),
     ).returning({ id: titlesTable.id });
     titleIds.push(...titles.map(({ id }) => id));
-    const records = await db.insert(safetyRecordsTable).values([
-      {
-        titleId: titles[0].id,
-        sourceName: provider,
-        status: "available",
+    const records = await db.insert(safetyRecordsTable).values(
+      titles.map(({ id }) => ({
+        titleId: id,
+        sourceName: "Wikidata",
+        status: "available" as const,
         isCommunity: false,
-        url: `https://provider.example/ratings/${titles[0].id}`,
+        url: `https://www.wikidata.org/wiki/Q${id}`,
         updatedAt: new Date("2026-10-01T00:00:00.000Z"),
         items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
-      },
-      {
-        titleId: titles[1].id,
-        sourceName: provider,
-        status: "available",
-        isCommunity: false,
-        url: `https://provider.example/ratings/${titles[1].id}`,
-        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
-        items: [{ category: "UNSUPPORTED_SYSTEM", label: "12", score: null, maxScore: null, description: null }],
-      },
-    ]).returning({ id: safetyRecordsTable.id });
+      })),
+    ).returning({ id: safetyRecordsTable.id });
     await markMalformedTimestamp(records.map(({ id }) => id));
     const firstPage = await request(app)
-      .get(`/api/admin/content?q=${fixturePrefix}&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Timestamp+Fixture+Provider&malformedRefreshTimestampAllRegions=true&offset=0`)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&offset=0`)
       .expect(200);
     expect(firstPage.body).toHaveLength(51);
     expect(firstPage.body.slice(0, 50).map((item: any) => item.name)).toEqual(
@@ -263,41 +244,29 @@ describe("admin Content review timestamp filter", () => {
   });
 
   it("reviews a provider's malformed ratings across regions with result-based pagination", async () => {
-    const fixturePrefix = "timestamp-large-catalog-fixture-20261004";
-
-    const [title] = await db.insert(titlesTable).values({
-      name: fixturePrefix,
-      type: "movie",
-      popularity: 1,
-    }).returning({ id: titlesTable.id });
+    const fixturePrefix = "timestamp-all-regions-fixture-20261018";
     const titles = await db.insert(titlesTable).values(
-      Array.from({ length: candidateCount }, (_, index) => ({
-        name: `${fixturePrefix}-${String(index + 1).padStart(4, "0")}`,
+      Array.from({ length: 26 }, (_, index) => ({
+        name: `${fixturePrefix}-${String(index + 1).padStart(2, "0")}`,
         type: "movie" as const,
-        popularity: 10,
+        popularity: 100 - index,
       })),
     ).returning({ id: titlesTable.id });
     titleIds.push(...titles.map(({ id }) => id));
-    const records = await db.insert(safetyRecordsTable).values([
-      {
-        titleId: titles[0].id,
-        sourceName: provider,
-        status: "available",
+    const records = await db.insert(safetyRecordsTable).values(
+      titles.map(({ id }) => ({
+        titleId: id,
+        sourceName: "Timestamp Fixture Provider",
+        status: "available" as const,
         isCommunity: false,
-        url: `https://provider.example/ratings/${titles[0].id}`,
+        url: `https://provider.example/ratings/${id}`,
         updatedAt: new Date("2026-10-01T00:00:00.000Z"),
-        items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
-      },
-      {
-        titleId: titles[1].id,
-        sourceName: provider,
-        status: "available",
-        isCommunity: false,
-        url: `https://provider.example/ratings/${titles[1].id}`,
-        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
-        items: [{ category: "UNSUPPORTED_SYSTEM", label: "12", score: null, maxScore: null, description: null }],
-      },
-    ]).returning({ id: safetyRecordsTable.id });
+        items: [
+          { category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null },
+          { category: "BBFC", label: "12A", score: null, maxScore: null, description: null },
+        ],
+      })),
+    ).returning({ id: safetyRecordsTable.id });
     await markMalformedTimestamp(records.map(({ id }) => id));
     const firstPage = await request(app)
       .get(`/api/admin/content?q=${fixturePrefix}&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Timestamp+Fixture+Provider&malformedRefreshTimestampAllRegions=true&offset=0`)
@@ -320,21 +289,12 @@ describe("admin Content review timestamp filter", () => {
   });
 
   it("counts malformed provider rows that cannot be assigned to a supported region", async () => {
-    const fixturePrefix = "timestamp-large-catalog-fixture-20261004";
-
-    const [title] = await db.insert(titlesTable).values({
-      name: fixturePrefix,
-      type: "movie",
-      popularity: 1,
-    }).returning({ id: titlesTable.id });
+    const fixturePrefix = "timestamp-unclassified-fixture-20261021";
     const provider = `${fixturePrefix} Provider`;
-    const titles = await db.insert(titlesTable).values(
-      Array.from({ length: candidateCount }, (_, index) => ({
-        name: `${fixturePrefix}-${String(index + 1).padStart(4, "0")}`,
-        type: "movie" as const,
-        popularity: 10,
-      })),
-    ).returning({ id: titlesTable.id });
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-classified`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-unclassified`, type: "movie", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
     titleIds.push(...titles.map(({ id }) => id));
 
     const [health] = await db.insert(integrationHealthTable).values({
@@ -379,34 +339,26 @@ describe("admin Content review timestamp filter", () => {
   });
 
   it("loads mappings only for malformed-timestamp results and preserves mapping values", async () => {
-    const fixturePrefix = "timestamp-large-catalog-fixture-20261004";
-
-    const [title] = await db.insert(titlesTable).values({
-      name: fixturePrefix,
-      type: "movie",
-      popularity: 1,
-    }).returning({ id: titlesTable.id });
-    const candidateCount = 2_000;
+    const fixturePrefix = "timestamp-mapping-filter-fixture-20261018";
+    const candidateCount = 251;
     const titles = await db.insert(titlesTable).values(
       Array.from({ length: candidateCount }, (_, index) => ({
-        name: `${fixturePrefix}-${String(index + 1).padStart(4, "0")}`,
+        name: `${fixturePrefix}-${String(index + 1).padStart(3, "0")}`,
         type: "movie" as const,
-        popularity: 10,
+        popularity: candidateCount - index,
       })),
     ).returning({ id: titlesTable.id });
     titleIds.push(...titles.map(({ id }) => id));
     const [record] = await db.insert(safetyRecordsTable).values({
-      titleId: titles[titles.length - 1].id,
+      titleId: titles[candidateCount - 1].id,
       sourceName: "Wikidata",
       status: "available",
       isCommunity: false,
-      url: "https://www.wikidata.org/wiki/Qlarge-catalog",
+      url: "https://www.wikidata.org/wiki/Qtimestamp-mapping",
       updatedAt: new Date("2026-10-01T00:00:00.000Z"),
       items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
     }).returning({ id: safetyRecordsTable.id });
 
-    const reviewUrl =
-      `/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata`;
     await markMalformedTimestamp([record.id]);
     const refreshedAt = new Date("2026-10-12T03:04:05.000Z");
     await db.insert(providerMappingsTable).values([
@@ -417,9 +369,7 @@ describe("admin Content review timestamp filter", () => {
       },
     ]);
     const querySpy = vi.spyOn(pool, "query");
-    const response = await request(app)
-      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true`)
-      .expect(200);
+    let response: request.Response;
     let providerMappingReads: unknown[][] = [];
     try {
       response = await request(app)
@@ -454,12 +404,6 @@ describe("admin Content review timestamp filter", () => {
 
   it("finds a late malformed-timestamp match in a large catalog", async () => {
     const fixturePrefix = "timestamp-large-catalog-fixture-20261004";
-
-    const [title] = await db.insert(titlesTable).values({
-      name: fixturePrefix,
-      type: "movie",
-      popularity: 1,
-    }).returning({ id: titlesTable.id });
     const candidateCount = 2_000;
     const titles = await db.insert(titlesTable).values(
       Array.from({ length: candidateCount }, (_, index) => ({
@@ -479,8 +423,6 @@ describe("admin Content review timestamp filter", () => {
       items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
     }).returning({ id: safetyRecordsTable.id });
 
-    const reviewUrl =
-      `/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata`;
     await markMalformedTimestamp([record.id]);
     const startedAt = performance.now();
     const response = await request(app)
@@ -506,7 +448,3 @@ describe("admin Content review timestamp filter", () => {
       .expect(400);
   });
 });
-
-    const beforeRepair = await request(app).get(reviewUrl).expect(200);
-
-    const afterRepair = await request(app).get(reviewUrl).expect(200);

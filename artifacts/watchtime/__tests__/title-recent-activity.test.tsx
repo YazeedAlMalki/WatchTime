@@ -154,7 +154,7 @@ it.each([false, true])("refreshes cached web show progress and History when init
     defaultOptions: { queries: { staleTime: Infinity, retry: false }, mutations: { retry: false } },
   });
   const key = getGetMyRecentActivityQueryKey();
-  const showsKey = [...getGetMyShowsQueryKey(), "infinite"];
+  const showsKey = [...getGetMyShowsQueryKey(), "infinite", { q: undefined, status: undefined }];
   const inProgressKey = [...getGetMyInProgressShowsQueryKey(), "infinite"];
   const infiniteData = (rows: unknown[]) => ({ pages: [rows], pageParams: [undefined] });
   client.setQueryData(key, activity());
