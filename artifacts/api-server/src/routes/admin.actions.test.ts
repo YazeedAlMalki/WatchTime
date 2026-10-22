@@ -8,10 +8,11 @@ import {
   db,
   feedbackTable,
   reportsTable,
+  safetyRecordsTable,
   titlesTable,
   usersTable,
 } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 const startCatalogRefresh = vi.hoisted(() => vi.fn());
 const retryFailedCatalogTitles = vi.hoisted(() => vi.fn().mockResolvedValue(null));
@@ -63,6 +64,7 @@ afterEach(async () => {
   await db.delete(adminAuditLogTable).where(eq(adminAuditLogTable.adminId, adminId));
   await db.delete(feedbackTable).where(eq(feedbackTable.userId, adminId));
   await db.delete(contributionsTable).where(eq(contributionsTable.userId, adminId));
+  await db.delete(safetyRecordsTable).where(eq(safetyRecordsTable.titleId, titleId));
   if (reportIds.length) {
     await db.delete(reportsTable).where(inArray(reportsTable.id, reportIds));
     reportIds = [];
@@ -109,11 +111,33 @@ describe("restored admin actions", () => {
   });
 
   it("refreshes one title with the selected provider instead of running a batch", async () => {
-    refreshWikidataTitle.mockResolvedValueOnce({ ok: true, titleId });
+    const [record] = await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      status: "available",
+      isCommunity: false,
+      url: "https://www.wikidata.org/wiki/Qadmin-actions-refresh",
+      updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+      items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
+    }).returning({ id: safetyRecordsTable.id });
+    await db.update(safetyRecordsTable)
+      .set({ updatedAt: sql`'infinity'::timestamp` })
+      .where(eq(safetyRecordsTable.id, record.id));
+    refreshWikidataTitle.mockImplementationOnce(async () => {
+      await db.update(safetyRecordsTable)
+        .set({ updatedAt: new Date("2026-10-21T00:00:00.000Z") })
+        .where(eq(safetyRecordsTable.id, record.id));
+      return { ok: true, titleId };
+    });
+
     await request(app).post(`/api/admin/content/${titleId}/refresh`)
       .send({ provider: "wikidata" }).expect(200, { ok: true, titleId });
     expect(refreshWikidataTitle).toHaveBeenCalledWith(titleId);
     expect(refreshDoesTheDogDieTitle).not.toHaveBeenCalled();
+    const review = await request(app)
+      .get(`/api/admin/content?q=Admin+actions+test+title&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata`)
+      .expect(200);
+    expect(review.body).toEqual([]);
     await request(app).post("/api/admin/content/0/refresh").expect(400);
   });
 

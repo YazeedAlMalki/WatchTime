@@ -38,6 +38,7 @@ import {
   type AdminContentAlias,
   type AdminContentAliasPage,
   type AdminContentAliasRecord,
+  type ContentMapping,
   type IntegrationHealth,
   type ListAdminContentAliasesOwnership,
 } from "@workspace/api-client-react";
@@ -1349,6 +1350,40 @@ function ContentTab({
       { id, data: { provider } },
       {
         onSuccess: (result) => {
+          if (result.ok && malformedRefreshTimestamp) {
+            const providerName = provider === "wikidata"
+              ? "Wikidata"
+              : "Does the Dog Die?";
+            const isRepairedReviewResult = (item: ContentMapping) =>
+              item.id === id &&
+              item.selectedRating?.sourceName === providerName &&
+              item.selectedRating.refreshTimestampMalformed;
+
+            qc.setQueriesData<ContentMapping[]>(
+              {
+                queryKey: getSearchAdminContentQueryKey(),
+                predicate: (query) => {
+                  const params = query.queryKey[1] as {
+                    malformedRefreshTimestamp?: boolean;
+                    malformedRefreshTimestampProvider?: string;
+                  } | undefined;
+                  return params?.malformedRefreshTimestamp === true &&
+                    (!params.malformedRefreshTimestampProvider ||
+                      params.malformedRefreshTimestampProvider === providerName);
+                },
+              },
+              (cached) => cached?.filter((item) => !isRepairedReviewResult(item)),
+            );
+
+            const repairedVisibleCount = visibleContent.filter(isRepairedReviewResult).length;
+            if (
+              repairedVisibleCount > 0 &&
+              visibleContent.length === repairedVisibleCount &&
+              contentOffset > 0
+            ) {
+              onContentOffsetChange(Math.max(0, contentOffset - contentPageSize));
+            }
+          }
           qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
           if (result.ok) {
             toast({ title: `Refreshed ${name}` });

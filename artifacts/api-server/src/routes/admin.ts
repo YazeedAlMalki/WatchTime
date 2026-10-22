@@ -565,11 +565,9 @@ router.get("/content", async (req, res) => {
     typeof malformedRefreshTimestampProviderParam !== "string") {
     return res.status(400).json({ error: "Invalid timestamp review provider" });
   }
-  const rawOffset = req.query.offset;
-  if (rawOffset !== undefined &&
-    (typeof rawOffset !== "string" || !/^(0|[1-9]\d*)$/.test(rawOffset) ||
-      !Number.isSafeInteger(Number(rawOffset)))) {
-    return res.status(400).json({ error: "Invalid timestamp review offset" });
+  const parsedParams = SearchAdminContentQueryParams.safeParse(req.query);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "Invalid content parameters" });
   }
   const offset = parseAuditLogPageValue(
     req.query.offset,
@@ -577,12 +575,9 @@ router.get("/content", async (req, res) => {
     0,
     AUDIT_LOG_MAX_OFFSET,
   );
-  const parsedParams = SearchAdminContentQueryParams.safeParse(req.query);
-  if (!parsedParams.success) {
-    res.status(400).json({ error: "Invalid content parameters" });
-    return;
+  if (offset === null) {
+    return res.status(400).json({ error: "Invalid timestamp review offset" });
   }
-
   const q = parsedParams.data.q?.trim() ?? "";
 
   const region = (typeof regionParam === "string" ? regionParam : "US") as RatingRegion;
@@ -603,7 +598,8 @@ router.get("/content", async (req, res) => {
     .where(and(
       q ? ilike(titlesTable.name, `%${q}%`) : undefined,
     ))
-    .orderBy(desc(titlesTable.popularity), asc(titlesTable.id));
+    .orderBy(desc(titlesTable.popularity), asc(titlesTable.id))
+    .limit(CONTENT_REVIEW_PAGE_SIZE);
   const buildContent = async (
     titles: (typeof titlesTable.$inferSelect)[],
     selectedRegions: RatingRegion[] = titles.map(() => region),
@@ -686,7 +682,7 @@ router.get("/content", async (req, res) => {
   };
 
   if (!malformedRefreshTimestamp) {
-    const titles = await makeTitleQuery().limit(CONTENT_REVIEW_PAGE_SIZE);
+    const titles = await makeTitleQuery();
     return res.json(await buildContent(titles));
   }
   const regions = malformedRefreshTimestampAllRegions
@@ -1488,9 +1484,9 @@ router.post("/content/:id/refresh", async (req, res) => {
       error: "provider must be does_the_dog_die or wikidata",
     });
   }
-    const result = provider === "wikidata"
-      ? await refreshWikidataBatch({ limit, offset, titleSelection })
-      : await refreshDoesTheDogDieBatch({ limit, offset, titleSelection });
+  const result = provider === "wikidata"
+    ? await refreshWikidataTitle(id)
+    : await refreshDoesTheDogDieTitle(id);
   await db.insert(adminAuditLogTable).values({
     adminId: req.userId!, action: "refresh_content",
     entityType: "title", entityId: id, details: { provider },
