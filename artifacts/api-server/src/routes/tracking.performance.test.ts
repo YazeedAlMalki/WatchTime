@@ -3,9 +3,11 @@
  * Run: pnpm --filter @workspace/api-server exec vitest run src/routes/tracking.performance.test.ts
  *
  * Latency is reported (not asserted against a CI-machine-dependent wall-clock
- * threshold). Query count, database rows transferred and JSON size are asserted.
+ * threshold). Query count, returned rows, alias rows scanned and JSON size are
+ * asserted.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import express from "express";
 
 const USER_ID = "test-large-library-performance";
 const SHOW_COUNT = 400;
@@ -30,13 +32,18 @@ vi.mock("../middlewares/clerkProxyMiddleware", () => ({
 }));
 
 import supertest from "supertest";
-import app from "../app";
+import trackingRouter from "./tracking";
 import {
-  db, pool, usersTable, titlesTable, episodesTable, watchedTitlesTable, watchedEpisodesTable, watchlistTable,
+  db, pool, usersTable, titlesTable, titleAliasesTable, episodesTable,
+  watchedTitlesTable, watchedEpisodesTable, watchlistTable,
 } from "@workspace/db";
 import { eq, inArray, like } from "drizzle-orm";
 
+const app = express();
+app.use("/api", trackingRouter);
+
 let titleIds: number[] = [];
+const ALIASES_PER_SHOW = 9;
 
 async function removeFixture() {
   // Also removes leftovers if a previous benchmark process was interrupted.
@@ -65,6 +72,19 @@ beforeAll(async () => {
     })),
   ).returning({ id: titlesTable.id });
   titleIds = titles.map((row) => row.id);
+
+  const aliases = titleIds.flatMap((titleId) => [
+    { titleId, alias: "needle", normalizedAlias: "needle", sourceName: "performance-fixture" },
+    ...Array.from({ length: ALIASES_PER_SHOW - 1 }, (_, i) => {
+      const alias = `Needle alternate ${titleId}-${i}`;
+      return {
+        titleId, alias, normalizedAlias: alias.toLowerCase(), sourceName: "performance-fixture",
+      };
+    }),
+  ]);
+  for (let i = 0; i < aliases.length; i += 1000) {
+    await db.insert(titleAliasesTable).values(aliases.slice(i, i + 1000));
+  }
 
   await db.insert(watchedTitlesTable).values(titleIds.map((titleId) => ({ userId: USER_ID, titleId })));
   const movies = await db.insert(titlesTable).values(
@@ -97,7 +117,7 @@ beforeAll(async () => {
   }
   // Prevent stale planner statistics from favoring a full scan of a newly
   // seeded table instead of the production indexes.
-  await pool.query("ANALYZE titles, episodes, watched_titles, watched_episodes, watchlist");
+  await pool.query("ANALYZE titles, title_aliases, episodes, watched_titles, watched_episodes, watchlist");
 }, 120_000);
 
 afterAll(async () => {
@@ -134,6 +154,59 @@ const measuredPage = (limit: number, offset: number) =>
     offset === 0 ? undefined : { beforeId: offset === SHOW_COUNT ? titleIds[0] : titleIds[SHOW_COUNT - offset] });
 
 describe("large personal library", () => {
+  it("keeps alternate-title search work bounded with multiple matching aliases per show", async () => {
+    // Keep the query shape and page behavior representative of the API search
+    // while using multiple matching aliases for every tracked show.
+    const searched = await measuredPageFor(
+      "/api/me/shows?q=needle", PAGE_SIZE, undefined,
+    );
+    expect(searched.response.status).toBe(200);
+    expect(searched.response.body).toHaveLength(PAGE_SIZE);
+    expect(searched.samples.length).toBeGreaterThanOrEqual(1);
+    expect(searched.samples.length).toBeLessThanOrEqual(2);
+    expect(searched.samples.every((sample) => sample.rows <= PAGE_SIZE)).toBe(true);
+    expect(Buffer.byteLength(searched.response.text)).toBeLessThan(PAGE_SIZE * 1000);
+    expect(searched.response.body.map((show: any) => show.title.id))
+      .toEqual(titleIds.slice(-PAGE_SIZE).reverse());
+    expect(searched.response.body.every((show: any) => show.matchedAlternateTitle === "needle"))
+      .toBe(true);
+
+    const searchQuery = searched.samples.find((sample) => sample.sql.includes("title_aliases"));
+    expect(searchQuery).toBeDefined();
+    const explained = await pool.query(
+      `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${searchQuery!.sql}`,
+      searchQuery!.values,
+    );
+    const plan = explained.rows[0]["QUERY PLAN"][0] as {
+      "Execution Time": number;
+      Plan: Record<string, unknown>;
+    };
+    const aliasNodes: Record<string, unknown>[] = [];
+    const aliasIndexes: string[] = [];
+    const walk = (node: Record<string, unknown>) => {
+      if (node["Relation Name"] === "title_aliases") aliasNodes.push(node);
+      if (typeof node["Index Name"] === "string" && String(node["Index Name"]).startsWith("title_aliases_")) {
+        aliasIndexes.push(node["Index Name"] as string);
+      }
+      for (const child of (node.Plans ?? []) as Record<string, unknown>[]) walk(child);
+    };
+    walk(plan.Plan);
+    const aliasRowsScanned = aliasNodes.reduce((total, node) => {
+      const rows = Number(node["Actual Rows"] ?? 0);
+      const removed = Number(node["Rows Removed by Filter"] ?? 0);
+      const loops = Number(node["Actual Loops"] ?? 0);
+      return total + (rows + removed) * loops;
+    }, 0);
+    expect(aliasIndexes.some((name) =>
+      name === "title_aliases_title_idx" || name === "title_aliases_title_normalized_idx",
+    )).toBe(true);
+    // Both the match predicate and the selected display alias may read aliases;
+    // their work should scale with the returned page, not the whole collection.
+    expect(aliasRowsScanned).toBeGreaterThan(0);
+    expect(aliasRowsScanned).toBeLessThanOrEqual(4 * PAGE_SIZE * ALIASES_PER_SHOW);
+    process.stdout.write(`Alternate-title benchmark (${SHOW_COUNT} tracked shows, ${SHOW_COUNT * ALIASES_PER_SHOW} matching aliases): ${JSON.stringify({ milliseconds: Math.round(searched.milliseconds), responseBytes: Buffer.byteLength(searched.response.text), aliasRowsScanned, aliasIndexes: [...new Set(aliasIndexes)], planMs: plan["Execution Time"] })}\n`);
+  }, 120_000);
+
   it("keeps in-progress discovery bounded on first and later ID pages", async () => {
     const measurements: Array<{ offset: number; milliseconds: number; bytes: number }> = [];
     const expected = titleIds.flatMap((id, index) =>

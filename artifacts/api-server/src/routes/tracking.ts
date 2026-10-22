@@ -12,7 +12,6 @@ import {
 import {
   and,
   eq,
-  exists,
   desc,
   lt,
   gt,
@@ -310,13 +309,9 @@ for (const [path, inProgressOnly] of [
       or(isNotNull(watchedCounts.titleId), isNotNull(followed.titleId)),
       searchPattern ? or(
         ilike(titlesTable.name, searchPattern),
-        exists(db
-          .select({ id: titleAliasesTable.id })
-          .from(titleAliasesTable)
-          .where(and(
-            eq(titleAliasesTable.titleId, titlesTable.id),
-            ilike(titleAliasesTable.alias, searchPattern),
-          ))),
+        // Keep alternate matching tied to the current title. Using EXISTS here
+        // lets PostgreSQL decorrelate it into a catalog-wide alias scan.
+        isNotNull(matchedAlternateTitle),
       ) : undefined,
       status === "up-next"
         ? hasUnwatchedEpisode
