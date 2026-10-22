@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/react";
 import {
   useGetMe,
@@ -718,18 +718,24 @@ function AdminQueuePagination({
   );
 }
 
-function ReportsTab() {
+export function ReportsTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<string>("open");
   const [offset, setOffset] = useState(0);
-  const { data: reports, isLoading } = useListAdminReports({
+  const { data: reports, isLoading, isFetching, isSuccess } = useListAdminReports({
     ...(statusFilter !== "all" ? { status: statusFilter as any } : {}),
     limit: MODERATION_QUEUE_PAGE_SIZE + 1,
     offset,
   } as any);
   const updateReport = useUpdateAdminReport();
   const visibleReports = reports?.slice(0, MODERATION_QUEUE_PAGE_SIZE) ?? [];
+
+  useEffect(() => {
+    if (isSuccess && !isFetching && reports?.length === 0 && offset > 0) {
+      setOffset(Math.max(0, offset - MODERATION_QUEUE_PAGE_SIZE));
+    }
+  }, [reports, isSuccess, isFetching, offset]);
 
   const act = (reportId: number, status: string) =>
     updateReport.mutate(
@@ -857,13 +863,13 @@ function ReportsTab() {
 
 /* ─── Feedback ─── */
 
-function FeedbackTab() {
+export function FeedbackTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<string>("new");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [offset, setOffset] = useState(0);
-  const { data: feedback, isLoading } = useListAdminFeedback({
+  const { data: feedback, isLoading, isFetching, isSuccess } = useListAdminFeedback({
     ...(statusFilter !== "all" ? { status: statusFilter } : {}),
     ...(categoryFilter !== "all" ? { category: categoryFilter } : {}),
     limit: MODERATION_QUEUE_PAGE_SIZE + 1,
@@ -871,6 +877,12 @@ function FeedbackTab() {
   } as any);
   const updateFeedback = useUpdateAdminFeedback();
   const visibleFeedback = feedback?.slice(0, MODERATION_QUEUE_PAGE_SIZE) ?? [];
+
+  useEffect(() => {
+    if (isSuccess && !isFetching && feedback?.length === 0 && offset > 0) {
+      setOffset(Math.max(0, offset - MODERATION_QUEUE_PAGE_SIZE));
+    }
+  }, [feedback, isSuccess, isFetching, offset]);
 
   const setStatus = (feedbackId: number, status: string) =>
     updateFeedback.mutate(

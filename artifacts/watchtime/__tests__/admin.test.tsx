@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { vi } from "vitest";
+import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";
 import type {
   AdminContentAlias,
   AdminContentAliasRecord,
@@ -20,9 +21,14 @@ const mocks = vi.hoisted(() => ({
     isPending: false,
     mutate: vi.fn(),
   },
+  listReports: vi.fn(),
+  listFeedback: vi.fn(),
+  updateReport: vi.fn(),
+  updateFeedback: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@tanstack/react-query")>(),
   useQueryClient: () => mocks.queryClient,
 }));
 
@@ -31,13 +37,28 @@ vi.mock("@workspace/api-client-react", () => ({
   useDeleteAdminContentAlias: () => mocks.deleteMutation,
   getListAdminContentAliasesQueryKey: () => ["/api/admin/content-aliases"],
   getSearchAdminContentQueryKey: () => ["/api/admin/content"],
+  useListAdminReports: (params: unknown) => useQuery({
+    queryKey: ["/api/admin/reports", params],
+    queryFn: () => mocks.listReports(params),
+    retry: false,
+  }),
+  useListAdminFeedback: (params: unknown) => useQuery({
+    queryKey: ["/api/admin/feedback", params],
+    queryFn: () => mocks.listFeedback(params),
+    retry: false,
+  }),
+  useUpdateAdminReport: () => useMutation({ mutationFn: mocks.updateReport }),
+  useUpdateAdminFeedback: () => useMutation({ mutationFn: mocks.updateFeedback }),
+  getListAdminReportsQueryKey: () => ["/api/admin/reports"],
+  getListAdminFeedbackQueryKey: () => ["/api/admin/feedback"],
+  getGetAdminDashboardQueryKey: () => ["/api/admin/dashboard"],
 }));
 
 vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: mocks.toast }),
 }));
 
-import { AliasReview } from "@/pages/admin";
+import { AliasReview, FeedbackTab, ReportsTab } from "@/pages/admin";
 
 const initialAlias: AdminContentAlias = {
   id: 17,
@@ -95,6 +116,134 @@ async function flushEffects() {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
+
+describe("admin moderation queue page recovery", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let client: QueryClient;
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
+        mutations: { gcTime: Infinity },
+      },
+    });
+    mocks.queryClient.invalidateQueries.mockReset();
+    mocks.queryClient.invalidateQueries.mockImplementation((filters) =>
+      client.invalidateQueries(filters),
+    );
+    mocks.listReports.mockReset();
+    mocks.listFeedback.mockReset();
+    mocks.updateReport.mockReset();
+    mocks.updateFeedback.mockReset();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    client.clear();
+    container.remove();
+  });
+
+  async function settle(assertion: () => void) {
+    await act(async () => {
+      await vi.waitFor(assertion);
+    });
+  }
+
+  async function selectValue(index: number, label: string) {
+    act(() => {
+      container.querySelectorAll<HTMLElement>('[role="combobox"]')[index].click();
+    });
+    const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
+      .find((element) => element.textContent?.trim() === label);
+    if (!option) throw new Error(`Option not found: ${label}`);
+    act(() => option.click());
+    await flushEffects();
+  }
+
+  it.each([
+    { queue: "reports", middlePageEmpty: false },
+    { queue: "feedback", middlePageEmpty: false },
+    { queue: "reports", middlePageEmpty: true },
+    { queue: "feedback", middlePageEmpty: true },
+  ] as const)(
+    "returns $queue to the nearest populated page after moderation (middle page empty: $middlePageEmpty)",
+    async ({ queue, middlePageEmpty }) => {
+      const isReports = queue === "reports";
+      const list = isReports ? mocks.listReports : mocks.listFeedback;
+      const update = isReports ? mocks.updateReport : mocks.updateFeedback;
+      let moderated = false;
+      let pageSize = 0;
+      list.mockImplementation(({ offset, limit }) => {
+        pageSize = limit - 1;
+        // Two initially full pages followed by one final item. Concurrent
+        // cleanup can also remove the middle page when the final item is saved.
+        const count = offset === 0 ? pageSize + 1
+          : offset === pageSize ? (moderated && middlePageEmpty ? 0 : pageSize + 1)
+          : moderated ? 0 : 1;
+        return Array.from({ length: count }, (_, index) => ({
+          id: offset + index + 1,
+          titleName: `Report ${offset + index + 1}`,
+          message: `Feedback ${offset + index + 1}`,
+          status: isReports ? "open" : "reviewing",
+          category: "bug",
+          reason: "incorrect_info",
+          createdAt: "2026-10-01T00:00:00Z",
+        }));
+      });
+      update.mockImplementation(async () => { moderated = true; });
+      act(() => root.render(
+        <QueryClientProvider client={client}>
+          {isReports ? <ReportsTab /> : <FeedbackTab />}
+        </QueryClientProvider>,
+      ));
+      await settle(() => expect(container.textContent).toContain(isReports ? "Report 1" : "Feedback 1"));
+      if (!isReports) {
+        await selectValue(0, "Bug");
+        await selectValue(1, "Reviewing");
+      }
+      await settle(() => expect(button(container, "Next").disabled).toBe(false));
+      act(() => button(container, "Next").click());
+      await settle(() => expect(container.textContent).toContain("Page 2"));
+      await settle(() => expect(button(container, "Next").disabled).toBe(false));
+      act(() => button(container, "Next").click());
+      await settle(() => {
+        expect(container.textContent).toContain("Page 3");
+        expect(container.textContent).toContain(`${isReports ? "Report" : "Feedback"} ${pageSize * 2 + 1}`);
+      });
+      if (isReports) {
+        await act(async () => {
+          button(container, "Resolve").click();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      } else {
+        await selectValue(2, "Closed");
+      }
+      const expectedOffset = middlePageEmpty ? 0 : pageSize;
+      await settle(() => {
+        expect(container.textContent).toContain(middlePageEmpty ? "Page 1" : "Page 2");
+        expect(container.textContent).toContain(`${isReports ? "Report" : "Feedback"} ${expectedOffset + 1}`);
+      });
+      expect(update).toHaveBeenCalledWith(
+        isReports
+          ? { reportId: pageSize * 2 + 1, data: { status: "resolved" } }
+          : { feedbackId: pageSize * 2 + 1, data: { status: "closed" } },
+        expect.anything(),
+      );
+      const preservedFilters = isReports ? { status: "open" } : { status: "reviewing", category: "bug" };
+      expect(list).toHaveBeenLastCalledWith({
+        ...preservedFilters, offset: expectedOffset, limit: pageSize + 1,
+      });
+      const filters = Array.from(container.querySelectorAll('[role="combobox"]')).slice(0, isReports ? 1 : 2);
+      expect(filters.map((filter) => filter.textContent)).toEqual(isReports ? ["Open"] : ["Bug", "Reviewing"]);
+    },
+  );
+});
 
 describe("admin alternate-title review", () => {
   let container: HTMLDivElement;
