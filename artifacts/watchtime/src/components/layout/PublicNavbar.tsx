@@ -72,10 +72,10 @@ export function PublicNavbar() {
                   closeMenu();
                 }
               }}
-              className="fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-dvh w-[280px] max-w-full border-l border-border bg-background p-6 text-foreground shadow-lg backdrop:bg-black/80"
+              className="fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-dvh w-[280px] max-w-full overflow-x-hidden overflow-y-auto overscroll-contain border-l border-border bg-background p-6 text-foreground shadow-lg backdrop:bg-black/80"
             >
               <h2 id="public-navigation-title" className="sr-only">Navigation</h2>
-              <div className="flex h-full flex-col gap-3">
+              <div className="flex min-h-full flex-col gap-3">
                 <button
                   type="button"
                   aria-label="Close navigation"

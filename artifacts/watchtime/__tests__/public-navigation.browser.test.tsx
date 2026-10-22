@@ -92,6 +92,54 @@ it.each([320, 768, 1024])(
   },
 );
 
+it("keeps the public menu usable on a short screen with enlarged text", async () => {
+  await page.viewport(320, 320);
+  document.body.append(container);
+  root = createRoot(container);
+  root.render(<PublicNavbar />);
+
+  const trigger = page.getByRole("button", { name: "Open navigation" });
+  await expect.element(trigger).toBeVisible();
+  enlargeNavigationText();
+  await userEvent.click(trigger);
+
+  const dialog = container.querySelector("dialog");
+  if (!dialog) throw new Error("Public navigation dialog did not render");
+
+  const close = container.querySelector<HTMLElement>('[aria-label="Close navigation"]');
+  const browse = container.querySelector<HTMLElement>('[data-testid="link-public-browse"]');
+  const signIn = container.querySelector<HTMLElement>('[data-testid="link-public-sign-in"]');
+  if (!close || !browse || !signIn) throw new Error("Public navigation controls did not render");
+
+  const expectWithinDialogViewport = (element: HTMLElement) => {
+    const dialogBounds = dialog.getBoundingClientRect();
+    const bounds = element.getBoundingClientRect();
+    expect(bounds.top).toBeGreaterThanOrEqual(dialogBounds.top);
+    expect(bounds.bottom).toBeLessThanOrEqual(dialogBounds.bottom);
+    expect(bounds.left).toBeGreaterThanOrEqual(dialogBounds.left);
+    expect(bounds.right).toBeLessThanOrEqual(dialogBounds.right);
+  };
+
+  await expect.element(page.getByRole("dialog", { name: "Navigation" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Close navigation" })).toBeVisible();
+  await expect.element(page.getByTestId("link-public-browse")).toBeVisible();
+  expectWithinDialogViewport(close);
+  expectWithinDialogViewport(browse);
+  expect(dialog.scrollHeight).toBeGreaterThan(dialog.clientHeight);
+  expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+
+  dialog.scrollTop = dialog.scrollHeight;
+  await expect.element(page.getByTestId("link-public-sign-in")).toBeVisible();
+  expectWithinDialogViewport(signIn);
+  expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+
+  dialog.scrollTop = 0;
+  expectWithinDialogViewport(close);
+  await expect.element(page.getByRole("button", { name: "Close navigation" })).toBeVisible();
+});
+
 it("keeps the full public navigation readable and separated at an enlarged text size", async () => {
   await page.viewport(1280, 844);
   document.body.append(container);
