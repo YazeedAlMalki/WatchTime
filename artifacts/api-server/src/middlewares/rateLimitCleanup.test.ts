@@ -5,6 +5,7 @@ import {
   RATE_LIMIT_CLEANUP_BATCH_SIZE,
   RATE_LIMIT_CLEANUP_CAP_WARNING_THRESHOLD,
   RATE_LIMIT_CLEANUP_INTERVAL_MS,
+  RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS,
   RATE_LIMIT_CLEANUP_WARNING_INTERVAL_MS,
 } from "./rateLimitCleanup";
 
@@ -110,6 +111,71 @@ describe("rate-limit background cleanup", () => {
       }, "Rate-limit counter cleanup completed");
     }
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("warns on an unresolved batch without overlap, throttles reminders, and resets after completion", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(performance, "now").mockImplementation(() => Date.now());
+    let resolve!: (result: { rowCount: number }) => void;
+    const pendingBatch = () => new Promise<{ rowCount: number }>((done) => { resolve = done; });
+    execute.mockImplementationOnce(pendingBatch).mockResolvedValue({ rowCount: 0 });
+    initializedStore();
+    await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(
+      RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS,
+    );
+    expect(warn).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      {
+        event: "rate_limit_cleanup",
+        outcome: "stalled",
+        durationMs: RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS,
+        thresholdMs: RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS,
+        batchSize: RATE_LIMIT_CLEANUP_BATCH_SIZE,
+        intervalMs: RATE_LIMIT_CLEANUP_INTERVAL_MS,
+      },
+      expect.stringContaining("no overlapping batch will start"),
+    );
+    await vi.advanceTimersByTimeAsync(
+      RATE_LIMIT_CLEANUP_WARNING_INTERVAL_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS,
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(info).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1); // No per-batch watchdog timers accumulate.
+
+    resolve({ rowCount: 7 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(info).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outcome: "success", deletedRows: 7 }),
+      expect.any(String),
+    );
+    await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(2);
+
+    // A new slow batch gets its own threshold and is not suppressed by the
+    // previous batch's reminder throttle.
+    execute.mockImplementationOnce(pendingBatch);
+    await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(
+      RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS,
+    );
+    expect(warn).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ durationMs: RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS }),
+      expect.any(String),
+    );
+    expect(execute).toHaveBeenCalledTimes(3);
+    resolve({ rowCount: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_WARNING_INTERVAL_MS);
+    expect(warn).toHaveBeenCalledTimes(3);
   });
 
   it("warns after repeated full batches and throttles reminders until recovery", async () => {
