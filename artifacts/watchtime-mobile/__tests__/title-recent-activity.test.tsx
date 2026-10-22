@@ -12,6 +12,7 @@ const mockMovieFetch = jest.fn();
 const mockMarkRequest = jest.fn();
 const mockUnmarkRequest = jest.fn();
 const mockMarkTitleRequest = jest.fn();
+const mockUnmarkTitleRequest = jest.fn();
 const mockActivity = () => mockWatched ? [{
   titleId: 42, titleName: 'Example Show', posterUrl: null,
   kind: 'episode', episodeLabel: 'S1E1 — Pilot', watchedAt: '2026-10-18T00:00:00.000Z',
@@ -132,6 +133,7 @@ jest.mock('@workspace/api-client-react', () => {
     useUnmarkTitleWatched: (options: { mutation: { onSuccess: () => void } }) =>
       useMutation({
         mutationFn: async () => {
+          await mockUnmarkTitleRequest();
           mockMovieWatched = false;
           return { ok: true };
         },
@@ -262,9 +264,12 @@ it.each([
   client.clear();
 });
 
-it('refreshes the account-scoped Movies and History caches after marking a movie watched', async () => {
+it.each([
+  { action: 'marking', initiallyWatched: false },
+  { action: 'unmarking', initiallyWatched: true },
+])('refreshes the account-scoped Movies and History caches after $action a movie', async ({ initiallyWatched }) => {
   mockTitleIsMovie = true;
-  mockMovieWatched = false;
+  mockMovieWatched = initiallyWatched;
   mockWatched = false;
   jest.clearAllMocks();
 
@@ -278,8 +283,10 @@ it('refreshes the account-scoped Movies and History caches after marking a movie
     require('@workspace/api-client-react');
   const moviesKey = [...getGetMyMoviesQueryKey(), 'account', 'activity-user', 'infinite'];
   const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
-  client.setQueryData(moviesKey, { pages: [[]], pageParams: [undefined] });
-  client.setQueryData(activityKey, []);
+  const cachedMovies = initiallyWatched ? [mockMovie] : [];
+  const cachedActivity = initiallyWatched ? mockActivity() : [];
+  client.setQueryData(moviesKey, { pages: [cachedMovies], pageParams: [undefined] });
+  client.setQueryData(activityKey, cachedActivity);
 
   const detail = await render(
     <QueryClientProvider client={client}><TitleDetailScreen /></QueryClientProvider>,
@@ -287,12 +294,19 @@ it('refreshes the account-scoped Movies and History caches after marking a movie
   await waitFor(() => expect(detail.getByTestId('watched-toggle')).toBeTruthy());
   await fireEvent.press(detail.getByTestId('watched-toggle'));
   await waitFor(() => {
-    expect(mockMovieWatched).toBe(true);
+    expect(mockMovieWatched).toBe(!initiallyWatched);
     expect(client.getQueryState(moviesKey)?.isInvalidated).toBe(true);
     expect(client.getQueryState(activityKey)?.isInvalidated).toBe(true);
   });
+  if (initiallyWatched) {
+    expect(mockUnmarkTitleRequest).toHaveBeenCalledTimes(1);
+  } else {
+    expect(mockMarkTitleRequest).toHaveBeenCalledTimes(1);
+  }
   expect(mockMovieFetch).not.toHaveBeenCalled();
   expect(mockActivityFetch).not.toHaveBeenCalled();
+  expect(client.getQueryData(moviesKey)).toEqual({ pages: [cachedMovies], pageParams: [undefined] });
+  expect(client.getQueryData(activityKey)).toEqual(cachedActivity);
   await act(async () => detail.unmount());
 
   const shows = await render(
@@ -301,18 +315,28 @@ it('refreshes the account-scoped Movies and History caches after marking a movie
   await waitFor(() => {
     expect(mockMovieFetch).toHaveBeenCalledTimes(1);
     expect(mockActivityFetch).toHaveBeenCalledTimes(1);
-    expect(client.getQueryData(moviesKey)).toMatchObject({
-      pages: [[expect.objectContaining({ id: 42, name: 'Example Movie' })]],
-    });
-    expect(client.getQueryData(activityKey)).toEqual([
-      expect.objectContaining({ titleId: 42, kind: 'movie', titleName: 'Example Movie' }),
-    ]);
+    if (initiallyWatched) {
+      expect(client.getQueryData(moviesKey)).toEqual({ pages: [[]], pageParams: [undefined] });
+      expect(client.getQueryData(activityKey)).toEqual([]);
+    } else {
+      expect(client.getQueryData(moviesKey)).toMatchObject({
+        pages: [[expect.objectContaining({ id: 42, name: 'Example Movie' })]],
+      });
+      expect(client.getQueryData(activityKey)).toEqual([
+        expect.objectContaining({ titleId: 42, kind: 'movie', titleName: 'Example Movie' }),
+      ]);
+    }
   });
   fireEvent.press(shows.getByTestId('tab-history'));
   await waitFor(() => {
-    expect(shows.getByTestId('history-item-42')).toBeTruthy();
-    expect(shows.getByText('Example Movie')).toBeTruthy();
-    expect(shows.getByText('movie')).toBeTruthy();
+    if (initiallyWatched) {
+      expect(shows.queryByTestId('history-item-42')).toBeNull();
+      expect(shows.getByText('No recent activity')).toBeTruthy();
+    } else {
+      expect(shows.getByTestId('history-item-42')).toBeTruthy();
+      expect(shows.getByText('Example Movie')).toBeTruthy();
+      expect(shows.getByText('movie')).toBeTruthy();
+    }
   });
   await act(async () => shows.unmount());
   client.clear();

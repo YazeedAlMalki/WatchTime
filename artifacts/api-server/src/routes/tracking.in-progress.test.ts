@@ -241,6 +241,22 @@ describe("in-progress show discovery across large libraries", () => {
           episodeLabel: null,
         }),
       ]));
+
+      const unwatch = await supertest(app).delete(`/api/titles/${movie.id}/watched`);
+      expect(unwatch.status).toBe(200);
+
+      const [moviesAfterUnwatch, historyAfterUnwatch] = await Promise.all([
+        supertest(app).get("/api/me/movies").query({ limit: 24 }),
+        supertest(app).get("/api/me/recent"),
+      ]);
+      expect(moviesAfterUnwatch.status).toBe(200);
+      expect(historyAfterUnwatch.status).toBe(200);
+      expect(moviesAfterUnwatch.body).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: movie.id })]),
+      );
+      expect(historyAfterUnwatch.body).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ titleId: movie.id })]),
+      );
     } finally {
       await db.delete(watchedTitlesTable).where(
         and(
