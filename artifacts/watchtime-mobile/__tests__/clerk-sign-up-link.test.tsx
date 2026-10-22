@@ -419,6 +419,121 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(signUp.finalize).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['success', 'returned error', 'rejected promise'])(
+    'blocks verification during the initial email code send and recovers after %s',
+    async (outcome) => {
+      mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
+      let resolveSend!: (value: { error: null | { message: string } }) => void;
+      let rejectSend!: (reason: Error) => void;
+      const sendEmailCode = jest.fn(() => new Promise<{ error: null | { message: string } }>((resolve, reject) => {
+        resolveSend = resolve;
+        rejectSend = reject;
+      }));
+      const signUp = {
+        status: 'missing_requirements',
+        unverifiedFields: [] as string[],
+        missingFields: ['email_address', 'password'],
+        password: jest.fn(async () => {
+          signUp.unverifiedFields = ['email_address'];
+          signUp.missingFields = [];
+          return { error: null };
+        }),
+        verifications: {
+          sendEmailCode,
+          verifyEmailCode: jest.fn(async () => {
+            signUp.status = 'complete';
+            return { error: null };
+          }),
+        },
+        finalize: jest.fn(async ({ navigate }: { navigate: (args: unknown) => void }) => {
+          navigate({ session: { currentTask: null }, decorateUrl: (url: string) => url });
+        }),
+      };
+      // Keep Clerk idle: only the screen's local state can block verification.
+      mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+      const screen = await render(<SignUpScreen />);
+      const getPressHandler = (testID: string) => {
+        let fiber = screen.getByTestId(testID).unstable_fiber;
+        while (fiber) {
+          if (typeof fiber.memoizedProps?.onPress === 'function') return fiber.memoizedProps.onPress;
+          fiber = fiber.return;
+        }
+        throw new Error(`No press handler found for ${testID}`);
+      };
+      expect(screen.getByText('Create your account')).toBeTruthy();
+      expect(screen.queryByTestId('verify-button')).toBeNull();
+      await fireEvent.changeText(screen.getByTestId('email-input'), 'viewer@example.com');
+      await fireEvent.changeText(screen.getByTestId('password-input'), 'test-password');
+      // Do not await the submit handler, which awaits the deferred first send.
+      await act(async () => {
+        void getPressHandler('sign-up-button')();
+      });
+
+      expect(signUp.password).toHaveBeenCalledTimes(1);
+      expect(signUp.password).toHaveBeenCalledWith({
+        emailAddress: 'viewer@example.com', password: 'test-password',
+      });
+      expect(sendEmailCode).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('sign-up-button')).toBeNull();
+      expect(screen.getByText('Check your email')).toBeTruthy();
+      expect(screen.getByText('Sending a verification code to viewer@example.com…')).toBeTruthy();
+      expect(screen.queryByText('We sent a verification code to viewer@example.com')).toBeNull();
+      expect(screen.queryByTestId('resend-code-status')).toBeNull();
+      // A nonempty code ensures the pending send, not input validation, blocks Verify.
+      await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
+      expect(screen.getByTestId('verify-button')).toBeDisabled();
+      expect(screen.getByTestId('resend-code-button')).toBeDisabled();
+      await fireEvent.press(screen.getByTestId('verify-button'));
+      // Bypass native disabled handling to check the handler's own guard too.
+      await act(async () => {
+        await getPressHandler('verify-button')();
+      });
+      expect(signUp.verifications.verifyEmailCode).not.toHaveBeenCalled();
+      expect(signUp.finalize).not.toHaveBeenCalled();
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+
+      await act(async () => {
+        if (outcome === 'rejected promise') {
+          rejectSend(new Error('Email service unavailable.'));
+        } else {
+          resolveSend({ error: outcome === 'returned error' ? { message: 'Please try again.' } : null });
+        }
+      });
+
+      expect(screen.getByTestId('verify-button')).toBeEnabled();
+      expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+      expect(screen.queryByText('Sending a verification code to viewer@example.com…')).toBeNull();
+      expect(signUp.verifications.verifyEmailCode).not.toHaveBeenCalled();
+      expect(signUp.finalize).not.toHaveBeenCalled();
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+      if (outcome === 'success') {
+        expect(screen.getByText('We sent a verification code to viewer@example.com')).toBeTruthy();
+        expect(screen.queryByTestId('resend-code-status')).toBeNull();
+      } else {
+        expect(screen.queryByText('We sent a verification code to viewer@example.com')).toBeNull();
+        expect(screen.getByText('Verify your email address: viewer@example.com')).toBeTruthy();
+        expect(screen.getByTestId('resend-code-status').props.children).toBe(
+          'Could not send your verification code. Tap “I need a new code” below to try again.',
+        );
+        sendEmailCode.mockResolvedValueOnce({ error: null });
+        await fireEvent.press(screen.getByTestId('resend-code-button'));
+        expect(screen.getByText('We sent a verification code to viewer@example.com')).toBeTruthy();
+        expect(screen.getByTestId('resend-code-status').props.children)
+          .toBe('A new code is on its way. Check your email.');
+      }
+      expect(sendEmailCode).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 2);
+      expect(signUp.password).toHaveBeenCalledTimes(1);
+
+      await fireEvent.changeText(screen.getByTestId('code-input'), '654321');
+      await fireEvent.press(screen.getByTestId('verify-button'));
+      await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith('/title/456'));
+      expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledTimes(1);
+      expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledWith({ code: '654321' });
+      expect(signUp.finalize).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('confirms delivery only after the initial email code send succeeds', async () => {
     mockUseLocalSearchParams.mockReturnValue({});
     const signUp = {
