@@ -1170,7 +1170,7 @@ describe("real catalog sync", () => {
     }
   });
 
-  it("does not replace a newer schedule when an older scheduled start rejects", async () => {
+  it("preserves the newest of two replacement schedules when an older scheduled start rejects", async () => {
     let rejectStart!: (error: Error) => void;
     const startGate = new Promise<never>((_resolve, reject) => { rejectStart = reject; });
     const returning = vi.fn(() => startGate);
@@ -1178,13 +1178,16 @@ describe("real catalog sync", () => {
     const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
     const retryDelay = 5 * 60 * 1000;
     const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
-      delay === WEEK_MS || delay === WEEK_MS / 2 || delay === retryDelay
+      delay === WEEK_MS || delay === WEEK_MS / 2 || delay === WEEK_MS / 4 || delay === retryDelay
         ? [{
             fire: setTimeoutSpy.mock.calls[index][0] as () => void,
             delay,
             timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
           }]
         : []);
+    const clearedRefreshTimers = () => clearTimeoutSpy.mock.calls
+      .map(([timer]) => timer)
+      .filter((timer) => refreshTimers().some((refresh) => refresh.timer === timer));
 
     try {
       await scheduleCatalogRefresh(WEEK_MS);
@@ -1202,15 +1205,24 @@ describe("real catalog sync", () => {
       expect(second).toBeDefined();
       expect(second.timer).not.toBe(first.timer);
       expect(second.delay).toBe(WEEK_MS / 2);
-      expect(clearTimeoutSpy).toHaveBeenCalledWith(first.timer);
+      expect(clearedRefreshTimers()).toEqual([first.timer]);
+
+      await scheduleCatalogRefresh(WEEK_MS / 4);
+      const third = refreshTimers()[2];
+      expect(third).toBeDefined();
+      expect(third.timer).not.toBe(first.timer);
+      expect(third.timer).not.toBe(second.timer);
+      expect(third.delay).toBe(WEEK_MS / 4);
+      expect(clearedRefreshTimers()).toEqual([first.timer, second.timer]);
       const connectSpy = vi.spyOn(pool, "connect");
 
       rejectStart(new Error("older scheduled enqueue failed"));
       // Drain the rejected start's catch/finally chain without firing timers.
       await new Promise<void>((resolve) => setImmediate(resolve));
 
-      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(second.timer);
-      expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS / 2]);
+      expect(clearedRefreshTimers()).toEqual([first.timer, second.timer]);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(third.timer);
+      expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS / 2, WEEK_MS / 4]);
       expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === retryDelay)).toHaveLength(0);
       // Even an asynchronous attempt to replace the schedule must not begin.
       expect(connectSpy).not.toHaveBeenCalled();
