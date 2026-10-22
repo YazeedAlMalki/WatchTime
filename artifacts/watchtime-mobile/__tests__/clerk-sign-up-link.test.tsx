@@ -60,6 +60,15 @@ jest.mock('@/constants/colors', () => ({
 
 import SignUpScreen from '../app/(auth)/sign-up';
 
+function getPressHandler(screen: Awaited<ReturnType<typeof render>>, testID: string) {
+  let fiber = screen.getByTestId(testID).unstable_fiber;
+  while (fiber) {
+    if (typeof fiber.memoizedProps?.onPress === 'function') return fiber.memoizedProps.onPress;
+    fiber = fiber.return;
+  }
+  throw new Error(`No press handler found for ${testID}`);
+}
+
 describe('Clerk sign-up switch to sign-in', () => {
   beforeEach(() => {
     mockUseSignUp.mockReturnValue({
@@ -155,6 +164,106 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(verifyEmailCode).toHaveBeenCalledWith({ code: '123456' });
     expect(finalize).toHaveBeenCalledWith({ navigate: expect.any(Function) });
     expect(decorateUrl).toHaveBeenCalledWith(destination);
+  });
+
+  it('locks rapid verification taps while Clerk stays idle, including through finalization', async () => {
+    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
+    let resolveVerification!: (result: { error: null }) => void;
+    let resolveFinalization!: () => void;
+    const verification = new Promise<{ error: null }>((resolve) => { resolveVerification = resolve; });
+    const finalization = new Promise<void>((resolve) => { resolveFinalization = resolve; });
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: ['email_address'],
+      missingFields: [],
+      verifications: { verifyEmailCode: jest.fn(() => verification) },
+      finalize: jest.fn(async ({ navigate }: { navigate: (args: unknown) => void }) => {
+        await finalization;
+        navigate({ session: { currentTask: null }, decorateUrl: (url: string) => url });
+      }),
+    };
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
+    const pressVerify = getPressHandler(screen, 'verify-button');
+    let firstCheck!: Promise<void>;
+    await act(async () => {
+      firstCheck = pressVerify();
+      await pressVerify();
+    });
+    expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('verify-button')).toBeDisabled();
+    expect(screen.getByTestId('resend-code-button')).toBeDisabled();
+    expect(signUp.finalize).not.toHaveBeenCalled();
+    await fireEvent.press(screen.getByTestId('verify-button'));
+
+    await act(async () => {
+      signUp.status = 'complete';
+      resolveVerification({ error: null });
+    });
+    expect(signUp.finalize).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('retry-finalization-button')).toBeDisabled();
+    await act(async () => { await pressVerify(); });
+    expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledTimes(1);
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveFinalization();
+      await firstCheck;
+    });
+    expect(signUp.finalize).toHaveBeenCalledTimes(1);
+    expect(mockRouterReplace).toHaveBeenCalledTimes(1);
+    expect(mockRouterReplace).toHaveBeenCalledWith('/title/456');
+  });
+
+  it.each(['returned error', 'rejected promise'])('unlocks verification for a retry after a held check fails: %s', async (failure) => {
+    mockUseLocalSearchParams.mockReturnValue({});
+    let resolveVerification!: (result: { error: { message: string } }) => void;
+    let rejectVerification!: (reason: Error) => void;
+    const verification = new Promise<{ error: { message: string } }>((resolve, reject) => {
+      resolveVerification = resolve;
+      rejectVerification = reject;
+    });
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: ['email_address'],
+      missingFields: [],
+      verifications: { verifyEmailCode: jest.fn().mockImplementationOnce(() => verification) },
+      finalize: jest.fn(async ({ navigate }: { navigate: (args: unknown) => void }) => {
+        navigate({ session: { currentTask: null }, decorateUrl: (url: string) => url });
+      }),
+    };
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('code-input'), '000000');
+    const pressVerify = getPressHandler(screen, 'verify-button');
+    let firstCheck!: Promise<void>;
+    await act(async () => {
+      firstCheck = pressVerify();
+      await pressVerify();
+    });
+    expect(signUp.verifications.verifyEmailCode).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      if (failure === 'rejected promise') rejectVerification(new Error('Private provider error'));
+      else resolveVerification({ error: { message: 'Incorrect code' } });
+      await firstCheck;
+    });
+    expect(screen.getByTestId('verify-button')).toBeEnabled();
+    expect(signUp.finalize).not.toHaveBeenCalled();
+    if (failure === 'rejected promise') {
+      expect(screen.getByText('Could not verify your code. Please try again.')).toBeTruthy();
+    }
+    signUp.verifications.verifyEmailCode.mockImplementationOnce(async () => {
+      signUp.status = 'complete';
+      return { error: null };
+    });
+    await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
+    await fireEvent.press(screen.getByTestId('verify-button'));
+    expect(signUp.verifications.verifyEmailCode.mock.calls).toEqual([
+      [{ code: '000000' }],
+      [{ code: '123456' }],
+    ]);
+    expect(signUp.finalize).toHaveBeenCalledTimes(1);
+    expect(mockRouterReplace).toHaveBeenCalledWith('/');
   });
 
   it.each(['returned error', 'rejected promise'])('recovers from a finalization failure: %s', async (failure) => {

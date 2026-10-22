@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -42,8 +42,11 @@ function ClerkSignUpScreen() {
   const [resending, setResending] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizationError, setFinalizationError] = useState<string | null>(null);
+  const verificationInFlight = useRef(false);
+  const [checkingCode, setCheckingCode] = useState(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
 
-  const busy = fetchStatus === 'fetching' || finalizing;
+  const busy = fetchStatus === 'fetching' || finalizing || checkingCode;
 
   const handleResend = async () => {
     if (busy || resending) return;
@@ -84,7 +87,8 @@ function ClerkSignUpScreen() {
   };
 
   const handleFinalize = async () => {
-    if (busy) return;
+    // Verification keeps its own lock until this finalization finishes.
+    if (fetchStatus === 'fetching' || finalizing) return;
     setFinalizing(true);
     setFinalizationError(null);
     const recoveryMessage = 'Your email is verified, but we could not finish signing you in. Try again, or use Sign in below.';
@@ -111,10 +115,20 @@ function ClerkSignUpScreen() {
   };
 
   const handleVerify = async () => {
-    if (busy || resending) return;
-    const { error } = await signUp.verifications.verifyEmailCode({ code });
-    if (error) return;
-    if (signUp.status === 'complete') await handleFinalize();
+    if (verificationInFlight.current || busy || resending) return;
+    verificationInFlight.current = true;
+    setCheckingCode(true);
+    setVerificationError(null);
+    try {
+      const { error } = await signUp.verifications.verifyEmailCode({ code });
+      if (error) return;
+      if (signUp.status === 'complete') await handleFinalize();
+    } catch {
+      setVerificationError('Could not verify your code. Please try again.');
+    } finally {
+      verificationInFlight.current = false;
+      setCheckingCode(false);
+    }
   };
 
   if (isSignedIn) return <Redirect href="/" />;
@@ -212,9 +226,9 @@ function ClerkSignUpScreen() {
               onChangeText={setCode}
               keyboardType="numeric"
             />
-            {errors.fields.code ? (
+            {verificationError || errors.fields.code ? (
               <Text style={{ color: c.destructive, fontSize: 13, marginBottom: 8 }}>
-                {errors.fields.code.message}
+                {verificationError || errors.fields.code?.message}
               </Text>
             ) : null}
             <Pressable
