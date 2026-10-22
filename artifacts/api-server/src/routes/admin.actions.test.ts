@@ -275,6 +275,12 @@ describe("restored admin actions", () => {
     await request(app).get(`/api/admin/contributions?${query}`).expect(400);
   });
 
+  it("rejects unsupported report and feedback filter values", async () => {
+    await request(app).get("/api/admin/reports?status=unsupported").expect(400);
+    await request(app).get("/api/admin/feedback?status=unsupported").expect(400);
+    await request(app).get("/api/admin/feedback?category=unsupported").expect(400);
+  });
+
   it("rejects report and feedback pagination outside the supported bounds", async () => {
     await request(app).get("/api/admin/reports?limit=0").expect(400);
     await request(app).get("/api/admin/reports?limit=101").expect(400);

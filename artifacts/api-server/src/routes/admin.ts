@@ -433,21 +433,7 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
 
 router.get("/integrations", async (_req, res) => {
   const [rows, malformedTimestampCounts] = await Promise.all([
-    db.select({
-      health: integrationHealthTable,
-      lastSyncAtIsSerializable: sql<boolean>`
-        ${integrationHealthTable.lastSyncAt} is null or (
-          isfinite(${integrationHealthTable.lastSyncAt})
-          and abs(extract(epoch from ${integrationHealthTable.lastSyncAt})) <= ${JS_DATE_LIMIT_MS / 1000}
-        )
-      `,
-      lastSuccessAtIsSerializable: sql<boolean>`
-        ${integrationHealthTable.lastSuccessAt} is null or (
-          isfinite(${integrationHealthTable.lastSuccessAt})
-          and abs(extract(epoch from ${integrationHealthTable.lastSuccessAt})) <= ${JS_DATE_LIMIT_MS / 1000}
-        )
-      `,
-    }).from(integrationHealthTable),
+    db.select().from(integrationHealthTable),
     db
       .select({
         provider: safetyRecordsTable.sourceName,
@@ -464,30 +450,12 @@ router.get("/integrations", async (_req, res) => {
     malformedTimestampCounts.map((row) => [row.provider, row.count]),
   );
   const sustainedFailureThreshold = Date.now() - 3 * 24 * 60 * 60 * 1000;
-  return res.json(rows.map(({
-    health: r,
-    lastSyncAtIsSerializable,
-    lastSuccessAtIsSerializable,
-  }) => {
-    const lastSyncAt =
-      r.lastSyncAt &&
-      lastSyncAtIsSerializable &&
-      Number.isFinite(r.lastSyncAt.getTime()) &&
-      Math.abs(r.lastSyncAt.getTime()) <= JS_DATE_LIMIT_MS
-        ? r.lastSyncAt
-        : null;
-    const lastSuccessAt =
-      r.lastSuccessAt &&
-      lastSuccessAtIsSerializable &&
-      Number.isFinite(r.lastSuccessAt.getTime()) &&
-      Math.abs(r.lastSuccessAt.getTime()) <= JS_DATE_LIMIT_MS
-        ? r.lastSuccessAt
-        : null;
-    return {
+  return res.json(
+    rows.map((r) => ({
       provider: r.provider,
       status: r.status,
-      lastSyncAt: lastSyncAt?.toISOString() ?? null,
-      lastSuccessAt: lastSuccessAt?.toISOString() ?? null,
+      lastSyncAt: r.lastSyncAt?.toISOString() ?? null,
+      lastSuccessAt: r.lastSuccessAt?.toISOString() ?? null,
       lastError: r.lastError,
       successRatePercent: r.successRatePercent,
       refreshAttempts: r.refreshAttempts,
@@ -499,7 +467,7 @@ router.get("/integrations", async (_req, res) => {
       sustainedFailureAlert:
         (r.provider === "TVMaze" || r.provider === "Wikipedia") &&
         r.status === "failing" &&
-        (!lastSuccessAt || lastSuccessAt.getTime() < sustainedFailureThreshold),
+        (!r.lastSuccessAt || r.lastSuccessAt.getTime() < sustainedFailureThreshold),
       lowAccumulatedSuccessRateAlert:
         LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS.has(r.provider) &&
         r.refreshAttempts != null &&
@@ -509,18 +477,38 @@ router.get("/integrations", async (_req, res) => {
         r.successfulRefreshes <= r.refreshAttempts &&
         (r.successfulRefreshes / r.refreshAttempts) * 100 <
           LOW_ACCUMULATED_SUCCESS_RATE_THRESHOLD_PERCENT,
-    };
-  }));
+    })),
+  );
+});
+
+router.get("/catalog-refreshes", async (_req, res) => {
+  const runs = await db
+    .select().from(catalogSyncRunsTable)
+    .orderBy(desc(catalogSyncRunsTable.createdAt), desc(catalogSyncRunsTable.id))
+    .limit(20);
+  const runIds = runs.map((run) => run.id);
+  const items = runIds.length
+    ? await db.select().from(catalogSyncItemsTable)
+        .where(and(inArray(catalogSyncItemsTable.runId, runIds), eq(catalogSyncItemsTable.status, "failed")))
+    : [];
+  return res.json(runs.map((run) => ({
+    ...run,
+    startedAt: run.startedAt?.toISOString() ?? null,
+    finishedAt: run.finishedAt?.toISOString() ?? null,
+    createdAt: run.createdAt.toISOString(),
+    failures: items.filter((item) => item.runId === run.id).map((item) => ({
+      title: item.title,
+      provider: item.provider,
+      error: item.error,
+    })),
+  })));
 });
 
 router.post("/catalog-refreshes", async (req, res) => {
-  const runId = await retryFailedCatalogTitles(id, async (tx, retryRunId) => {
+  const runId = await startCatalogRefresh("manual", undefined, async (tx, id) => {
     await tx.insert(adminAuditLogTable).values({
-      adminId: req.userId!,
-      action: "retry_catalog_refresh",
-      entityType: "catalog_sync",
-      entityId: retryRunId,
-      details: { sourceRunId: id },
+      adminId: req.userId!, action: "start_catalog_refresh",
+      entityType: "catalog_sync", entityId: id,
     });
   });
   return res.status(202).json({ runId });
@@ -565,19 +553,19 @@ router.get("/content", async (req, res) => {
     typeof malformedRefreshTimestampProviderParam !== "string") {
     return res.status(400).json({ error: "Invalid timestamp review provider" });
   }
-  const parsedParams = SearchAdminContentQueryParams.safeParse(req.query);
-  if (!parsedParams.success) {
-    return res.status(400).json({ error: "Invalid content parameters" });
-  }
-  const offset = parseAuditLogPageValue(
-    req.query.offset,
-    0,
-    0,
-    AUDIT_LOG_MAX_OFFSET,
-  );
-  if (offset === null) {
+  const rawOffset = req.query.offset;
+  if (rawOffset !== undefined &&
+    (typeof rawOffset !== "string" || !/^(0|[1-9]\d*)$/.test(rawOffset) ||
+      !Number.isSafeInteger(Number(rawOffset)))) {
     return res.status(400).json({ error: "Invalid timestamp review offset" });
   }
+  const offset = rawOffset === undefined ? 0 : Number(rawOffset);
+  const parsedParams = SearchAdminContentQueryParams.safeParse(req.query);
+  if (!parsedParams.success) {
+    res.status(400).json({ error: "Invalid content parameters" });
+    return;
+  }
+
   const q = parsedParams.data.q?.trim() ?? "";
 
   const region = (typeof regionParam === "string" ? regionParam : "US") as RatingRegion;
@@ -598,8 +586,7 @@ router.get("/content", async (req, res) => {
     .where(and(
       q ? ilike(titlesTable.name, `%${q}%`) : undefined,
     ))
-    .orderBy(desc(titlesTable.popularity), asc(titlesTable.id))
-    .limit(CONTENT_REVIEW_PAGE_SIZE);
+    .orderBy(desc(titlesTable.popularity), asc(titlesTable.id));
   const buildContent = async (
     titles: (typeof titlesTable.$inferSelect)[],
     selectedRegions: RatingRegion[] = titles.map(() => region),
@@ -682,7 +669,7 @@ router.get("/content", async (req, res) => {
   };
 
   if (!malformedRefreshTimestamp) {
-    const titles = await makeTitleQuery();
+    const titles = await makeTitleQuery().limit(CONTENT_REVIEW_PAGE_SIZE);
     return res.json(await buildContent(titles));
   }
   const regions = malformedRefreshTimestampAllRegions
@@ -1081,20 +1068,20 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
 */
 
 router.get("/content-aliases", async (req, res): Promise<void> => {
-  const parsed = DeleteAdminContentAliasBody.safeParse(req.body);
+  const parsed = ListAdminContentAliasesQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid alias review parameters" });
     return;
   }
   const { q: rawQ, ownership, id: requestedId, limit, cursor, afterId, offset } = parsed.data;
   const responseLimit = requestedId === undefined ? limit : 1;
-  const q = parsed.data.q?.trim() ?? "";
+  const q = rawQ?.trim() ?? "";
   const filterKey = JSON.stringify([q, ownership ?? null]);
   const baseWhere = buildContentAliasWhere(q, ownership, requestedId);
   const snapshotMode =
     requestedId === undefined && afterId === undefined && req.query.offset === undefined;
   let pageRows: any[] = [];
-  const total = countRow?.total ?? 0;
+  let total = 0;
   let effectiveOffset = offset;
   let nextAfterId: number | null = null;
   let nextCursor: string | null = null;
@@ -1111,12 +1098,8 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       return;
     }
     pruneAliasReviewSnapshots();
-    const snapshotId = randomUUID();
-    const snapshot = {
-      filterKey,
-      aliasIds: orderedAliases.map((row) => row.id),
-      createdAt: Date.now(),
-    };
+    const snapshotId = match[1];
+    const snapshot = aliasReviewSnapshots.get(snapshotId);
     if (!snapshot) {
       res.status(409).json({ error: "This alias review snapshot expired. Restart the search." });
       return;
@@ -1126,12 +1109,12 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       return;
     }
     const snapshotOffset = Number(match[2]);
-    const nextOffset = Math.min(limit, snapshot.aliasIds.length);
+    const nextOffset = Math.min(snapshotOffset + limit, snapshot.aliasIds.length);
     if (!Number.isSafeInteger(snapshotOffset) || snapshotOffset > snapshot.aliasIds.length) {
       res.status(400).json({ error: "Invalid alias snapshot offset" });
       return;
     }
-    const windowIds = snapshot.aliasIds.slice(0, nextOffset);
+    const windowIds = snapshot.aliasIds.slice(snapshotOffset, nextOffset);
     const liveRows = windowIds.length
       ? await db.select({
           alias: titleAliasesTable,
@@ -1201,23 +1184,30 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       ? createAliasReviewSnapshotCursor(snapshotId, nextOffset, 0)
       : null;
   } else {
-  const [countRow] = await db.select({
-    total: sql<number>`count(*)::int`,
-  }).from(titleAliasesTable)
-    .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
-    .where(where);
+    const [countRow] = await db.select({
+      total: sql<number>`count(*)::int`,
+    }).from(titleAliasesTable)
+      .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+      .where(baseWhere);
     total = countRow?.total ?? 0;
     const queryWhere = afterId === undefined
       ? baseWhere
       : and(baseWhere, gt(titleAliasesTable.id, afterId));
-  const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt), desc(adminAuditLogTable.id))
-    .limit(limit)
-    .offset(offset);
+    const rows = await db.select({
+      alias: titleAliasesTable,
+      titleName: titlesTable.name,
+      titleType: titlesTable.type,
+      titleYear: titlesTable.year,
+    }).from(titleAliasesTable)
+      .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+      .where(queryWhere)
+      .orderBy(
+        ...(afterId !== undefined
+          ? [asc(titleAliasesTable.id)]
+          : [asc(titleAliasesTable.normalizedAlias), asc(titlesTable.name), asc(titleAliasesTable.id)]),
+      )
+      .limit(limit + 1)
+      .offset(afterId === undefined ? offset : 0);
     pageRows = rows.slice(0, limit);
     effectiveOffset = afterId === undefined ? offset : 0;
     nextAfterId = rows.length > limit && pageRows.length > 0
@@ -1225,7 +1215,9 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       : null;
   }
 
-      const collisionCount = collisions.get(alias.normalizedAlias) ?? 1;
+  const collisionCount = await getAliasCollisionCounts([
+    ...new Set(pageRows.map((row) => row.alias.normalizedAlias)),
+  ]);
   res.json(ListAdminContentAliasesResponse.parse({
     items: pageRows.map(({ alias, titleName, titleType, titleYear }) => {
       const isEditorial = Boolean(alias.isEditorial);
@@ -1264,21 +1256,25 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
 });
 
 router.get("/content-aliases/export", async (req, res): Promise<void> => {
-  const parsed = DeleteAdminContentAliasBody.safeParse(req.body);
+  const parsed = ExportAdminContentAliasesQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid alias export parameters" });
     return;
   }
   const q = parsed.data.q?.trim() ?? "";
   const ownership = parsed.data.ownership;
-  const where = buildAuditLogWhere(req.query as Record<string, string>);
+  const where = buildContentAliasWhere(q, ownership);
   const [countRow] = await db.select({
     total: sql<number>`count(*)::int`,
   }).from(titleAliasesTable)
     .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
     .where(where);
   const total = countRow?.total ?? 0;
-  const header = ["ID", "Timestamp", "Admin", "Action", "Entity Type", "Entity ID", "Details"];
+  const header = [
+    "ID", "Title ID", "Title", "Type", "Year", "Alternate title",
+    "Language", "Source", "Source URL", "Ownership", "Editorial",
+    "Collision", "Collision title count", "Last updated",
+  ];
   const escapeCsv = (value: unknown) => {
     const text = String(value ?? "");
     const safeText = /^[\u0000-\u0020]*[=+\-@]/.test(text) ? `'${text}` : text;
@@ -1290,14 +1286,16 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
   res.write(header.map(escapeCsv).join(","));
   let afterId = 0;
   while (!res.destroyed) {
-  const rows = await db
-    .select({ log: adminAuditLogTable, adminEmail: usersTable.email })
-    .from(adminAuditLogTable)
-    .leftJoin(usersTable, eq(usersTable.id, adminAuditLogTable.adminId))
-    .where(where)
-    .orderBy(desc(adminAuditLogTable.createdAt), desc(adminAuditLogTable.id))
-    .limit(limit)
-    .offset(offset);
+    const rows = await db.select({
+      alias: titleAliasesTable,
+      titleName: titlesTable.name,
+      titleType: titlesTable.type,
+      titleYear: titlesTable.year,
+    }).from(titleAliasesTable)
+      .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+      .where(and(where, gt(titleAliasesTable.id, afterId)))
+      .orderBy(asc(titleAliasesTable.id))
+      .limit(CONTENT_ALIAS_EXPORT_BATCH_SIZE);
     if (!rows.length) break;
     const collisions = await getAliasCollisionCounts([
       ...new Set(rows.map((row) => row.alias.normalizedAlias)),
@@ -1573,20 +1571,10 @@ router.get("/content/refresh-batch", async (_req, res) => {
 });
 
 router.post("/content/refresh-batch", async (req, res) => {
-  const rawLimit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+  const rawLimit = req.body?.limit ?? req.query.limit ?? 10;
   const rawOffset = req.body?.offset ?? req.query.offset ?? 0;
-  const limit = parseAuditLogPageValue(
-    req.query.limit,
-    AUDIT_LOG_DEFAULT_LIMIT,
-    1,
-    AUDIT_LOG_MAX_LIMIT,
-  );
-  const offset = parseAuditLogPageValue(
-    req.query.offset,
-    0,
-    0,
-    AUDIT_LOG_MAX_OFFSET,
-  );
+  const limit = Number(rawLimit);
+  const offset = Number(rawOffset);
   const provider = String(req.body?.provider ?? req.query.provider ?? "does_the_dog_die");
   const suppliedFingerprint =
     typeof req.body?.catalogFingerprint === "string"
