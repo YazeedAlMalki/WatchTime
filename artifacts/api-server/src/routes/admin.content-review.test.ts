@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-import { db, pool, providerMappingsTable, safetyRecordsTable, titlesTable } from "@workspace/db";
+import {
+  db,
+  integrationHealthTable,
+  pool,
+  providerMappingsTable,
+  safetyRecordsTable,
+  titlesTable,
+} from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 
 vi.mock("../middlewares/auth", () => ({
@@ -18,10 +25,15 @@ vi.mock("../middlewares/auth", () => ({
 import app from "../app";
 
 const titleIds: number[] = [];
+const integrationHealthIds: number[] = [];
 
 afterEach(async () => {
   if (titleIds.length) {
     await db.delete(titlesTable).where(inArray(titlesTable.id, titleIds.splice(0)));
+  }
+  if (integrationHealthIds.length) {
+    await db.delete(integrationHealthTable)
+      .where(inArray(integrationHealthTable.id, integrationHealthIds.splice(0)));
   }
 });
 
@@ -265,6 +277,56 @@ describe("admin Content review timestamp filter", () => {
     expect(secondPage.body).toHaveLength(2);
     expect(secondPage.body.map((item: any) => item.selectedRating.region)).toEqual(["GB", "US"]);
     expect(secondPage.body.map((item: any) => item.name)).toEqual([`${fixturePrefix}-26`, `${fixturePrefix}-26`]);
+  });
+
+  it("counts malformed provider rows that cannot be assigned to a supported region", async () => {
+    const fixturePrefix = "timestamp-unclassified-fixture-20261021";
+    const provider = `${fixturePrefix} Provider`;
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-classified`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-unclassified`, type: "movie", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    const [health] = await db.insert(integrationHealthTable).values({
+      provider,
+      status: "healthy",
+    }).returning({ id: integrationHealthTable.id });
+    integrationHealthIds.push(health.id);
+
+    const records = await db.insert(safetyRecordsTable).values([
+      {
+        titleId: titles[0].id,
+        sourceName: provider,
+        status: "available",
+        isCommunity: false,
+        url: `https://provider.example/ratings/${titles[0].id}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
+      },
+      {
+        titleId: titles[1].id,
+        sourceName: provider,
+        status: "available",
+        isCommunity: false,
+        url: `https://provider.example/ratings/${titles[1].id}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{ category: "UNSUPPORTED_SYSTEM", label: "12", score: null, maxScore: null, description: null }],
+      },
+    ]).returning({ id: safetyRecordsTable.id });
+    await markMalformedTimestamp(records.map(({ id }) => id));
+
+    const alerts = await request(app).get("/api/admin/integrations").expect(200);
+    expect(alerts.body.find((row: any) => row.provider === provider))
+      .toMatchObject({ malformedRefreshTimestampCount: 2 });
+
+    const review = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=${encodeURIComponent(provider)}&malformedRefreshTimestampAllRegions=true`)
+      .expect(200);
+    expect(review.body.map((item: any) => item.name))
+      .toEqual([`${fixturePrefix}-classified`]);
+    expect(review.body[0].selectedRating)
+      .toMatchObject({ region: "US", refreshTimestampMalformed: true });
   });
 
   it("loads mappings only for malformed-timestamp results and preserves mapping values", async () => {

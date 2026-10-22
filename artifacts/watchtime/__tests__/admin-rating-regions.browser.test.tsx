@@ -148,6 +148,9 @@ it("pages through later malformed-timestamp matches without dropping the region 
     await expect.element(page.getByText(
       "These data-quality warnings do not change provider health status.",
     )).toBeVisible();
+    await expect.element(page.getByText(
+      "Counts include malformed provider records without a supported regional classification; those records do not appear in regional review.",
+    )).toBeVisible();
 
     const reviewLink = page.getByRole("link", { name: "Review affected ratings" });
     await expect.element(reviewLink).toBeVisible();
@@ -280,6 +283,9 @@ it("pages through later malformed-timestamp matches without dropping the region 
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
     await expect.element(page.getByText("Selected GB Fixture Provider rating:", { exact: true }).first()).toBeVisible();
     await expect.element(page.getByText("Selected US Fixture Provider rating:", { exact: true }).first()).toBeVisible();
+    await expect.element(page.getByText(
+      "Includes every supported region; records without a supported regional classification are not listed.",
+    )).toBeVisible();
     await expect.element(page.getByRole("combobox", { name: "Review Wikidata region" })).toBeDisabled();
     await userEvent.click(page.getByRole("button", { name: /Next page/ }));
     await expect.element(page.getByText("Page 2", { exact: true })).toBeVisible();

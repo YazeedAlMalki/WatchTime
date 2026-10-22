@@ -464,51 +464,53 @@ router.get("/integrations", async (_req, res) => {
     malformedTimestampCounts.map((row) => [row.provider, row.count]),
   );
   const sustainedFailureThreshold = Date.now() - 3 * 24 * 60 * 60 * 1000;
-
-      const lastSyncAt =
-        r.lastSyncAt &&
-        lastSyncAtIsSerializable &&
-        Number.isFinite(r.lastSyncAt.getTime()) &&
-        Math.abs(r.lastSyncAt.getTime()) <= JS_DATE_LIMIT_MS
-          ? r.lastSyncAt
-          : null;
-  const runs = await db
-    .select({
-      id: safetySyncRunsTable.id,
-      provider: safetySyncRunsTable.provider,
-      status: safetySyncRunsTable.status,
-      limit: safetySyncRunsTable.limit,
-      offset: safetySyncRunsTable.offset,
-      processed: safetySyncRunsTable.processed,
-      mapped: safetySyncRunsTable.mapped,
-      missing: safetySyncRunsTable.missing,
-      errors: safetySyncRunsTable.errors,
-      completedAt: safetySyncRunsTable.completedAt,
-      error: safetySyncRunsTable.error,
-    })
-    .from(safetySyncRunsTable)
-    .where(inArray(safetySyncRunsTable.status, ["completed", "failed"]))
-    .orderBy(
-      desc(sql`coalesce(${safetySyncRunsTable.completedAt}, ${safetySyncRunsTable.createdAt})`),
-      desc(safetySyncRunsTable.id),
-    )
-    .limit(rawLimit);
-  const runIds = runs.map((run) => run.id);
-  const items = runIds.length
-    ? await db.select().from(catalogSyncItemsTable)
-        .where(and(inArray(catalogSyncItemsTable.runId, runIds), eq(catalogSyncItemsTable.status, "failed")))
-    : [];
-  return res.json(runs.map((run) => ({
-    ...run,
-    startedAt: run.startedAt?.toISOString() ?? null,
-    finishedAt: run.finishedAt?.toISOString() ?? null,
-    createdAt: run.createdAt.toISOString(),
-    failures: items.filter((item) => item.runId === run.id).map((item) => ({
-      title: item.title,
-      provider: item.provider,
-      error: item.error,
-    })),
-  })));
+  return res.json(rows.map(({
+    health: r,
+    lastSyncAtIsSerializable,
+    lastSuccessAtIsSerializable,
+  }) => {
+    const lastSyncAt =
+      r.lastSyncAt &&
+      lastSyncAtIsSerializable &&
+      Number.isFinite(r.lastSyncAt.getTime()) &&
+      Math.abs(r.lastSyncAt.getTime()) <= JS_DATE_LIMIT_MS
+        ? r.lastSyncAt
+        : null;
+    const lastSuccessAt =
+      r.lastSuccessAt &&
+      lastSuccessAtIsSerializable &&
+      Number.isFinite(r.lastSuccessAt.getTime()) &&
+      Math.abs(r.lastSuccessAt.getTime()) <= JS_DATE_LIMIT_MS
+        ? r.lastSuccessAt
+        : null;
+    return {
+      provider: r.provider,
+      status: r.status,
+      lastSyncAt: lastSyncAt?.toISOString() ?? null,
+      lastSuccessAt: lastSuccessAt?.toISOString() ?? null,
+      lastError: r.lastError,
+      successRatePercent: r.successRatePercent,
+      refreshAttempts: r.refreshAttempts,
+      successfulRefreshes: r.successfulRefreshes,
+      mappedTitles: r.mappedTitles,
+      missingMappings: r.missingMappings,
+      malformedRefreshTimestampCount:
+        malformedTimestampCountByProvider.get(r.provider) ?? 0,
+      sustainedFailureAlert:
+        (r.provider === "TVMaze" || r.provider === "Wikipedia") &&
+        r.status === "failing" &&
+        (!lastSuccessAt || lastSuccessAt.getTime() < sustainedFailureThreshold),
+      lowAccumulatedSuccessRateAlert:
+        LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS.has(r.provider) &&
+        r.refreshAttempts != null &&
+        r.successfulRefreshes != null &&
+        r.refreshAttempts >= LOW_ACCUMULATED_SUCCESS_RATE_MIN_ATTEMPTS &&
+        r.successfulRefreshes >= 0 &&
+        r.successfulRefreshes <= r.refreshAttempts &&
+        (r.successfulRefreshes / r.refreshAttempts) * 100 <
+          LOW_ACCUMULATED_SUCCESS_RATE_THRESHOLD_PERCENT,
+    };
+  }));
 });
 
 router.post("/catalog-refreshes", async (req, res) => {
@@ -563,7 +565,7 @@ router.get("/content", async (req, res) => {
     typeof malformedRefreshTimestampProviderParam !== "string") {
     return res.status(400).json({ error: "Invalid timestamp review provider" });
   }
-  const rawOffset = req.body?.offset ?? req.query.offset ?? 0;
+  const rawOffset = req.query.offset;
   if (rawOffset !== undefined &&
     (typeof rawOffset !== "string" || !/^(0|[1-9]\d*)$/.test(rawOffset) ||
       !Number.isSafeInteger(Number(rawOffset)))) {
@@ -581,7 +583,7 @@ router.get("/content", async (req, res) => {
     return;
   }
 
-  const q = parsed.data.q?.trim() ?? "";
+  const q = parsedParams.data.q?.trim() ?? "";
 
   const region = (typeof regionParam === "string" ? regionParam : "US") as RatingRegion;
   const malformedRefreshTimestamp = malformedRefreshTimestampParam === "true";
@@ -684,7 +686,7 @@ router.get("/content", async (req, res) => {
   };
 
   if (!malformedRefreshTimestamp) {
-  const titles = await db.select().from(titlesTable).where(inArray(titlesTable.id, matchingIds));
+    const titles = await makeTitleQuery().limit(CONTENT_REVIEW_PAGE_SIZE);
     return res.json(await buildContent(titles));
   }
   const regions = malformedRefreshTimestampAllRegions
@@ -2025,11 +2027,3 @@ router.get("/audit-log/export", async (req, res) => {
 });
 
 export default router;
-
-      const lastSuccessAt =
-        r.lastSuccessAt &&
-        lastSuccessAtIsSerializable &&
-        Number.isFinite(r.lastSuccessAt.getTime()) &&
-        Math.abs(r.lastSuccessAt.getTime()) <= JS_DATE_LIMIT_MS
-          ? r.lastSuccessAt
-          : null;

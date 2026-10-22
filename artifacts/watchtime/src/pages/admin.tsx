@@ -275,6 +275,11 @@ export default function AdminPage() {
                 These data-quality warnings do not change provider health
                 status.
               </p>
+              <p className="mt-1 text-sm">
+                Counts include malformed provider records without a supported
+                regional classification; those records do not appear in
+                regional review.
+              </p>
               <ul className="mt-4 space-y-3">
                 {integrations
                   .filter(
@@ -1872,7 +1877,7 @@ function ContentTab({
         </Select>
         <span className="text-xs text-muted-foreground">
           {malformedRefreshTimestampAllRegions
-            ? "The review includes every region."
+            ? "Includes every supported region; records without a supported regional classification are not listed."
             : "Titles below use the selected official classification."}
         </span>
         <label className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
