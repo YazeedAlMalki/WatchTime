@@ -1410,11 +1410,11 @@ describe("real catalog sync", () => {
     },
   );
 
-  it("does not immediately retry a failed or skipped attempt after restart", async () => {
+  it.each(["failed", "skipped"] as const)("does not immediately retry a %s attempt after restart", async (status) => {
     const now = new Date();
     const [run] = await db.insert(catalogSyncRunsTable).values({
       trigger: "scheduled",
-      status: "failed",
+      status,
       totalItems: 1,
       createdAt: now,
       finishedAt: now,
