@@ -1136,6 +1136,102 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("records a detached worker failure without replacing its weekly successor or retrying enqueue", async () => {
+    const originalItems = [...sourceItems];
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve; });
+    const workerFailure = new Error("Unable to save failed title progress");
+    const fetchMock = vi.fn(async () => {
+      await fetchGate;
+      // Fail validation without triggering the provider's transport retries.
+      return jsonResponse({ ...showPayload, id: testId + 1 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const retryDelay = 5 * 60 * 1000;
+    // Database and polling timeouts are not refresh timers and must stay live.
+    const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+      delay === WEEK_MS || delay === retryDelay
+        ? [{
+            fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+            delay,
+            timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+          }]
+        : []);
+    let runId: number | undefined;
+    try {
+      sourceItems.splice(0, sourceItems.length, testItem);
+      await scheduleCatalogRefresh(WEEK_MS);
+      const first = refreshTimers()[0];
+      const insertSpy = vi.spyOn(db, "insert");
+      first.fire();
+
+      await vi.waitFor(() => {
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS]);
+        expect(fetchMock).toHaveBeenCalledOnce();
+      });
+      const [run] = await db.select().from(catalogSyncRunsTable)
+        .orderBy(desc(catalogSyncRunsTable.id)).limit(1);
+      runId = run.id;
+      catalogRunIds.push(runId);
+      expect(run).toMatchObject({ trigger: "scheduled", status: "running", totalItems: 1 });
+      expect(run.finishedAt).toBeNull();
+      const successor = refreshTimers()[1];
+      expect(successor.timer).not.toBe(first.timer);
+      expect(clearTimeoutSpy.mock.calls.filter(([timer]) => timer === first.timer)).toHaveLength(1);
+      clearTimeoutSpy.mockClear();
+
+      // The enqueue has resolved and its successor is installed. Rejecting the
+      // title-progress write makes executeRun's detached catch persist failure.
+      vi.spyOn(db, "transaction").mockRejectedValueOnce(workerFailure);
+      releaseFetch();
+      const failed = await waitForCatalogRun(runId, (result) => result.status === "failed");
+      expect(failed.error).toBe(workerFailure.message);
+      expect(failed.finishedAt).toBeInstanceOf(Date);
+      const items = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId));
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({
+        itemKey: testItem.key,
+        status: "failed",
+        error: workerFailure.message,
+        finishedAt: expect.any(Date),
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(refreshTimers()).toHaveLength(2);
+      expect(refreshTimers()[1].timer).toBe(successor.timer);
+      expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === retryDelay)).toHaveLength(0);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(first.timer);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(successor.timer);
+      // Only the original run and its title were enqueued.
+      expect(insertSpy).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(errorSpy).toHaveBeenCalledWith(
+        { err: workerFailure, runId }, "catalog refresh failed",
+      );
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        expect.anything(), "unable to start scheduled catalog refresh",
+      );
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        expect.anything(), "unable to reschedule catalog refresh",
+      );
+    } finally {
+      releaseFetch();
+      try {
+        if (runId !== undefined) {
+          await waitForCatalogRun(runId, (run) => ["failed", "succeeded"].includes(run.status));
+        }
+      } finally {
+        scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+        sourceItems.splice(0, sourceItems.length, ...originalItems);
+        vi.restoreAllMocks();
+      }
+    }
+  });
+
   it("keeps only one pending refresh when scheduling is initialized twice", async () => {
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
