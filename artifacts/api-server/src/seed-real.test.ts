@@ -1182,6 +1182,90 @@ describe("real catalog sync", () => {
     },
   );
 
+  it.each(["recovery", "latest-run read"] as const)(
+    "keeps exactly one weekly successor when replacement %s fails before a pending start succeeds",
+    async (failurePoint) => {
+      const originalItems = [...sourceItems];
+      const [run] = await db.insert(catalogSyncRunsTable).values({
+        trigger: "scheduled",
+        status: "queued",
+        totalItems: 0,
+      }).returning();
+      catalogRunIds.push(run.id);
+      let resolveStart!: (runs: typeof run[]) => void;
+      const startGate = new Promise<typeof run[]>((resolve) => { resolveStart = resolve; });
+      const returning = vi.fn(() => startGate);
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const retryDelay = 5 * 60 * 1000;
+      const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+        delay === WEEK_MS || delay === retryDelay
+          ? [{
+              fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+              delay,
+              timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+            }]
+          : []);
+
+      try {
+        // An empty run exercises a successful enqueue without provider requests.
+        sourceItems.splice(0, sourceItems.length);
+        await scheduleCatalogRefresh(WEEK_MS);
+        const first = refreshTimers()[0];
+        expect(first).toBeDefined();
+        const insertSpy = vi.spyOn(db, "insert").mockReturnValueOnce({
+          values: () => ({ returning }),
+        } as unknown as ReturnType<typeof db.insert>);
+        // Keep the enqueue unresolved, not just the detached worker.
+        first.fire();
+        expect(returning).toHaveBeenCalledOnce();
+
+        const replacementFailure = new Error(`Replacement ${failurePoint} failed`);
+        if (failurePoint === "recovery") {
+          vi.spyOn(db, "transaction").mockRejectedValueOnce(replacementFailure);
+        } else {
+          vi.spyOn(db, "select").mockImplementationOnce(() => { throw replacementFailure; });
+        }
+        await expect(scheduleCatalogRefresh()).rejects.toBe(replacementFailure);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(first.timer);
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS]);
+
+        resolveStart([run]);
+        await vi.waitFor(() => {
+          expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS]);
+        });
+        await waitForCatalogRun(run.id, (result) => result.status === "succeeded");
+        // Drain remaining continuations to catch a duplicate reschedule.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const successor = refreshTimers()[1];
+        expect(refreshTimers()).toHaveLength(2);
+        expect(successor.timer).not.toBe(first.timer);
+        expect(clearTimeoutSpy.mock.calls.filter(([timer]) => timer === first.timer)).toHaveLength(1);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(successor.timer);
+        expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === retryDelay)).toHaveLength(0);
+        expect(insertSpy).toHaveBeenCalledOnce();
+        expect(errorSpy).not.toHaveBeenCalledWith(
+          expect.anything(), "unable to start scheduled catalog refresh",
+        );
+        expect(errorSpy).not.toHaveBeenCalledWith(
+          expect.anything(), "unable to reschedule catalog refresh",
+        );
+      } finally {
+        resolveStart([run]);
+        try {
+          if (returning.mock.calls.length) {
+            await waitForCatalogRun(run.id, (result) => result.status === "succeeded");
+          }
+        } finally {
+          scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+          sourceItems.splice(0, sourceItems.length, ...originalItems);
+          vi.restoreAllMocks();
+        }
+      }
+    },
+  );
+
   it("does not replace a newer schedule when an older scheduled run finishes", async () => {
     const originalItems = [...sourceItems];
     let releaseFetch!: () => void;
