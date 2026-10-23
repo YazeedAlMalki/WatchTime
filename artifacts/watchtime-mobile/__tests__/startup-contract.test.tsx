@@ -22,9 +22,9 @@ const mockQueryEnabled = {
   trending: [] as boolean[],
 };
 const mockSignedInHomeQueryState = {
-  shows: { current: { data: [] as any[], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
-  watchlist: { current: { data: [] as any[], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
-  recommendations: { current: { data: [] as any[], dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
+  shows: { current: { data: [] as any[] | undefined, dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
+  watchlist: { current: { data: [] as any[] | undefined, dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
+  recommendations: { current: { data: [] as any[] | undefined, dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
 };
 
 jest.mock('@/lib/home-startup', () => {
@@ -1068,6 +1068,150 @@ describe('mobile startup contracts', () => {
     expect(screen.getByText('Trending Now')).toBeTruthy();
     expect(screen.getByText('Public trending after sign out')).toBeTruthy();
     expect(mockQueryEnabled.trending).toEqual([true]);
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
+  it('keeps late personal feed responses hidden after Clerk signs out', async () => {
+    const deferred = <T,>() => {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise;
+      });
+      return { promise, resolve };
+    };
+    const pendingResponses = {
+      shows: deferred<any[]>(),
+      watchlist: deferred<any[]>(),
+      recommendations: deferred<any[]>(),
+    };
+
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'late-feed-response-user',
+    });
+    mockSignedInHomeQueryState.shows.current = {
+      data: undefined,
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: true,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.watchlist.current = {
+      data: undefined,
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: true,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.recommendations.current = {
+      data: undefined,
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: true,
+      isRefetching: false,
+    };
+
+    const screen = await render(<HomeScreen />);
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+    await act(async () => {
+      pendingFrames[1]?.(0);
+    });
+
+    await waitFor(() => {
+      expect(mockQueryEnabled.shows.at(-1)).toBe(true);
+      expect(mockQueryEnabled.watchlist.at(-1)).toBe(true);
+      expect(mockQueryEnabled.recommendations.at(-1)).toBe(true);
+    });
+
+    const lateResponseUpdates = Promise.all([
+      pendingResponses.shows.promise,
+      pendingResponses.watchlist.promise,
+      pendingResponses.recommendations.promise,
+    ]).then(([shows, watchlist, recommendations]) => {
+      mockSignedInHomeQueryState.shows.current = {
+        data: shows,
+        dataUpdatedAt: 789,
+        isError: false,
+        isLoading: false,
+        isRefetching: false,
+      };
+      mockSignedInHomeQueryState.watchlist.current = {
+        data: watchlist,
+        dataUpdatedAt: 789,
+        isError: false,
+        isLoading: false,
+        isRefetching: false,
+      };
+      mockSignedInHomeQueryState.recommendations.current = {
+        data: recommendations,
+        dataUpdatedAt: 789,
+        isError: false,
+        isLoading: false,
+        isRefetching: false,
+      };
+    });
+
+    mockTrendingQueryState.current = {
+      data: [{ id: 933, name: 'Public browse while personal requests finish' }],
+      dataUpdatedAt: 456,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: false,
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText('Track your shows.')).toBeTruthy();
+    expect(screen.getByText('Trending Now')).toBeTruthy();
+    expect(screen.getByText('Public browse while personal requests finish')).toBeTruthy();
+
+    await act(async () => {
+      pendingResponses.shows.resolve([{
+        title: { id: 931, name: 'Late tracked show' },
+        nextEpisode: {
+          id: 9311,
+          seasonNumber: 2,
+          episodeNumber: 5,
+          name: 'Late next episode',
+        },
+        watchedEpisodes: 4,
+        totalEpisodes: 10,
+      }]);
+      pendingResponses.watchlist.resolve([{ id: 932, name: 'Late watchlist title' }]);
+      pendingResponses.recommendations.resolve([{
+        reason: 'Because you watched Late tracked show',
+        titles: [{ id: 934, name: 'Late recommendation' }],
+      }]);
+      await lateResponseUpdates;
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText('Track your shows.')).toBeTruthy();
+    expect(screen.getByText('Trending Now')).toBeTruthy();
+    expect(screen.getByText('Public browse while personal requests finish')).toBeTruthy();
+    expect(screen.queryByText('Late tracked show')).toBeNull();
+    expect(screen.queryByText(/Late next episode/)).toBeNull();
+    expect(screen.queryByText('Late watchlist title')).toBeNull();
+    expect(screen.queryByText('Late recommendation')).toBeNull();
+    expect(screen.queryByText('Because you watched Late tracked show')).toBeNull();
+    expect(screen.queryByText('Up Next')).toBeNull();
+    expect(screen.queryByText('Your Watchlist')).toBeNull();
+    expect(mockQueryEnabled.trending.at(-1)).toBe(true);
 
     await act(async () => {
       screen.unmount();
