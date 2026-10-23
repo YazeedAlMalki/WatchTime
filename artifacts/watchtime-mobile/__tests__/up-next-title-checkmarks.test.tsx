@@ -498,7 +498,7 @@ it('shows a failed Home mark and refreshes title, seasons, and activity after a 
   );
   expect(home.getByText('Watched').props.allowFontScaling).not.toBe(false);
   const stopPropagation = jest.fn();
-  fireEvent.press(home.getByTestId('mark-watched-201'), { stopPropagation });
+  await fireEvent.press(home.getByTestId('mark-watched-201'), { stopPropagation });
   await waitFor(() => {
     expect(home.getByRole('alert').props.children).toBe(
       "Couldn't mark this episode as watched. Please try again.",
@@ -521,11 +521,52 @@ it('shows a failed Home mark and refreshes title, seasons, and activity after a 
     expect(client.getQueryState(getGetSeasonQueryKey(42, season.seasonNumber))?.isInvalidated).toBe(false);
   }
 
-  let finishRetry!: () => void;
-  mockMarkRequest.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRetry = resolve; }));
-  fireEvent.press(home.getByRole('button', { name: 'Retry marking episode as watched' }), { stopPropagation });
+  let failRetry!: (error: Error) => void;
+  mockMarkRequest.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+    failRetry = reject;
+  }));
+  await fireEvent.press(home.getByRole('button', { name: 'Retry marking episode as watched' }), { stopPropagation });
   await waitFor(() => {
     expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+    expect(home.getByText('Saving…')).toBeTruthy();
+    expect(home.getByTestId('mark-watched-201')).toBeDisabled();
+  });
+
+  // Exercise repeated presses through the rendered control, not its callback:
+  // native disabled handling must prevent additional mutations.
+  for (let tap = 0; tap < 5; tap += 1) {
+    await fireEvent.press(home.getByTestId('mark-watched-201'), { stopPropagation });
+  }
+  expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+  expect(client.getMutationCache().getAll()).toHaveLength(2);
+  expect(mockMarkRequest).toHaveBeenLastCalledWith({
+    episodeId: 201, data: { includePrevious: true },
+  });
+  expect(home.getByTestId('mark-watched-201')).toBeDisabled();
+  expect(home.getByText('Saving…')).toBeTruthy();
+  expect(home.queryByRole('alert')).toBeNull();
+  expect(mockWatched.size).toBe(0);
+  expect(home.getByText('0/4 episodes')).toBeTruthy();
+  expect(home.getByText('S2 · E1 — Third')).toBeTruthy();
+
+  await act(async () => failRetry(new Error('Retry network unavailable')));
+  await waitFor(() => {
+    expect(home.getByRole('button', { name: 'Retry marking episode as watched' })).toBeEnabled();
+    expect(home.getByRole('alert').props.children).toBe(
+      "Couldn't mark this episode as watched. Please try again.",
+    );
+  });
+  expect(home.queryByText('Saving…')).toBeNull();
+  expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+  expect(mockWatched.size).toBe(0);
+  expect(home.getByText('0/4 episodes')).toBeTruthy();
+  expect(home.getByText('S2 · E1 — Third')).toBeTruthy();
+
+  let finishRetry!: () => void;
+  mockMarkRequest.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRetry = resolve; }));
+  await fireEvent.press(home.getByRole('button', { name: 'Retry marking episode as watched' }), { stopPropagation });
+  await waitFor(() => {
+    expect(mockMarkRequest).toHaveBeenCalledTimes(3);
     expect(home.getByText('Saving…')).toBeTruthy();
     expect(home.getByTestId('mark-watched-201')).toBeDisabled();
   });
