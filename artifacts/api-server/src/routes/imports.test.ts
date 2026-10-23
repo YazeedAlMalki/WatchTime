@@ -208,7 +208,7 @@ describe("private, idempotent watch-history imports", () => {
   });
 
   it.each([
-    { name: "keeps shared regional episode titles ambiguous and preserves reviewed matches after alias refresh", freshImport: false, removeAlias: false, resolveEpisode: false },
+    { name: "reuses the saved preview for identical uploads after a regional alias moves and confirms idempotently", freshImport: false, removeAlias: false, resolveEpisode: false },
     { name: "matches a fresh regional import to the current alias owner after a refresh", freshImport: true, removeAlias: false, resolveEpisode: false },
     { name: "leaves a fresh import unmatched after its regional alias is removed without changing an earlier preview", freshImport: true, removeAlias: true, resolveEpisode: false },
     { name: "records only the chosen show's episode and parent history after reviewing a shared regional title", freshImport: false, removeAlias: false, resolveEpisode: true },
@@ -372,16 +372,17 @@ describe("private, idempotent watch-history imports", () => {
         return;
       }
 
+      const content = [
+        "kind,title,type,year,season,episode",
+        "watchlist,地域限定タイトル,tv,2020,,",
+        "watchlist,共通タイトル,tv,2020,,",
+        "watched_episode,地域限定タイトル,tv,2020,2,3",
+        "watched_episode,共通タイトル,tv,2020,2,3",
+      ].join("\n");
       const created = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
         source: "generic",
         fileName: "refreshed-regional-titles.csv",
-        content: [
-          "kind,title,type,year,season,episode",
-          "watchlist,地域限定タイトル,tv,2020,,",
-          "watchlist,共通タイトル,tv,2020,,",
-          "watched_episode,地域限定タイトル,tv,2020,2,3",
-          "watched_episode,共通タイトル,tv,2020,2,3",
-        ].join("\n"),
+        content,
       });
       expect(created.status).toBe(201);
       importId = created.body.id;
@@ -501,13 +502,33 @@ describe("private, idempotent watch-history imports", () => {
         return;
       }
 
-      const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
+      // The same user/source/content fingerprint must reuse the reviewed job,
+      // even though a new match would now point to the secondary title.
+      const repeat = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
+        source: "generic",
+        fileName: "renamed-regional-titles.csv",
+        content,
+      });
+      expect(repeat.status).toBe(200);
+      expect(repeat.body.id).toBe(importId);
+      repeat.body.items.sort((a: { rowNumber: number }, b: { rowNumber: number }) => a.rowNumber - b.rowNumber);
+      expect(repeat.body).toEqual(persistedPreview.body);
+      expect(repeat.body.items).toEqual(created.body.items);
+      expect(repeat.body.items[0].titleId).toBe(primaryId);
+      expect(repeat.body.items[2]).toMatchObject({ titleId: primaryId, episodeId: regionalEpisode.id });
+
+      const confirmed = await supertest(app).post(`/api/imports/${repeat.body.id}/confirm`).set("x-test-user", USER_A);
       expect(confirmed.status).toBe(200);
+      expect(confirmed.body.status).toBe("confirmed");
       confirmed.body.items.sort((a: { rowNumber: number }, b: { rowNumber: number }) => a.rowNumber - b.rowNumber);
       expect(confirmed.body.summary).toMatchObject({ selected: 2, applied: 2, skipped: 2, ambiguous: 2 });
       expect(confirmed.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId });
       expect(confirmed.body.items[2]).toMatchObject({ classification: "matched", titleId: primaryId, episodeId: regionalEpisode.id });
       expect(confirmed.body.items[3]).toMatchObject(ambiguousEpisode);
+      const reconfirmed = await supertest(app).post(`/api/imports/${repeat.body.id}/confirm`).set("x-test-user", USER_A);
+      expect(reconfirmed.status).toBe(200);
+      reconfirmed.body.items.sort((a: { rowNumber: number }, b: { rowNumber: number }) => a.rowNumber - b.rowNumber);
+      expect(reconfirmed.body).toEqual(confirmed.body);
       const tracked = await db.select().from(watchlistTable).where(and(
         eq(watchlistTable.userId, USER_A),
         inArray(watchlistTable.titleId, [primaryId, secondaryId]),
@@ -519,6 +540,11 @@ describe("private, idempotent watch-history imports", () => {
       ));
       expect(watched).toHaveLength(1);
       expect(watched[0]).toMatchObject({ titleId: primaryId, episodeId: regionalEpisode.id });
+      const parents = await db.select().from(watchedTitlesTable).where(and(
+        eq(watchedTitlesTable.userId, USER_A),
+        inArray(watchedTitlesTable.titleId, [primaryId, secondaryId]),
+      ));
+      expect(parents.map((row) => row.titleId)).toEqual([primaryId]);
     } finally {
       vi.unstubAllGlobals();
       await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
