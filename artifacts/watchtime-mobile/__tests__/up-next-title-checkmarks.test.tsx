@@ -373,6 +373,88 @@ it('moves the last watched show out of Up Next and into Caught Up after a title-
   client.clear();
 });
 
+it('keeps settled and late Home mark errors tied to the failed episode as the same card updates', async () => {
+  mockWatched.clear();
+  mockMarkRequest.mockReset();
+  mockMarkRequest.mockRejectedValueOnce(new Error('Network unavailable'));
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const home = await render(
+    <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+  );
+  const card = await home.findByTestId('upnext-42');
+  const replaceEpisode = async (episodeIndex: number) => {
+    await act(async () => {
+      client.setQueryData(mockApi.getGetMyShowsQueryKey(), [{
+        ...mockTrackedShow(),
+        nextEpisode: mockEpisodes[episodeIndex],
+      }]);
+    });
+    await waitFor(() => {
+      expect(home.getByTestId(`mark-watched-${mockEpisodes[episodeIndex].id}`)).toBeTruthy();
+      expect(home.getByTestId('upnext-42')).toBe(card);
+    });
+  };
+  const expectNormalMark = () => {
+    expect(home.queryByRole('alert')).toBeNull();
+    expect(home.queryByRole('button', { name: 'Retry marking episode as watched' })).toBeNull();
+    expect(home.queryByText('Retry')).toBeNull();
+    expect(home.queryByTestId('icon-refresh-cw')).toBeNull();
+    expect(home.getByRole('button', { name: 'Mark episode as watched' })).toBeEnabled();
+    expect(home.getByText('Watched')).toBeTruthy();
+    expect(home.getByTestId('icon-check')).toBeTruthy();
+  };
+
+  try {
+    await fireEvent.press(home.getByTestId('mark-watched-201'), { stopPropagation: jest.fn() });
+    await waitFor(() => {
+      expect(home.getByRole('alert')).toBeTruthy();
+      expect(home.getByRole('button', { name: 'Retry marking episode as watched' })).toBeEnabled();
+    });
+
+    // Another screen/device advances the same show's next episode, without
+    // remounting its card or clearing its mutation observer.
+    await replaceEpisode(3);
+    expectNormalMark();
+
+    let failOldRequest!: (error: Error) => void;
+    mockMarkRequest.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      failOldRequest = reject;
+    }));
+    await fireEvent.press(home.getByTestId('mark-watched-202'), { stopPropagation: jest.fn() });
+    await waitFor(() => {
+      expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+      expect(home.getByText('Saving…')).toBeTruthy();
+    });
+    expect(mockMarkRequest).toHaveBeenLastCalledWith({
+      episodeId: 202, data: { includePrevious: true },
+    });
+    await replaceEpisode(0);
+    await act(async () => failOldRequest(new Error('Late network failure')));
+    await waitFor(expectNormalMark);
+    expect(home.getByText('S1 · E1 — Pilot')).toBeTruthy();
+    expect(mockWatched.size).toBe(0);
+
+    // The replacement can still report its own failure normally.
+    mockMarkRequest.mockRejectedValueOnce(new Error('Replacement failed'));
+    await fireEvent.press(home.getByTestId('mark-watched-101'), { stopPropagation: jest.fn() });
+    await waitFor(() => {
+      expect(home.getByRole('alert')).toBeTruthy();
+      expect(home.getByRole('button', { name: 'Retry marking episode as watched' })).toBeEnabled();
+    });
+    expect(mockMarkRequest).toHaveBeenLastCalledWith({
+      episodeId: 101, data: { includePrevious: true },
+    });
+  } finally {
+    await act(async () => home.unmount());
+    client.clear();
+  }
+});
+
 it('shows a failed Home mark and refreshes title, seasons, and activity after a successful retry', async () => {
   mockWatched.clear();
   mockMarkRequest.mockReset();

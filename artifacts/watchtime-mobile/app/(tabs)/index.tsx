@@ -68,6 +68,9 @@ function UpNextCard({ show }: { show: TrackedShow }) {
     },
   });
   const ep = show.nextEpisode;
+  // A progress refresh can replace the episode without remounting this card.
+  // Only the episode submitted by the failed request should offer a retry.
+  const hasEpisodeError = markWatched.isError && markWatched.variables?.episodeId === ep?.id;
   const progress =
     show.totalEpisodes > 0 ? show.watchedEpisodes / show.totalEpisodes : 0;
 
@@ -123,7 +126,7 @@ function UpNextCard({ show }: { show: TrackedShow }) {
             <Pressable
               testID={`mark-watched-${ep.id}`}
               accessibilityRole="button"
-              accessibilityLabel={markWatched.isError ? 'Retry marking episode as watched' : 'Mark episode as watched'}
+              accessibilityLabel={hasEpisodeError ? 'Retry marking episode as watched' : 'Mark episode as watched'}
               disabled={markWatched.isPending}
               onPress={(event) => {
                 event.stopPropagation?.();
@@ -146,14 +149,14 @@ function UpNextCard({ show }: { show: TrackedShow }) {
                 },
               ]}
             >
-              <Feather name={markWatched.isError ? 'refresh-cw' : 'check'} size={14} color={c.primaryForeground} />
+              <Feather name={hasEpisodeError ? 'refresh-cw' : 'check'} size={14} color={c.primaryForeground} />
               <Text style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_600SemiBold', flexShrink: 1 }}>
-                {markWatched.isPending ? 'Saving…' : markWatched.isError ? 'Retry' : 'Watched'}
+                {markWatched.isPending ? 'Saving…' : hasEpisodeError ? 'Retry' : 'Watched'}
               </Text>
             </Pressable>
           ) : null}
         </View>
-        {ep && markWatched.isError ? (
+        {ep && hasEpisodeError ? (
           <Text
             accessibilityRole="alert"
             style={{ color: c.destructive, fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 8 }}
