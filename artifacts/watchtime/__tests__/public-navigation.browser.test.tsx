@@ -123,21 +123,34 @@ it("keeps the public menu usable on a short screen with enlarged text", async ()
   await expect.element(page.getByRole("dialog", { name: "Navigation" })).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Close navigation" })).toBeVisible();
   await expect.element(page.getByTestId("link-public-browse")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Close navigation" })).toHaveFocus();
   expectWithinDialogViewport(close);
   expectWithinDialogViewport(browse);
   expect(dialog.scrollHeight).toBeGreaterThan(dialog.clientHeight);
   expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 
-  dialog.scrollTop = dialog.scrollHeight;
-  await expect.element(page.getByTestId("link-public-sign-in")).toBeVisible();
+  await userEvent.tab();
+  await expect.element(page.getByTestId("link-public-browse")).toHaveFocus();
+  await userEvent.tab();
+  await expect.element(page.getByTestId("link-public-stats")).toHaveFocus();
+  await userEvent.tab();
+  await expect.element(page.getByTestId("link-public-sign-in")).toHaveFocus();
+  expect(dialog.scrollTop).toBeGreaterThan(0);
   expectWithinDialogViewport(signIn);
   expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 
-  dialog.scrollTop = 0;
+  await userEvent.tab({ shift: true });
+  await expect.element(page.getByTestId("link-public-stats")).toHaveFocus();
+  await userEvent.tab({ shift: true });
+  await expect.element(page.getByTestId("link-public-browse")).toHaveFocus();
+  await userEvent.tab({ shift: true });
+  await expect.element(page.getByRole("button", { name: "Close navigation" })).toHaveFocus();
   expectWithinDialogViewport(close);
-  await expect.element(page.getByRole("button", { name: "Close navigation" })).toBeVisible();
+  expect(dialog.scrollTop).toBe(0);
+  await userEvent.keyboard("{Enter}");
+  expect(dialog.open).toBe(false);
 });
 
 it("keeps the full public navigation readable and separated at an enlarged text size", async () => {
