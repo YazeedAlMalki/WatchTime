@@ -1,5 +1,6 @@
 import React from 'react';
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { View } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 let mockWatched = false;
@@ -85,8 +86,8 @@ jest.mock('@/hooks/useColors', () => ({
 }));
 jest.mock('@/constants/colors', () => ({ __esModule: true, default: { radius: 8 } }));
 
-// Keep React Query real: infinitely fresh, inactive account-scoped collection
-// and activity queries must be invalidated before My Shows can fetch new data.
+// Keep React Query real: infinitely fresh account-scoped collection and activity
+// queries need invalidation, whether My Shows is already mounted or opened later.
 jest.mock('@workspace/api-client-react', () => {
   const { useQuery, useMutation } = require('@tanstack/react-query');
   const titleKey = (id: number) => [`/api/titles/${id}`];
@@ -206,6 +207,81 @@ import {
   getGetMyRecentActivityQueryKey,
   getGetMyRecommendationsQueryKey,
 } from '@workspace/api-client-react';
+
+it('updates already-open History after marking and unmarking an episode in title detail', async () => {
+  mockTitleIsMovie = false;
+  mockMovieWatched = false;
+  mockWatched = false;
+  jest.clearAllMocks();
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
+  client.setQueryData(activityKey, []);
+
+  // Both routes share the app's provider for the entire journey, just as a
+  // mounted Expo tab does while the detail route is on top of it.
+  const screens = await render(
+    <QueryClientProvider client={client}>
+      <View testID="mounted-my-shows"><MyShowsScreen /></View>
+      <View testID="open-title-detail"><TitleDetailScreen /></View>
+    </QueryClientProvider>,
+  );
+  try {
+    const shows = within(screens.getByTestId('mounted-my-shows'));
+    const detail = within(screens.getByTestId('open-title-detail'));
+    await fireEvent.press(shows.getByTestId('tab-history'));
+    await waitFor(() => expect(shows.getByText('No recent activity')).toBeTruthy());
+    expect(shows.queryByTestId('history-item-42')).toBeNull();
+
+    const activityQuery = client.getQueryCache().find({ queryKey: activityKey, exact: true });
+    expect(activityQuery?.getObserversCount()).toBe(1);
+    expect(activityQuery?.isStale()).toBe(false);
+    expect(mockActivityFetch).not.toHaveBeenCalled();
+
+    await fireEvent.press(detail.getByTestId('season-1'));
+    await waitFor(() => expect(detail.getByTestId('episode-check-101')).toBeTruthy());
+    await fireEvent.press(detail.getByTestId('episode-check-101'));
+    await waitFor(() => {
+      expect(mockMarkRequest).toHaveBeenCalledWith({ episodeId: 101, data: {} });
+      expect(mockActivityFetch).toHaveBeenCalledTimes(1);
+      expect(shows.getByTestId('history-item-42')).toBeTruthy();
+      expect(shows.getByText('S1E1 — Pilot')).toBeTruthy();
+      expect(shows.queryByText('No recent activity')).toBeNull();
+    });
+    expect(client.getQueryData(activityKey)).toEqual(mockActivity());
+    // Wait for the detail's own episode query to receive its watched flag so
+    // the next press uses the real unmark path, rather than marking twice.
+    await waitFor(() => expect(
+      client.getQueryData<{ episodes: { watched: boolean }[] }>(['/api/titles/42/seasons/1'])
+        ?.episodes[0].watched,
+    ).toBe(true));
+
+    await fireEvent.press(detail.getByTestId('episode-check-101'));
+    await waitFor(() => {
+      expect(mockUnmarkRequest).toHaveBeenCalledWith({ episodeId: 101 });
+      expect(mockActivityFetch).toHaveBeenCalledTimes(2);
+      expect(shows.queryByTestId('history-item-42')).toBeNull();
+      expect(shows.queryByText('S1E1 — Pilot')).toBeNull();
+      expect(shows.getByText('No recent activity')).toBeTruthy();
+    });
+    expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+    expect(mockUnmarkRequest).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(activityKey)).toEqual([]);
+    expect(client.getQueryCache().find({ queryKey: activityKey, exact: true })).toBe(activityQuery);
+    expect(activityQuery?.getObserversCount()).toBe(1);
+    expect(activityQuery?.isStale()).toBe(false);
+    // History stays selected without another tab press or pull-to-refresh.
+    expect(shows.queryByTestId('shows-search-input')).toBeNull();
+  } finally {
+    await act(async () => screens.unmount());
+    client.clear();
+  }
+});
 
 it.each([
   { action: 'mark', initiallyWatched: false },
