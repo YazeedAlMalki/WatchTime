@@ -1282,6 +1282,85 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
+  it("counts a verified match without classifications as a healthy mapped refresh", async () => {
+    const previousHealth = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_unrated_health_test__",
+      year: 2020,
+      imdbId: "tt7654323",
+      popularity: 0,
+    }).returning();
+
+    try {
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      const [countsBefore] = await db.select({
+        mapped: sql<number>`count(*) filter (where ${providerMappingsTable.status} = 'mapped')::int`,
+        missing: sql<number>`count(*) filter (where ${providerMappingsTable.status} = 'missing')::int`,
+      }).from(providerMappingsTable)
+        .where(eq(providerMappingsTable.provider, WIKIDATA_PROVIDER));
+      const client = createWikidataClient({
+        retries: 0,
+        fetchFn: async () => jsonResponse({
+          results: {
+            bindings: [{
+              item: { type: "uri", value: "https://www.wikidata.org/entity/Q55" },
+              imdbId: { type: "literal", value: "tt7654323" },
+            }],
+          },
+        }),
+      });
+
+      // A repeat refresh is another success, not another mapped title.
+      for (const attempt of [1, 2]) {
+        await expect(refreshWikidataTitle(title.id, client)).resolves.toEqual({
+          ok: true,
+          titleId: title.id,
+          titleName: title.name,
+          externalId: "Q55",
+          classifications: 0,
+        });
+
+        const [health] = await db.select().from(integrationHealthTable)
+          .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+        expect(health).toMatchObject({
+          status: "healthy",
+          lastError: null,
+          lastSyncAt: expect.any(Date),
+          lastSuccessAt: expect.any(Date),
+          refreshAttempts: attempt,
+          successfulRefreshes: attempt,
+          successRatePercent: 100,
+          mappedTitles: countsBefore.mapped + 1,
+          missingMappings: countsBefore.missing,
+        });
+        expect(health.lastSuccessAt).toEqual(health.lastSyncAt);
+      }
+
+      const mappings = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, title.id),
+        eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
+      ));
+      expect(mappings).toEqual([expect.objectContaining({
+        externalId: "Q55",
+        status: "mapped",
+        lastRefreshedAt: expect.any(Date),
+      })]);
+      const safetyRecords = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id));
+      expect(safetyRecords).toHaveLength(0);
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousHealth.length > 0) {
+        await db.insert(integrationHealthTable).values(previousHealth);
+      }
+    }
+  });
+
   it("accumulates persisted refresh outcomes and keeps the latest error state", async () => {
     const previousRows = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
