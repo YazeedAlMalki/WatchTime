@@ -227,7 +227,12 @@ function ClerkSignUpScreen() {
               keyboardType="numeric"
             />
             {verificationError || errors.fields.code ? (
-              <Text style={{ color: c.destructive, fontSize: 13, marginBottom: 8 }}>
+              <Text
+                testID="verification-error"
+                accessibilityRole="alert"
+                accessibilityLiveRegion="polite"
+                style={{ color: c.destructive, fontSize: 13, marginBottom: 8 }}
+              >
                 {verificationError || errors.fields.code?.message}
               </Text>
             ) : null}
