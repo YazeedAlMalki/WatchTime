@@ -1235,10 +1235,25 @@ describe("real catalog sync", () => {
     }
   });
 
-  it("preserves the newest of two replacement schedules when an older scheduled start rejects", async () => {
+  it("runs and reschedules the newest of two replacement schedules after an older scheduled start rejects", async () => {
+    const originalItems = [...sourceItems];
+    const originalInsert = db.insert.bind(db);
     let rejectStart!: (error: Error) => void;
     const startGate = new Promise<never>((_resolve, reject) => { rejectStart = reject; });
     const returning = vi.fn(() => startGate);
+    let releaseNewest!: () => void;
+    const newestGate = new Promise<void>((resolve) => { releaseNewest = resolve; });
+    const newestReturning = vi.fn(async () => {
+      await newestGate;
+      const runs = await originalInsert(catalogSyncRunsTable).values({
+        trigger: "scheduled",
+        status: "queued",
+        totalItems: 0,
+      }).returning();
+      catalogRunIds.push(...runs.map(({ id }) => id));
+      return runs;
+    });
+    const newestValues = vi.fn(() => ({ returning: newestReturning }));
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
     const retryDelay = 5 * 60 * 1000;
@@ -1255,12 +1270,16 @@ describe("real catalog sync", () => {
       .filter((timer) => refreshTimers().some((refresh) => refresh.timer === timer));
 
     try {
+      // Exercise the real worker without provider requests or item inserts.
+      sourceItems.splice(0, sourceItems.length);
       await scheduleCatalogRefresh(WEEK_MS);
       const first = refreshTimers()[0];
       expect(first).toBeDefined();
       // Pause enqueueing itself, not provider work after a successful start.
-      vi.spyOn(db, "insert").mockReturnValueOnce({
+      const insertSpy = vi.spyOn(db, "insert").mockReturnValueOnce({
         values: () => ({ returning }),
+      } as unknown as ReturnType<typeof db.insert>).mockReturnValueOnce({
+        values: newestValues,
       } as unknown as ReturnType<typeof db.insert>);
       first.fire();
       expect(returning).toHaveBeenCalledOnce();
@@ -1291,10 +1310,43 @@ describe("real catalog sync", () => {
       expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === retryDelay)).toHaveLength(0);
       // Even an asynchronous attempt to replace the schedule must not begin.
       expect(connectSpy).not.toHaveBeenCalled();
+
+      third.fire();
+      expect(insertSpy).toHaveBeenCalledTimes(2);
+      expect(insertSpy).toHaveBeenNthCalledWith(2, catalogSyncRunsTable);
+      expect(newestValues).toHaveBeenCalledExactlyOnceWith({
+        trigger: "scheduled",
+        status: "queued",
+        totalItems: 0,
+      });
+      expect(newestReturning).toHaveBeenCalledOnce();
+      expect(refreshTimers()).toHaveLength(3);
+
+      releaseNewest();
+      await vi.waitFor(() => {
+        expect(refreshTimers().map(({ delay }) => delay))
+          .toEqual([WEEK_MS, WEEK_MS / 2, WEEK_MS / 4, WEEK_MS]);
+      });
+      const [run] = await newestReturning.mock.results[0].value;
+      await waitForCatalogRun(run.id, (result) => result.status === "succeeded");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const next = refreshTimers()[3];
+      expect(insertSpy).toHaveBeenCalledTimes(2);
+      expect(returning).toHaveBeenCalledOnce();
+      expect(newestReturning).toHaveBeenCalledOnce();
+      expect(refreshTimers()).toHaveLength(4);
+      expect(next.timer).not.toBe(third.timer);
+      expect(clearedRefreshTimers()).toEqual([first.timer, second.timer, third.timer]);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(next.timer);
+      expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === retryDelay)).toHaveLength(0);
     } finally {
       rejectStart(new Error("release pending start during cleanup"));
+      releaseNewest();
+      await Promise.allSettled(newestReturning.mock.results.map(({ value }) => value));
       await new Promise<void>((resolve) => setImmediate(resolve));
       scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+      sourceItems.splice(0, sourceItems.length, ...originalItems);
       vi.restoreAllMocks();
     }
   });
