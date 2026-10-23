@@ -969,6 +969,92 @@ it("keeps alias search results matched to the latest term when an older request 
   }
 });
 
+it("returns to unfiltered first-page aliases when the search is cleared", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174002";
+  const secondPageCursor = `${snapshotId}:50:0`;
+  window.history.replaceState(
+    {},
+    "",
+    `/admin?tab=content&region=US&q=Lighthouse&aliasPage=2&aliasCursor=${secondPageCursor}`,
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "en",
+    sourceName: "TVMaze",
+    sourceUrl: "https://example.test/provider",
+    providerCitations: [],
+    isEditorial: false,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const isFiltered = url.searchParams.get("q") === "Lighthouse";
+    const isFilteredSecondPage = isFiltered
+      && url.searchParams.get("cursor") === secondPageCursor;
+    const items = isFilteredSecondPage
+      ? [makeAlias(151, "Lighthouse filtered second-page alias")]
+      : isFiltered
+        ? [makeAlias(101, "Lighthouse filtered first-page alias")]
+        : [makeAlias(1, "Unfiltered first-page alias")];
+    return new Response(JSON.stringify({
+      items,
+      total: isFiltered ? 51 : 80,
+      limit: 50,
+      offset: isFilteredSecondPage ? 50 : 0,
+      nextCursor: isFilteredSecondPage ? null : `${snapshotId}:50`,
+      previousCursor: isFilteredSecondPage ? `${snapshotId}:0` : null,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Page 2 · 51 matching aliases")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse filtered second-page alias")).toBeVisible();
+    expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(secondPageCursor);
+
+    await userEvent.fill(page.getByPlaceholder("Search titles…"), "");
+
+    await expect.element(page.getByText("Page 1 · 80 matching aliases")).toBeVisible();
+    await expect.element(page.getByText("Unfiltered first-page alias")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse filtered second-page alias")).not.toBeInTheDocument();
+    const clearedRequest = requests.at(-1);
+    expect(clearedRequest?.searchParams.has("q")).toBe(false);
+    expect(clearedRequest?.searchParams.has("cursor")).toBe(false);
+    expect(clearedRequest?.searchParams.has("offset")).toBe(false);
+    expect(new URLSearchParams(location.search).has("q")).toBe(false);
+    expect(new URLSearchParams(location.search).has("aliasPage")).toBe(false);
+    expect(new URLSearchParams(location.search).has("aliasCursor")).toBe(false);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("exports all matching aliases and explains empty or failed downloads", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial");
