@@ -1065,6 +1065,85 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
+  it("updates the saved Wikidata mapping and official rating when a refresh finds a new item", async () => {
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_changed_item_refresh_test__",
+      year: 2020,
+      imdbId: "tt7654330",
+      popularity: 0,
+    }).returning();
+
+    try {
+      const [mapping] = await db.insert(providerMappingsTable).values({
+        titleId: title.id,
+        provider: WIKIDATA_PROVIDER,
+        externalId: "Q42",
+        status: "mapped",
+        lastRefreshedAt: new Date("2020-01-01T00:00:00.000Z"),
+      }).returning();
+      await db.insert(safetyRecordsTable).values({
+        titleId: title.id,
+        sourceName: WIKIDATA_PROVIDER,
+        tier: 2,
+        isCommunity: false,
+        url: "https://www.wikidata.org/wiki/Q42",
+        status: "available",
+        items: [{
+          category: "MPAA",
+          label: "PG",
+          score: null,
+          maxScore: null,
+          description: "US rating · Wikidata property P1657",
+        }],
+        updatedAt: new Date("2020-01-01T00:00:00.000Z"),
+      });
+
+      await expect(refreshWikidataTitle(title.id, {
+        queryByImdbId: async () => ({
+          itemId: "Q54",
+          itemUrl: "https://www.wikidata.org/wiki/Q54",
+          imdbId: "tt7654330",
+          classifications: [{
+            property: "P1657",
+            propertyName: "MPAA",
+            label: "PG-13",
+            valueId: "Q123",
+          }],
+        }),
+      })).resolves.toMatchObject({
+        ok: true,
+        externalId: "Q54",
+        classifications: 1,
+      });
+
+      const [savedMapping] = await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.id, mapping.id));
+      const savedOfficialRatings = await db.select().from(safetyRecordsTable).where(and(
+        eq(safetyRecordsTable.titleId, title.id),
+        eq(safetyRecordsTable.sourceName, WIKIDATA_PROVIDER),
+      ));
+      expect(savedMapping).toMatchObject({
+        externalId: "Q54",
+        status: "mapped",
+      });
+      expect(savedOfficialRatings).toHaveLength(1);
+      expect(savedOfficialRatings[0]).toMatchObject({
+        url: "https://www.wikidata.org/wiki/Q54",
+        status: "available",
+        items: [{
+          category: "MPAA",
+          label: "PG-13",
+          score: null,
+          maxScore: null,
+          description: "US rating · Wikidata property P1657",
+        }],
+      });
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+    }
+  });
+
   it("preserves verified Wikidata data when a later lookup is ambiguous", async () => {
     const [title] = await db.insert(titlesTable).values({
       type: "movie",
