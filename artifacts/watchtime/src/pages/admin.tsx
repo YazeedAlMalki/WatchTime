@@ -2857,7 +2857,28 @@ export function AliasReview({
                     Source
                   </dt>
                   <dd>
-                    {conflictAlias.sourceUrl ? (
+                    {!conflictAlias.isEditorial &&
+                    (conflictAlias.providerCitations?.length ?? 0) > 0 ? (
+                      <div className="flex flex-col gap-1">
+                        {conflictAlias.providerCitations.map((citation) =>
+                          citation.sourceUrl ? (
+                            <a
+                              key={citation.provider}
+                              href={citation.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-orange-800 underline dark:text-orange-200"
+                            >
+                              {citation.sourceName}
+                            </a>
+                          ) : (
+                            <span key={citation.provider}>
+                              {citation.sourceName}
+                            </span>
+                          ),
+                        )}
+                      </div>
+                    ) : conflictAlias.sourceUrl ? (
                       <a
                         href={conflictAlias.sourceUrl}
                         target="_blank"

@@ -539,7 +539,7 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).toContain("2 titles");
   });
 
-  it("refreshes collision badges when a stale draft is rejected", async () => {
+  it("shows only the editorial citation when an editorial draft is stale", async () => {
     mocks.updateMutation.mutate.mockImplementation(
       (_variables: unknown, options?: { onError?: (error: unknown) => Promise<void> }) => {
         void options?.onError?.({
@@ -553,6 +553,14 @@ describe("admin alternate-title review", () => {
               language: "de",
               sourceName: "Admin editorial",
               sourceUrl: "https://example.test/newer-correction",
+              isEditorial: true,
+              providerCitations: [
+                {
+                  provider: "tvmaze",
+                  sourceName: "Unrelated provider citation",
+                  sourceUrl: "https://example.test/provider",
+                },
+              ],
               collision: false,
               collisionTitleCount: 1,
               updatedAt: "2026-09-17T00:00:00.000Z",
@@ -585,10 +593,79 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).toContain("A newer correction is already saved");
     expect(container.textContent).toContain("Newer Admin Correction");
     expect(container.textContent).toContain("de");
-    expect(container.textContent).toContain("Admin editorial");
+    const sourceSection = Array.from(
+      container.querySelectorAll('[role="alert"] dl > div'),
+    )
+      .find((field) => field.querySelector("dt")?.textContent?.trim() === "Source")
+      ?.querySelector("dd");
+    expect(sourceSection?.textContent).toContain("Admin editorial");
+    expect(sourceSection?.textContent).not.toContain("Unrelated provider citation");
+    expect(sourceSection?.querySelectorAll("a")).toHaveLength(1);
+    expect(sourceSection?.querySelector("a")?.getAttribute("href")).toBe(
+      "https://example.test/newer-correction",
+    );
     expect(container.textContent).toContain("Unique");
     expect(container.textContent).toContain("Current version");
     expect(container.textContent).not.toContain("Save");
+  });
+
+  it("shows every provider citation link when a provider-owned draft is stale", async () => {
+    const providerAlias: AdminContentAlias = {
+      ...initialAlias,
+      isEditorial: false,
+      providerCitations: [
+        {
+          provider: "tvmaze",
+          sourceName: "TVMaze",
+          sourceUrl: "https://example.test/tvmaze",
+        },
+        {
+          provider: "wikipedia",
+          sourceName: "EN Wikipedia",
+          sourceUrl: "https://example.test/wikipedia",
+        },
+      ],
+    };
+    mocks.updateMutation.mutate.mockImplementation(
+      (_variables: unknown, options?: { onError?: (error: unknown) => Promise<void> }) => {
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: {
+              ...providerAlias,
+              alias: "Newer Provider Alias",
+              updatedAt: "2026-09-17T00:00:00.000Z",
+            },
+          },
+        });
+      },
+    );
+    render([providerAlias]);
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(container, "Alternate title for The Lighthouse", "Stale provider draft");
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("Newer Provider Alias");
+    const sourceSection = Array.from(
+      container.querySelectorAll('[role="alert"] dl > div'),
+    )
+      .find((field) => field.querySelector("dt")?.textContent?.trim() === "Source")
+      ?.querySelector("dd");
+    expect(sourceSection?.textContent).toContain("TVMaze");
+    expect(sourceSection?.textContent).toContain("EN Wikipedia");
+    expect(
+      Array.from(sourceSection?.querySelectorAll("a") ?? []).map((link) => [
+        link.textContent,
+        link.getAttribute("href"),
+      ]),
+    ).toEqual([
+      ["TVMaze", "https://example.test/tvmaze"],
+      ["EN Wikipedia", "https://example.test/wikipedia"],
+    ]);
   });
 
   it("keeps stale correction details available while another alias is edited", async () => {
