@@ -955,6 +955,116 @@ describe("Wikidata refresh persistence", () => {
     expect(after).toEqual(before);
   });
 
+  it("rolls back the mapping when a classified Wikidata rating cannot be saved", async () => {
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_persist_failure_test__",
+      year: 2020,
+      imdbId: "tt7654324",
+      popularity: 0,
+    }).returning();
+    const constraintName = `wikidata_persist_failure_${title.id}_check`;
+    let constraintCreated = false;
+
+    try {
+      const [mapping] = await db.insert(providerMappingsTable).values({
+        titleId: title.id,
+        provider: WIKIDATA_PROVIDER,
+        externalId: "Q41",
+        status: "mapped",
+        lastRefreshedAt: new Date("2025-01-01T00:00:00.000Z"),
+      }).returning();
+      await db.insert(safetyRecordsTable).values([
+        {
+          titleId: title.id,
+          sourceName: WIKIDATA_PROVIDER,
+          tier: 2,
+          isCommunity: false,
+          url: "https://www.wikidata.org/wiki/Q41",
+          status: "available",
+          items: [{ category: "MPAA", label: "PG", score: null, maxScore: null, description: "old official rating" }],
+          updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+        },
+        {
+          titleId: title.id,
+          sourceName: "WatchTime Community",
+          tier: 3,
+          isCommunity: true,
+          status: "available",
+          items: [{ category: "violence", label: "violence", score: null, maxScore: null, description: "community note" }],
+        },
+        {
+          titleId: title.id,
+          sourceName: "Does the Dog Die?",
+          tier: 2,
+          status: "available",
+          items: [{ category: "animal harm", label: "animal harm", score: 2, maxScore: 3, description: "other-provider rating" }],
+        },
+        {
+          titleId: title.id,
+          seasonNumber: 1,
+          sourceName: WIKIDATA_PROVIDER,
+          tier: 2,
+          isCommunity: false,
+          url: "https://www.wikidata.org/wiki/Q41-season",
+          status: "available",
+          items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: "scoped season rating" }],
+        },
+        {
+          titleId: title.id,
+          seasonNumber: 1,
+          episodeNumber: 1,
+          sourceName: WIKIDATA_PROVIDER,
+          tier: 2,
+          isCommunity: false,
+          url: "https://www.wikidata.org/wiki/Q41-episode",
+          status: "available",
+          items: [{ category: "MPAA", label: "G", score: null, maxScore: null, description: "scoped episode rating" }],
+        },
+      ]);
+      const beforeRecords = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id))
+        .orderBy(asc(safetyRecordsTable.id));
+
+      // Force failure specifically when the replacement classification reaches
+      // persistence. The preceding mapping update must roll back with it.
+      await db.execute(sql.raw(`
+        ALTER TABLE safety_records
+        ADD CONSTRAINT ${constraintName}
+        CHECK (
+          title_id <> ${title.id}
+          OR NOT (items @> '[{"label":"NC-17"}]'::jsonb)
+        )
+      `));
+      constraintCreated = true;
+
+      await expect(refreshWikidataTitle(title.id, {
+        queryByImdbId: async () => ({
+          itemId: "Q42",
+          itemUrl: "https://www.wikidata.org/wiki/Q42",
+          imdbId: "tt7654324",
+          classifications: [
+            { property: "P1657", propertyName: "MPAA", label: "NC-17", valueId: "Q123" },
+          ],
+        }),
+      })).resolves.toMatchObject({ ok: false, status: "error" });
+
+      const [afterMapping] = await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.id, mapping.id));
+      const afterRecords = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id))
+        .orderBy(asc(safetyRecordsTable.id));
+
+      expect(afterMapping).toEqual(mapping);
+      expect(afterRecords).toEqual(beforeRecords);
+    } finally {
+      if (constraintCreated) {
+        await db.execute(sql.raw(`ALTER TABLE safety_records DROP CONSTRAINT ${constraintName}`));
+      }
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+    }
+  });
+
   it("preserves verified Wikidata data when a later lookup is ambiguous", async () => {
     const [title] = await db.insert(titlesTable).values({
       type: "movie",
