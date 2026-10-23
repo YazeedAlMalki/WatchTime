@@ -625,6 +625,79 @@ describe("admin title aliases", () => {
       .get("/api/admin/content-aliases/export?ownership=unknown")).status).toBe(400);
   });
 
+  it("exports all active provider citations and excludes withdrawn or editorial provider citations", async () => {
+    const providerCitations = {
+      tvmaze: {
+        sourceName: "TVMaze",
+        sourceUrl: "https://www.tvmaze.com/shows/990020",
+      },
+      wikipedia: {
+        sourceName: "EN Wikipedia",
+        sourceUrl: "https://en.wikipedia.org/wiki/Citation_Export_Shared",
+      },
+    };
+    await db.insert(titleAliasesTable).values([
+      {
+        titleId: createdTitleIds[0],
+        alias: "Citation export sample shared",
+        normalizedAlias: "citationexportsampleshared",
+        language: "en",
+        sourceName: providerCitations.tvmaze.sourceName,
+        sourceUrl: providerCitations.tvmaze.sourceUrl,
+        providerSources: ["tvmaze", "wikipedia"],
+        providerCitations,
+        isEditorial: false,
+      },
+      {
+        titleId: createdTitleIds[0],
+        alias: "Citation export sample withdrawn",
+        normalizedAlias: "citationexportsamplewithdrawn",
+        language: "en",
+        sourceName: providerCitations.tvmaze.sourceName,
+        sourceUrl: providerCitations.tvmaze.sourceUrl,
+        providerSources: ["tvmaze"],
+        providerCitations: {
+          ...providerCitations,
+          wikipedia: {
+            sourceName: "Withdrawn Wikipedia citation",
+            sourceUrl: "https://en.wikipedia.org/wiki/Withdrawn_Export_Citation",
+          },
+        },
+        isEditorial: false,
+      },
+      {
+        titleId: createdTitleIds[0],
+        alias: "Citation export sample editorial",
+        normalizedAlias: "citationexportsampleeditorial",
+        language: "en",
+        sourceName: "Admin editorial",
+        sourceUrl: "https://example.test/editorial-citation",
+        providerSources: ["tvmaze"],
+        providerCitations,
+        isEditorial: true,
+      },
+    ]);
+
+    const response = await request(app)
+      .get("/api/admin/content-aliases/export")
+      .query({ q: "Citation export sample" })
+      .expect(200);
+    const csvCell = (value: string) => `"${value.replace(/"/g, '""')}"`;
+    const sharedCitations = JSON.stringify([
+      { provider: "tvmaze", ...providerCitations.tvmaze },
+      { provider: "wikipedia", ...providerCitations.wikipedia },
+    ]);
+
+    expect(response.headers["x-export-count"]).toBe("3");
+    expect(response.text).toContain('"Last updated","Provider citations"');
+    expect(response.text).toContain(csvCell(sharedCitations));
+    expect(response.text).toContain("Citation export sample withdrawn");
+    expect(response.text).not.toContain("Withdrawn_Export_Citation");
+    expect(response.text).toContain('"Admin editorial"');
+    expect(response.text).toContain('"https://example.test/editorial-citation"');
+    expect(response.text).toContain(csvCell("[]"));
+  });
+
   it("exports editorial provenance and collisions outside the active filters", async () => {
     const sourceName = 'Editorial, "verified"\nsecond line';
     const [editorial] = await db.insert(titleAliasesTable).values({
@@ -666,6 +739,7 @@ describe("admin title aliases", () => {
       '"Yes"',
       '"2"',
       `"${editorial.updatedAt.toISOString()}"`,
+      '"[]"',
     ].join(","));
     expect(response.text).not.toContain("Different provider spelling");
     expect(response.text).not.toContain('"Provider-owned"');

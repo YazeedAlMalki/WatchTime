@@ -1273,7 +1273,7 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
   const header = [
     "ID", "Title ID", "Title", "Type", "Year", "Alternate title",
     "Language", "Source", "Source URL", "Ownership", "Editorial",
-    "Collision", "Collision title count", "Last updated",
+    "Collision", "Collision title count", "Last updated", "Provider citations",
   ];
   const escapeCsv = (value: unknown) => {
     const text = String(value ?? "");
@@ -1302,6 +1302,14 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
     ]);
     for (const { alias, titleName, titleType, titleYear } of rows) {
       const collisionCount = collisions.get(alias.normalizedAlias) ?? 1;
+      const providerCitations = alias.isEditorial
+        ? []
+        : (alias.providerSources ?? []).flatMap((provider: string) => {
+            const citation = alias.providerCitations?.[provider];
+            return citation
+              ? [{ provider, sourceName: citation.sourceName, sourceUrl: citation.sourceUrl }]
+              : [];
+          });
       const csvRow = [
         alias.id,
         alias.titleId,
@@ -1317,6 +1325,7 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
         collisionCount > 1 ? "Yes" : "No",
         collisionCount,
         alias.updatedAt.toISOString(),
+        JSON.stringify(providerCitations),
       ].map(escapeCsv).join(",");
       if (!res.write(`\r\n${csvRow}`)) {
         await new Promise<void>((resolve) => {
