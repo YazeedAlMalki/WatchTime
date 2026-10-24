@@ -1768,79 +1768,132 @@ describe("admin alternate-title review", () => {
     );
   });
 
-  it("keeps a stale-edit warning when removing its correction and refreshing the list both fail", async () => {
-    const currentCorrection: AdminContentAlias = {
-      ...initialAlias,
-      alias: "Newer Admin Correction",
-      updatedAt: "2026-09-17T00:00:00.000Z",
-    };
-    mocks.updateMutation.mutate.mockImplementation(
-      (
-        _variables: unknown,
-        options?: { onError?: (error: unknown) => Promise<void> },
-      ) => {
-        void options?.onError?.({
-          data: {
-            code: "stale_alias",
-            error: "This alternate title changed while you were editing.",
-            current: currentCorrection,
-          },
-        });
-      },
-    );
-    mocks.deleteMutation.mutate.mockImplementation(
-      (
-        _variables: unknown,
-        options?: { onError?: (error: unknown) => Promise<void> },
-      ) => {
-        void options?.onError?.(
-          new Error(
-            "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
-          ),
-        );
-      },
-    );
-    render();
-    act(() => button(container, "Edit").click());
-    act(() => {
-      setInput(
-        container,
-        "Alternate title for The Lighthouse",
-        "Stale draft correction",
+  it.each([
+    { retryOutcome: "succeeds", failedRequests: [] as RefreshRequest[] },
+    { retryOutcome: "fails", failedRequests: ["aliases"] as RefreshRequest[] },
+  ])(
+    "keeps a stale-edit warning after removal and an initial refresh fail when the retry $retryOutcome",
+    async ({ retryOutcome, failedRequests }) => {
+      const currentCorrection: AdminContentAlias = {
+        ...initialAlias,
+        alias: "Newer Admin Correction",
+        updatedAt: "2026-09-17T00:00:00.000Z",
+      };
+      mocks.updateMutation.mutate.mockImplementation(
+        (
+          _variables: unknown,
+          options?: { onError?: (error: unknown) => Promise<void> },
+        ) => {
+          void options?.onError?.({
+            data: {
+              code: "stale_alias",
+              error: "This alternate title changed while you were editing.",
+              current: currentCorrection,
+            },
+          });
+        },
       );
-      button(container, "Save").click();
-    });
-    await flushEffects();
-    render([currentCorrection]);
-    setRefreshFailures(["aliases"]);
-    confirmSpy.mockReturnValue(true);
+      mocks.deleteMutation.mutate.mockImplementation(
+        (
+          _variables: unknown,
+          options?: { onError?: (error: unknown) => Promise<void> },
+        ) => {
+          void options?.onError?.(
+            new Error(
+              "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
+            ),
+          );
+        },
+      );
+      render();
+      act(() => button(container, "Edit").click());
+      act(() => {
+        setInput(
+          container,
+          "Alternate title for The Lighthouse",
+          "Stale draft correction",
+        );
+        button(container, "Save").click();
+      });
+      await flushEffects();
+      render([currentCorrection]);
+      setRefreshFailures(["aliases"]);
+      confirmSpy.mockReturnValue(true);
+      mocks.queryClient.invalidateQueries.mockClear();
 
-    act(() => button(container, "Remove").click());
-    await flushEffects();
+      act(() => button(container, "Remove").click());
+      await flushEffects();
 
-    const alerts = Array.from(container.querySelectorAll('[role="alert"]'));
-    const conflictNotice = alerts.find((alert) =>
-      alert.textContent?.includes("A newer correction is already saved"),
-    );
-    expect(conflictNotice?.textContent).toContain(
-      "A newer correction is already saved",
-    );
-    expect(conflictNotice?.textContent).toContain(currentCorrection.alias);
-    expect(conflictNotice?.textContent).toContain("Current version");
-    const refreshNotice = alerts.find((alert) =>
-      alert.textContent?.includes("Alternate-title refresh failed"),
-    );
-    expect(refreshNotice?.textContent).toContain(
-      "Failed refresh request: alternate-title list (alias records).",
-    );
-    expect(button(container, "Retry refresh")).toBeTruthy();
-    expect(mocks.toast).toHaveBeenCalledWith({
-      title: "Could not remove alternate title",
-      description:
-        "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
-      variant: "destructive",
-    });
-  });
+      const alerts = Array.from(container.querySelectorAll('[role="alert"]'));
+      const conflictNotice = alerts.find((alert) =>
+        alert.textContent?.includes("A newer correction is already saved"),
+      );
+      expect(conflictNotice?.textContent).toContain(
+        "A newer correction is already saved",
+      );
+      expect(conflictNotice?.textContent).toContain(currentCorrection.alias);
+      expect(conflictNotice?.textContent).toContain("Current version");
+      const refreshNotice = alerts.find((alert) =>
+        alert.textContent?.includes("Alternate-title refresh failed"),
+      );
+      expect(refreshNotice?.textContent).toContain(
+        "Failed refresh request: alternate-title list (alias records).",
+      );
+      expect(button(container, "Retry refresh")).toBeTruthy();
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: "Could not remove alternate title",
+        description:
+          "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
+        variant: "destructive",
+      });
+      expectRefreshCalls(["aliases", "catalog"]);
+
+      mocks.queryClient.invalidateQueries.mockClear();
+      setRefreshFailures(failedRequests);
+      act(() => button(container, "Retry refresh").click());
+      await flushEffects();
+
+      expectRefreshCalls(["aliases"]);
+      const warningAfterRetry = Array.from(
+        container.querySelectorAll('[role="alert"]'),
+      ).find((alert) =>
+        alert.textContent?.includes("A newer correction is already saved"),
+      );
+      expect(warningAfterRetry?.textContent).toContain(currentCorrection.alias);
+      expect(warningAfterRetry?.textContent).toContain(
+        currentCorrection.titleName,
+      );
+      expect(warningAfterRetry?.textContent).toContain(
+        currentCorrection.language,
+      );
+      expect(warningAfterRetry?.textContent).toContain(
+        currentCorrection.sourceName,
+      );
+      expect(warningAfterRetry?.textContent).toContain("Current version");
+      expect(warningAfterRetry?.querySelector("a")?.getAttribute("href")).toBe(
+        currentCorrection.sourceUrl,
+      );
+
+      if (retryOutcome === "succeeds") {
+        expect(container.textContent).not.toContain(
+          "Alternate-title refresh failed",
+        );
+        expect(
+          Array.from(container.querySelectorAll("button")).some(
+            (candidate) => candidate.textContent?.trim() === "Retry refresh",
+          ),
+        ).toBe(false);
+      } else {
+        expect(container.textContent).toContain(
+          "Alternate-title refresh failed",
+        );
+        expect(container.textContent).toContain(
+          "Failed refresh request: alternate-title list (alias records).",
+        );
+        expect(button(container, "Retry refresh")).toBeTruthy();
+      }
+    },
+  );
 
   it("keeps a stale-edit warning when removal fails and only collision refresh fails", async () => {
     const currentCorrection: AdminContentAlias = {
