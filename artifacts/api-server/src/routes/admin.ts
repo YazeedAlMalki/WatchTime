@@ -599,7 +599,8 @@ router.get("/content", async (req, res) => {
           db
             .select()
             .from(providerMappingsTable)
-            .where(inArray(providerMappingsTable.titleId, ids)),
+            .where(inArray(providerMappingsTable.titleId, ids))
+            .orderBy(asc(providerMappingsTable.provider), asc(providerMappingsTable.id)),
           db
             .select({
               id: safetyRecordsTable.id,

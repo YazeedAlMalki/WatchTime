@@ -44,6 +44,52 @@ async function markMalformedTimestamp(recordIds: number[]) {
 }
 
 describe("admin Content review timestamp filter", () => {
+  it("returns provider mappings in provider-and-ID order for regular and timestamp-filtered results", async () => {
+    const fixturePrefix = "provider-mapping-order-fixture";
+    const [title] = await db.insert(titlesTable).values({
+      name: fixturePrefix,
+      type: "movie",
+      popularity: 100_000,
+    }).returning({ id: titlesTable.id });
+    titleIds.push(title.id);
+
+    const [record] = await db.insert(safetyRecordsTable).values({
+      titleId: title.id,
+      sourceName: "Wikidata",
+      status: "available",
+      isCommunity: false,
+      url: "https://www.wikidata.org/wiki/Qprovider-mapping-order",
+      updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+      items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
+    }).returning({ id: safetyRecordsTable.id });
+    await markMalformedTimestamp([record.id]);
+
+    await db.insert(providerMappingsTable).values([
+      { titleId: title.id, provider: "IMDb", externalId: "imdb-z" },
+      { titleId: title.id, provider: "TVMaze", externalId: "tvmaze-1" },
+      { titleId: title.id, provider: "IMDb", externalId: "imdb-a" },
+      { titleId: title.id, provider: "Wikidata", externalId: "wikidata-1" },
+    ]);
+
+    const regularResponse = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}`)
+      .expect(200);
+    const timestampFilteredResponse = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true`)
+      .expect(200);
+    const expectedMappings = [
+      { provider: "IMDb", externalId: "imdb-z" },
+      { provider: "IMDb", externalId: "imdb-a" },
+      { provider: "TVMaze", externalId: "tvmaze-1" },
+      { provider: "Wikidata", externalId: "wikidata-1" },
+    ];
+
+    expect(regularResponse.body).toHaveLength(1);
+    expect(regularResponse.body[0].mappings).toMatchObject(expectedMappings);
+    expect(timestampFilteredResponse.body).toHaveLength(1);
+    expect(timestampFilteredResponse.body[0].mappings).toMatchObject(expectedMappings);
+  });
+
   it("stops returning a title and region after its malformed timestamp is repaired", async () => {
     const fixturePrefix = "timestamp-filter-fixture-20260929";
     const titles = await db.insert(titlesTable).values([
@@ -398,6 +444,7 @@ describe("admin Content review timestamp filter", () => {
       selectedRating: {
         region: "US", countryName: "United States", system: "MPAA", label: "PG-13",
         sourceName: "Wikidata", recordId: record.id, lastRefreshedAt: null,
+        hasLatestRatingLabelConflict: false,
         sourceUrl: "https://www.wikidata.org/wiki/Qtimestamp-mapping", refreshTimestampMalformed: true,
       },
     }]);
