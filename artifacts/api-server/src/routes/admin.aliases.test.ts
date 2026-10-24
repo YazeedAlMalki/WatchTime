@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { request as httpRequest, ServerResponse } from "node:http";
 import request from "supertest";
 import {
   db,
+  pool,
   safetyRecordsTable,
   titleAliasesTable,
   titlesTable,
@@ -816,6 +818,119 @@ describe("admin title aliases", () => {
     expect(dataRows).toHaveLength(1002);
     expect(exportedIds.every((id, index) => index === 0 || exportedIds[index - 1] < id)).toBe(true);
     expect(collisionRows).toHaveLength(2);
+  });
+
+  it("stops loading export batches and removes backpressure listeners after client cancellation", async () => {
+    await db.insert(titleAliasesTable).values(Array.from({ length: 1_001 }, (_, index) => ({
+      titleId: createdTitleIds[0],
+      alias: `Cancelled streamed export ${String(index).padStart(4, "0")}`,
+      normalizedAlias: `cancelledstreamedexport${String(index).padStart(4, "0")}`,
+      language: "en",
+      sourceName: "Cancellation test",
+      isEditorial: true,
+    })));
+
+    const batchQueries: string[] = [];
+    const originalQuery = pool.query.bind(pool);
+    const querySpy = vi.spyOn(pool, "query").mockImplementation(((...args: unknown[]) => {
+      const statement = args[0] as string | { text?: string };
+      const result = (originalQuery as (...queryArgs: unknown[]) => Promise<{ rows: unknown[] }>)(...args);
+      return result.then((value) => {
+        const queryText = typeof statement === "string" ? statement : statement.text ?? "";
+        if (
+          queryText.includes("title_aliases")
+          && /\border by\b/i.test(queryText)
+          && /\blimit\b/i.test(queryText)
+        ) {
+          batchQueries.push(queryText);
+        }
+        return value;
+      });
+    }) as typeof pool.query);
+
+    const originalWrite = ServerResponse.prototype.write;
+    let forcedBackpressure = false;
+    let serverResponse: ServerResponse | undefined;
+    let initialDrainListeners: Function[] = [];
+    let initialCloseListeners: Function[] = [];
+    let backpressureListenersObserved = false;
+    let releaseBackpressure!: () => void;
+    const backpressureStarted = new Promise<void>((resolve) => {
+      releaseBackpressure = resolve;
+    });
+    let resolveServerClose!: () => void;
+    const serverClosed = new Promise<void>((resolve) => {
+      resolveServerClose = resolve;
+    });
+    const writeSpy = vi.spyOn(ServerResponse.prototype, "write").mockImplementation(function (
+      this: ServerResponse,
+      ...args: any[]
+    ) {
+      const chunk = args[0];
+      if (
+        !forcedBackpressure
+        && typeof chunk === "string"
+        && chunk.startsWith("\r\n")
+        && chunk.includes("Cancelled streamed export 0000")
+      ) {
+        forcedBackpressure = true;
+        serverResponse = this;
+        initialDrainListeners = this.listeners("drain");
+        initialCloseListeners = this.listeners("close");
+        this.once("close", resolveServerClose);
+        const result = originalWrite.apply(this, args as any);
+        releaseBackpressure();
+        return false;
+      }
+      return originalWrite.apply(this, args as any);
+    } as any);
+
+    const server = app.listen(0);
+    let client: ReturnType<typeof httpRequest> | undefined;
+    try {
+      await new Promise<void>((resolve) => server.once("listening", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected a local HTTP server address");
+      client = httpRequest({
+        host: "127.0.0.1",
+        port: address.port,
+        path: "/api/admin/content-aliases/export?q=Cancelled%20streamed%20export",
+        headers: { "accept-encoding": "identity" },
+      });
+      const clientClosed = new Promise<void>((resolve) => {
+        client!.once("error", () => resolve());
+        client!.once("response", (response) => {
+          response.on("data", (chunk: Buffer) => {
+            if (chunk.toString().includes("Cancelled streamed export 0000")) {
+              backpressureListenersObserved =
+                (serverResponse?.listenerCount("drain") ?? 0) > initialDrainListeners.length
+                && (serverResponse?.listenerCount("close") ?? 0) > initialCloseListeners.length + 1;
+              client!.destroy();
+            }
+          });
+          response.once("aborted", resolve);
+        });
+      });
+      client.end();
+
+      await Promise.all([backpressureStarted, clientClosed, serverClosed]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(forcedBackpressure).toBe(true);
+      expect(backpressureListenersObserved).toBe(true);
+      expect(batchQueries).toHaveLength(1);
+      expect(serverResponse?.listeners("drain").every((listener) =>
+        initialDrainListeners.includes(listener as (...args: any[]) => void),
+      )).toBe(true);
+      expect(serverResponse?.listeners("close").every((listener) =>
+        initialCloseListeners.includes(listener as (...args: any[]) => void),
+      )).toBe(true);
+    } finally {
+      client?.destroy();
+      writeSpy.mockRestore();
+      querySpy.mockRestore();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("rejects an unknown alias ownership filter", async () => {

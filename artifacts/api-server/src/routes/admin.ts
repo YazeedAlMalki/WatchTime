@@ -1285,6 +1285,29 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
   res.setHeader("X-Export-Count", String(total));
   res.write(header.map(escapeCsv).join(","));
   let afterId = 0;
+  const waitForDrainOrClose = (): Promise<boolean> => new Promise((resolve) => {
+    if (res.destroyed) {
+      resolve(false);
+      return;
+    }
+    const cleanup = () => {
+      res.off("drain", onDrain);
+      res.off("close", onClose);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve(!res.destroyed);
+    };
+    const onClose = () => {
+      cleanup();
+      resolve(false);
+    };
+    res.once("drain", onDrain);
+    res.once("close", onClose);
+    // A client can close after the first check but before these listeners are
+    // installed. Resolve directly in that case rather than waiting forever.
+    if (res.destroyed) onClose();
+  });
   while (!res.destroyed) {
     const rows = await db.select({
       alias: titleAliasesTable,
@@ -1296,11 +1319,14 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
       .where(and(where, gt(titleAliasesTable.id, afterId)))
       .orderBy(asc(titleAliasesTable.id))
       .limit(CONTENT_ALIAS_EXPORT_BATCH_SIZE);
+    if (res.destroyed) return;
     if (!rows.length) break;
     const collisions = await getAliasCollisionCounts([
       ...new Set(rows.map((row) => row.alias.normalizedAlias)),
     ]);
+    if (res.destroyed) return;
     for (const { alias, titleName, titleType, titleYear } of rows) {
+      if (res.destroyed) return;
       const collisionCount = collisions.get(alias.normalizedAlias) ?? 1;
       const providerCitations = alias.isEditorial
         ? []
@@ -1328,21 +1354,7 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
         JSON.stringify(providerCitations),
       ].map(escapeCsv).join(",");
       if (!res.write(`\r\n${csvRow}`)) {
-        await new Promise<void>((resolve) => {
-          const onDrain = () => {
-            res.off("drain", onDrain);
-            res.off("close", onClose);
-            resolve();
-          };
-          const onClose = () => {
-            res.off("drain", onDrain);
-            res.off("close", onClose);
-            resolve();
-          };
-          res.once("drain", onDrain);
-          res.once("close", onClose);
-        });
-        if (res.destroyed) return;
+        if (!await waitForDrainOrClose()) return;
       }
     }
     afterId = rows[rows.length - 1].alias.id;
