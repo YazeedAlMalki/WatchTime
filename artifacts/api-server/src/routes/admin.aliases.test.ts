@@ -183,6 +183,67 @@ describe("admin title aliases", () => {
     }
   });
 
+  it("keeps malformed refresh reviews matched to the selected rating provider", async () => {
+    const selectedProvider = "Selected Rating Provider";
+    const unselectedProvider = "Unselected Duplicate Provider";
+    const [rating] = await db.insert(safetyRecordsTable).values({
+      titleId: createdTitleIds[0],
+      sourceName: selectedProvider,
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      url: "https://example.test/selected-rating",
+      items: [{
+        category: "MPAA",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "Selected provider rating",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+
+    await db.execute(sql`
+      update safety_records set updated_at = 'infinity'::timestamp
+      where id = ${rating.id}
+    `);
+    const restoreSelect = mockMalformedSafetyTimestampDuplicate(
+      db,
+      rating.id,
+      "not-a-timestamp",
+      {
+        label: "Duplicate provider rating",
+        url: "https://example.test/unselected-duplicate",
+        sourceName: unselectedProvider,
+      },
+    );
+
+    try {
+      const selectedProviderResponse = await request(app)
+        .get(
+          `/api/admin/content?q=Alias%20Test%20One&malformedRefreshTimestamp=true` +
+          `&malformedRefreshTimestampProvider=${encodeURIComponent(selectedProvider)}`,
+        )
+        .expect(200);
+      expect(selectedProviderResponse.body).toHaveLength(1);
+      expect(selectedProviderResponse.body[0].selectedRating).toMatchObject({
+        sourceName: selectedProvider,
+        label: "PG-13",
+        refreshTimestampMalformed: true,
+      });
+
+      const unselectedProviderResponse = await request(app)
+        .get(
+          `/api/admin/content?q=Alias%20Test%20One&malformedRefreshTimestamp=true` +
+          `&malformedRefreshTimestampProvider=${encodeURIComponent(unselectedProvider)}`,
+        )
+        .expect(200);
+      expect(unselectedProviderResponse.body).toEqual([]);
+    } finally {
+      restoreSelect();
+    }
+  });
+
   it("shows provenance and collisions", async () => {
     await db.insert(titleAliasesTable).values({
       titleId: createdTitleIds[0],

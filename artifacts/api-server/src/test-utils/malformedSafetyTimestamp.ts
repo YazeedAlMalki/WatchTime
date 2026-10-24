@@ -49,7 +49,7 @@ export function mockMalformedSafetyTimestampDuplicate(
   database: object,
   recordId: number,
   timestamp: Date | string,
-  duplicate: { label: string; url: string },
+  duplicate: { label: string; url: string; sourceName?: string },
 ): () => void {
   const db = database as any;
   const originalSelect = db.select.bind(db);
@@ -71,6 +71,7 @@ export function mockMalformedSafetyTimestampDuplicate(
           updatedAt: timestamp,
           rawUpdatedAt: timestamp,
           url: duplicate.url,
+          sourceName: duplicate.sourceName ?? source.sourceName,
           items: source.items.map((item: any) =>
             item.category === "MPAA" ? { ...item, label: duplicate.label } : item,
           ),
