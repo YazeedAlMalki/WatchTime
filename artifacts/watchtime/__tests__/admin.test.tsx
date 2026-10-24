@@ -420,6 +420,65 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).not.toContain("2 titles");
   });
 
+  it("asks before discarding an unfinished edit when another alias is opened", () => {
+    const secondAlias: AdminContentAlias = {
+      ...initialAlias,
+      id: 18,
+      titleId: 102,
+      titleName: "The Harbor",
+      alias: "Second Local Title",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    confirmSpy.mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render([initialAlias, secondAlias]);
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Unfinished correction",
+      );
+    });
+
+    const secondRow = Array.from(container.querySelectorAll("tr")).find((row) =>
+      row.textContent?.includes("The Harbor"),
+    );
+    const secondEditButton = Array.from(
+      secondRow?.querySelectorAll("button") ?? [],
+    ).find((candidate) => candidate.textContent?.trim() === "Edit");
+    expect(secondEditButton).toBeTruthy();
+
+    act(() => secondEditButton?.click());
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Discard your unsaved changes to “Shared Local Title” and edit “Second Local Title” instead?',
+    );
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for The Lighthouse"]',
+      )?.value,
+    ).toBe("Unfinished correction");
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for The Harbor"]',
+      ),
+    ).toBeNull();
+
+    act(() => secondEditButton?.click());
+
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for The Harbor"]',
+      )?.value,
+    ).toBe("Second Local Title");
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for The Lighthouse"]',
+      ),
+    ).toBeNull();
+  });
+
   it("keeps a saved correction visible when a successful refresh removes it from the active search", async () => {
     let updateFilteredAliases!: () => void;
     function FilteredAliasReview() {

@@ -2492,7 +2492,35 @@ export function AliasReview({
     return error instanceof Error ? error.message : "Please try again.";
   };
 
+  const getEditingAlias = () => {
+    if (editingId === null) return null;
+    if (conflictAlias?.id === editingId) return conflictAlias;
+    if (savedAliasPreview?.id === editingId) return savedAliasPreview;
+    return aliases?.find((candidate) => candidate.id === editingId) ?? null;
+  };
+
+  const hasUnsavedAliasChanges = () => {
+    if (editingId === null) return false;
+    const current = getEditingAlias();
+    if (!current) return true;
+    return (
+      draft.alias !== current.alias ||
+      draft.language !== (current.language ?? "") ||
+      draft.sourceUrl !== (current.sourceUrl ?? "")
+    );
+  };
+
   const startEditing = (alias: AdminContentAlias) => {
+    if (editingId !== null && editingId !== alias.id && hasUnsavedAliasChanges()) {
+      const current = getEditingAlias();
+      if (
+        !window.confirm(
+          `Discard your unsaved changes to “${current?.alias ?? "this alternate title"}” and edit “${alias.alias}” instead?`,
+        )
+      ) {
+        return;
+      }
+    }
     setEditingId(alias.id);
     setDraft({
       alias: alias.alias,
