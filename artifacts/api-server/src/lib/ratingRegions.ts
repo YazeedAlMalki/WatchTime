@@ -43,6 +43,42 @@ export function hasMalformedTimestamp(value: Date | string | null | undefined): 
   return value != null && timestampValue(value) === Number.NEGATIVE_INFINITY;
 }
 
+export function hasLatestRatingLabelConflict(
+  records: RatingRecord[],
+  region: RatingRegion,
+  provider = "Wikidata",
+): boolean {
+  const preferredSystem = RATING_REGIONS_BY_CODE[region];
+  const candidates = records
+    .filter(
+      (record) =>
+        record.status === "available" &&
+        !record.isCommunity &&
+        record.sourceName === provider,
+    )
+    .flatMap((record) => record.items.map((item) => ({
+      record,
+      timestamp: timestampValue(record.updatedAt),
+      item,
+    })))
+    .filter(({ timestamp, item }) =>
+      Number.isFinite(timestamp) && item.category === preferredSystem.system,
+    );
+
+  if (candidates.length < 2) return false;
+  const newestTimestamp = Math.max(...candidates.map(({ timestamp }) => timestamp));
+  const newestRecords = new Map<RatingRecord, Set<string>>();
+  for (const { record, timestamp, item } of candidates) {
+    if (timestamp !== newestTimestamp) continue;
+    const labels = newestRecords.get(record) ?? new Set<string>();
+    labels.add(item.label);
+    newestRecords.set(record, labels);
+  }
+  if (newestRecords.size < 2) return false;
+  const newestLabels = new Set([...newestRecords.values()].flatMap((labels) => [...labels]));
+  return newestLabels.size > 1;
+}
+
 export function resolvePreferredRating(
   records: RatingRecord[],
   region: RatingRegion,

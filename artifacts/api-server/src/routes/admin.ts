@@ -44,6 +44,7 @@ import {
   refreshWikidataTitle,
 } from "../lib/wikidata";
 import {
+  hasLatestRatingLabelConflict,
   hasMalformedTimestamp,
   resolvePreferredRating,
   type RatingRegion,
@@ -648,6 +649,11 @@ router.get("/content", async (req, res) => {
         selectedRegion,
         selectedProvider,
       );
+      const hasLatestRatingLabelConflictForRegion = hasLatestRatingLabelConflict(
+        ratingRecords,
+        selectedRegion,
+        selectedProvider,
+      );
       const selectedRecord = titleSafetyRecords.find((record) => record.id === selectedRating?.recordId);
       return {
         id: title.id,
@@ -662,7 +668,11 @@ router.get("/content", async (req, res) => {
           lastRefreshedAt: mapping.lastRefreshedAt?.toISOString() ?? null,
         })),
         selectedRating: selectedRating
-          ? { ...selectedRating, refreshTimestampMalformed: hasMalformedTimestamp(selectedRecord?.rawUpdatedAt) }
+          ? {
+              ...selectedRating,
+              refreshTimestampMalformed: hasMalformedTimestamp(selectedRecord?.rawUpdatedAt),
+              hasLatestRatingLabelConflict: hasLatestRatingLabelConflictForRegion,
+            }
           : null,
       };
     });

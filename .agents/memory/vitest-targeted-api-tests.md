@@ -7,4 +7,4 @@ Run an individual API server test file with `pnpm --filter @workspace/api-server
 
 **Why:** The script argument separator was interpreted by Vitest in a way that did not filter the requested file, leading to unrelated test failures and long-running integration cases.
 
-**How to apply:** Use direct `vitest run <path>` execution when verifying a focused API change; use the package test script for the full suite.
+**How to apply:** Use direct `vitest run <path>` execution when verifying a focused API change; use the package test script for the full suite. With Vitest v4, spell the silent option as `--silent=true` before the paths; bare `--silent` can consume the first test path as its value.

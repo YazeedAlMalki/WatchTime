@@ -109,6 +109,7 @@ describe("admin title aliases", () => {
       recordId: newer.id,
       lastRefreshedAt: newerUpdatedAt.toISOString(),
       refreshTimestampMalformed: false,
+      hasLatestRatingLabelConflict: false,
       sourceUrl: "https://www.wikidata.org/wiki/Q123",
     });
   });
@@ -185,6 +186,63 @@ describe("admin title aliases", () => {
   });
 
   it.each([
+    ["conflicting", ["PG", "R"], true],
+    ["matching", ["PG", "PG"], false],
+  ] as const)("reports whether equally fresh official records have %s labels", async (_description, labels, hasConflict) => {
+    const tiedUpdatedAt = new Date("2026-02-01T00:00:00.000Z");
+    const [selectedRecord] = await db.insert(safetyRecordsTable).values({
+      titleId: createdTitleIds[0],
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      updatedAt: tiedUpdatedAt,
+      url: "https://www.wikidata.org/wiki/Q123",
+      items: [{
+        category: "MPAA",
+        label: labels[0],
+        score: null,
+        maxScore: null,
+        description: "Official rating",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+    const restoreSelect = mockMalformedSafetyTimestampDuplicate(
+      db,
+      selectedRecord.id,
+      tiedUpdatedAt,
+      { label: labels[1], url: "https://www.wikidata.org/wiki/Q456" },
+    );
+    const expectedSelectedRating = {
+      region: "US",
+      countryName: "United States",
+      system: "MPAA",
+      label: labels[0] < labels[1] ? labels[0] : labels[1],
+      sourceName: "Wikidata",
+      recordId: selectedRecord.id,
+      lastRefreshedAt: tiedUpdatedAt.toISOString(),
+      sourceUrl: "https://www.wikidata.org/wiki/Q123",
+    };
+
+    try {
+      const adminResponse = await request(app)
+        .get("/api/admin/content?q=Alias%20Test%20One")
+        .expect(200);
+      expect(adminResponse.body[0].selectedRating).toEqual({
+        ...expectedSelectedRating,
+        refreshTimestampMalformed: false,
+        hasLatestRatingLabelConflict: hasConflict,
+      });
+
+      const publicResponse = await request(app)
+        .get(`/api/safety?titleId=${createdTitleIds[0]}`)
+        .expect(200);
+      expect(publicResponse.body.preferredRating).toEqual(expectedSelectedRating);
+    } finally {
+      restoreSelect();
+    }
+  });
+
+  it.each([
     ["an invalid Date object", new Date(Number.NaN)],
     ["a malformed timestamp string", "not-a-timestamp"],
   ])("keeps public and admin rating responses available for %s", async (_description, malformedTimestamp) => {
@@ -231,6 +289,7 @@ describe("admin title aliases", () => {
       expect(adminResponse.body[0].selectedRating).toEqual({
         ...expectedRating,
         refreshTimestampMalformed: true,
+        hasLatestRatingLabelConflict: false,
       });
 
       const malformedFilterResponse = await request(app)
@@ -1830,6 +1889,7 @@ describe("admin title aliases", () => {
       expect(adminResponse.body[0].selectedRating).toEqual({
         ...expectedRating,
         refreshTimestampMalformed: false,
+        hasLatestRatingLabelConflict: false,
       });
       const malformedFilterResponse = await request(app)
         .get("/api/admin/content?q=Alias%20Test%20One&malformedRefreshTimestamp=true")
