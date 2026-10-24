@@ -801,6 +801,7 @@ async function getAliasCollisionCounts(normalizedAliases: string[], queryDb: any
 
 const ALIAS_REVIEW_SNAPSHOT_TTL_MS = 15 * 60 * 1000;
 const ALIAS_REVIEW_SNAPSHOT_LIMIT = 20;
+const ALIAS_REVIEW_SNAPSHOT_MAX_IDS = 10_000;
 type AliasReviewSnapshot = {
   filterKey: string;
   aliasIds: number[];
@@ -1163,7 +1164,14 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
         asc(titleAliasesTable.normalizedAlias),
         asc(titlesTable.name),
         asc(titleAliasesTable.id),
-      );
+      )
+      .limit(ALIAS_REVIEW_SNAPSHOT_MAX_IDS + 1);
+    if (orderedAliases.length > ALIAS_REVIEW_SNAPSHOT_MAX_IDS) {
+      res.status(413).json({
+        error: `This alias review matches more than ${ALIAS_REVIEW_SNAPSHOT_MAX_IDS.toLocaleString()} aliases. Narrow your search and try again.`,
+      });
+      return;
+    }
     const snapshotId = randomUUID();
     makeRoomForAliasReviewSnapshot();
     const snapshot = {

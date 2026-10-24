@@ -583,6 +583,45 @@ describe("admin title aliases", () => {
     expect(new Set(pageIds).size).toBe(103);
   });
 
+  it("rejects alphabetical reviews larger than the snapshot ID limit", async () => {
+    const aliases = Array.from({ length: 10_000 }, (_, index) => {
+      const suffix = String(index).padStart(5, "0");
+      return {
+        titleId: createdTitleIds[0],
+        alias: `Large Snapshot Review ${suffix}`,
+        normalizedAlias: `largesnapshotreview${suffix}`,
+        sourceName: "Snapshot size test",
+        isEditorial: true,
+      };
+    });
+    for (let index = 0; index < aliases.length; index += 1_000) {
+      await db.insert(titleAliasesTable).values(aliases.slice(index, index + 1_000));
+    }
+
+    const maxSizeResponse = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Large Snapshot Review", ownership: "editorial", limit: 1 })
+      .expect(200);
+    expect(maxSizeResponse.body.total).toBe(10_000);
+    expect(maxSizeResponse.body.nextCursor).toBeTruthy();
+
+    await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: "Large Snapshot Review 10000",
+      normalizedAlias: "largesnapshotreview10000",
+      sourceName: "Snapshot size test",
+      isEditorial: true,
+    });
+    const response = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Large Snapshot Review", ownership: "editorial", limit: 1 })
+      .expect(413);
+
+    expect(response.body).toEqual({
+      error: "This alias review matches more than 10,000 aliases. Narrow your search and try again.",
+    });
+  });
+
   it("keeps normalized-alias collision counts consistent across cursor pages", async () => {
     await db.insert(titleAliasesTable).values([
       {
