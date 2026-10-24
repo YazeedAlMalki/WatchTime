@@ -336,7 +336,7 @@ it.each([
     description: "expired",
     cursor: "00000000-0000-0000-0000-000000000099:150:100",
     error: "This alias review snapshot expired. Restart the search.",
-    explanation: "The saved review has expired. Restart the search to load the current results.",
+    explanation: "The saved review's result snapshot changed or expired. Restart the review to load current results.",
     status: 409,
   },
 ])("explains why a saved alias continuation cannot resume when it is $description", async ({
@@ -389,6 +389,91 @@ it.each([
     await userEvent.click(page.getByRole("button", { name: "Restart alternate-title review" }));
     await expect.element(page.getByText("No alternate titles found")).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBeNull();
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBeNull();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("restarts an expired alias page with fresh results instead of mixing snapshots", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const oldSnapshotId = "123e4567-e89b-12d3-a456-426614174000";
+  const oldSnapshotCursor = `${oldSnapshotId}:50:0`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial",
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  let firstPageRequests = 0;
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    if (url.searchParams.get("cursor") === oldSnapshotCursor) {
+      return new Response(
+        JSON.stringify({ error: "This alias review snapshot expired. Restart the search." }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    firstPageRequests += 1;
+    const item = firstPageRequests === 1
+      ? makeAlias(150, "Old snapshot result")
+      : makeAlias(250, "Current snapshot result");
+    return new Response(JSON.stringify({
+      items: [item],
+      total: firstPageRequests === 1 ? 51 : 1,
+      limit: 50,
+      offset: 0,
+      nextCursor: firstPageRequests === 1 ? oldSnapshotCursor : null,
+      previousCursor: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Old snapshot result")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+
+    const expiryAlert = page.getByRole("alert");
+    await expect.element(expiryAlert).toHaveTextContent("The saved review's result snapshot changed or expired.");
+    await expect.element(page.getByText("Old snapshot result")).not.toBeInTheDocument();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(oldSnapshotCursor);
+
+    await userEvent.click(page.getByRole("button", { name: "Restart alternate-title review" }));
+    await expect.element(page.getByText("Current snapshot result")).toBeVisible();
+    await expect.element(page.getByText("Old snapshot result")).not.toBeInTheDocument();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
+    expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
     expect(new URLSearchParams(location.search).get("aliasCursor")).toBeNull();
     expect(new URLSearchParams(location.search).get("aliasPage")).toBeNull();
   } finally {

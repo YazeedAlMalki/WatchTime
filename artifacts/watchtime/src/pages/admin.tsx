@@ -2182,7 +2182,7 @@ function getAliasReviewLoadExplanation(error: unknown): string | undefined {
     case "Alias snapshot cursor does not match the active filters":
       return "The saved page was created with different search or ownership filters. Restart the review to load page 1 with the current filters.";
     case "This alias review snapshot expired. Restart the search.":
-      return "The saved review has expired. Restart the search to load the current results.";
+      return "The saved review's result snapshot changed or expired. Restart the review to load current results.";
     default:
       return undefined;
   }
