@@ -1772,4 +1772,94 @@ describe("admin title aliases", () => {
       restoreSelect();
     }
   });
+
+  it("filters malformed timestamps using the rating selected for the requested region", async () => {
+    const titleQuery = "Alias Test One";
+    const rollback = new Error("Rollback regional timestamp fixtures");
+    try {
+      await db.transaction(async (tx) => {
+        // A title can have distinct official regional ratings from one provider.
+        // Keep the duplicate provider rows isolated to this rollback-only fixture.
+        await tx.execute(sql`DROP INDEX safety_records_title_source_unique_idx`);
+        const records = await tx.insert(safetyRecordsTable).values([
+          {
+            titleId: createdTitleIds[0],
+            sourceName: "Wikidata",
+            tier: 2,
+            isCommunity: false,
+            status: "available",
+            url: "https://www.wikidata.org/wiki/Q-US-region",
+            updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+            items: [{
+              category: "MPAA",
+              label: "PG-13",
+              score: null,
+              maxScore: null,
+              description: "Valid US rating",
+            }],
+          },
+          {
+            titleId: createdTitleIds[0],
+            sourceName: "Wikidata",
+            tier: 2,
+            isCommunity: false,
+            status: "available",
+            url: "https://www.wikidata.org/wiki/Q-GB-region",
+            updatedAt: sql`'infinity'::timestamp`,
+            items: [{
+              category: "BBFC",
+              label: "12A",
+              score: null,
+              maxScore: null,
+              description: "Malformed GB rating",
+            }],
+          },
+        ]).returning({ id: safetyRecordsTable.id });
+        const selectSpy = vi.spyOn(db, "select").mockImplementation(tx.select.bind(tx));
+        const executeSpy = vi.spyOn(db, "execute").mockImplementation(tx.execute.bind(tx));
+        try {
+          const usContent = await request(app)
+            .get(`/api/admin/content?q=${encodeURIComponent(titleQuery)}&region=US`)
+            .expect(200);
+          expect(usContent.body).toHaveLength(1);
+          expect(usContent.body[0].selectedRating).toMatchObject({
+            region: "US",
+            recordId: records[0].id,
+            refreshTimestampMalformed: false,
+          });
+
+          const malformedUsContent = await request(app)
+            .get(`/api/admin/content?q=${encodeURIComponent(titleQuery)}&region=US&malformedRefreshTimestamp=true`)
+            .expect(200);
+          expect(malformedUsContent.body).toEqual([]);
+
+          const gbContent = await request(app)
+            .get(`/api/admin/content?q=${encodeURIComponent(titleQuery)}&region=GB`)
+            .expect(200);
+          expect(gbContent.body).toHaveLength(1);
+          expect(gbContent.body[0].selectedRating).toMatchObject({
+            region: "GB",
+            recordId: records[1].id,
+            refreshTimestampMalformed: true,
+          });
+
+          const malformedGbContent = await request(app)
+            .get(`/api/admin/content?q=${encodeURIComponent(titleQuery)}&region=GB&malformedRefreshTimestamp=true`)
+            .expect(200);
+          expect(malformedGbContent.body).toHaveLength(1);
+          expect(malformedGbContent.body[0].selectedRating).toMatchObject({
+            region: "GB",
+            recordId: records[1].id,
+            refreshTimestampMalformed: true,
+          });
+        } finally {
+          selectSpy.mockRestore();
+          executeSpy.mockRestore();
+        }
+        throw rollback;
+      });
+    } catch (error) {
+      if (error !== rollback) throw error;
+    }
+  });
 });
