@@ -1842,6 +1842,100 @@ describe("admin alternate-title review", () => {
     });
   });
 
+  it("keeps a stale-edit warning when removal fails and only collision refresh fails", async () => {
+    const currentCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer Admin Correction",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: currentCorrection,
+          },
+        });
+      },
+    );
+    mocks.deleteMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.({
+          data: {
+            error:
+              "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
+          },
+        });
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale draft correction",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+    expect(container.textContent).toContain("A newer correction is already saved");
+    expect(container.textContent).toContain(currentCorrection.alias);
+
+    render([currentCorrection]);
+    mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures(["catalog"]);
+    confirmSpy.mockReturnValue(true);
+
+    act(() => button(container, "Remove").click());
+    await flushEffects();
+
+    expect(mocks.deleteMutation.mutate).toHaveBeenCalledWith(
+      {
+        id: currentCorrection.id,
+        data: { expectedUpdatedAt: currentCorrection.updatedAt },
+      },
+      expect.any(Object),
+    );
+    expectRefreshCalls(["aliases", "catalog"]);
+    const alerts = Array.from(container.querySelectorAll('[role="alert"]'));
+    const conflictNotice = alerts.find((alert) =>
+      alert.textContent?.includes("A newer correction is already saved"),
+    );
+    expect(conflictNotice?.textContent).toContain(currentCorrection.alias);
+    const refreshNotice = alerts.find((alert) =>
+      alert.textContent?.includes("Alternate-title refresh failed"),
+    );
+    expect(refreshNotice?.textContent).toContain(
+      "Collision results may be stale; the alternate-title list refreshed successfully.",
+    );
+    expect(refreshNotice?.textContent).toContain(
+      "Failed refresh request: catalog search (collision results).",
+    );
+    expect(button(container, "Retry refresh")).toBeTruthy();
+
+    mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures([]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+
+    expectRefreshCalls(["catalog"]);
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+    expect(container.textContent).toContain(
+      "A newer correction is already saved",
+    );
+    expect(container.textContent).toContain(currentCorrection.alias);
+  });
+
   it("requires removal confirmation and refreshes collision badges after removal", async () => {
     render();
     confirmSpy.mockReturnValueOnce(false);
