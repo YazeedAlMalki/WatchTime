@@ -751,17 +751,6 @@ describe("admin title aliases", () => {
     expect(thirdPage.body.nextCursor).toBeNull();
     expect(thirdPage.body.previousCursor).toMatch(/^[0-9a-f-]{36}:2$/i);
 
-    const restoredFirstPage = await request(app)
-      .get("/api/admin/content-aliases")
-      .query({
-        q: "Snapshot Review",
-        ownership: "editorial",
-        limit: 2,
-        cursor: secondPage.body.previousCursor,
-      })
-      .expect(200);
-    expect(restoredFirstPage.body.items.map((alias: { id: number }) => alias.id))
-      .toEqual([rows[1].id, rows[3].id]);
     const restoredSecondPage = await request(app)
       .get("/api/admin/content-aliases")
       .query({
@@ -773,6 +762,24 @@ describe("admin title aliases", () => {
       .expect(200);
     expect(restoredSecondPage.body.items.map((alias: { id: number }) => alias.id))
       .toEqual([rows[4].id]);
+    expect(restoredSecondPage.body.items.map((alias: { alias: string }) => alias.alias))
+      .toEqual(["Snapshot Review Aardvark"]);
+    expect(restoredSecondPage.body.previousCursor).toMatch(/^[0-9a-f-]{36}:0$/i);
+
+    const restoredFirstPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Snapshot Review",
+        ownership: "editorial",
+        limit: 2,
+        cursor: restoredSecondPage.body.previousCursor,
+      })
+      .expect(200);
+    expect(restoredFirstPage.body.items.map((alias: { id: number }) => alias.id))
+      .toEqual([rows[1].id, rows[3].id]);
+    expect(restoredFirstPage.body.items.map((alias: { alias: string }) => alias.alias))
+      .toEqual(["Snapshot Review Alpha", "Snapshot Review Bravo"]);
+    expect(restoredFirstPage.body.previousCursor).toBeNull();
     expect(new Set([
       ...firstPage.body.items.map((alias: { id: number }) => alias.id),
       ...secondPage.body.items.map((alias: { id: number }) => alias.id),

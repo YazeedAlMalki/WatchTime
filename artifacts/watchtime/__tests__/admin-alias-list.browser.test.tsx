@@ -316,6 +316,113 @@ it("restores the saved alias page and keeps its cursor with the saved filters", 
   }
 });
 
+it("moves backward through several restored alias pages without losing filters", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174000";
+  const restoredCursor = `${snapshotId}:150:100`;
+  window.history.replaceState(
+    {},
+    "",
+    `/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=4&aliasCursor=${encodeURIComponent(restoredCursor)}`,
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  const pages = new Map([
+    [restoredCursor, {
+      alias: makeAlias(151, "Lighthouse resumed page four alias"),
+      offset: 150,
+      previousCursor: `${snapshotId}:100`,
+    }],
+    [`${snapshotId}:100`, {
+      alias: makeAlias(101, "Lighthouse resumed page three alias"),
+      offset: 100,
+      previousCursor: `${snapshotId}:50`,
+    }],
+    [`${snapshotId}:50`, {
+      alias: makeAlias(51, "Lighthouse resumed page two alias"),
+      offset: 50,
+      previousCursor: `${snapshotId}:0`,
+    }],
+  ]);
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const cursor = url.searchParams.get("cursor");
+    const responsePage = pages.get(cursor ?? "");
+    if (!responsePage) throw new Error(`Unexpected alias cursor: ${cursor}`);
+    return new Response(JSON.stringify({
+      items: [responsePage.alias],
+      total: 175,
+      limit: 50,
+      offset: responsePage.offset,
+      nextCursor: `${snapshotId}:${responsePage.offset + 50}:${responsePage.offset}`,
+      previousCursor: responsePage.previousCursor,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Page 4 · 175 matching aliases")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse resumed page four alias")).toBeVisible();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(restoredCursor);
+
+    await userEvent.click(page.getByRole("button", { name: "Previous aliases" }));
+    await expect.element(page.getByText("Page 3 · 175 matching aliases")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse resumed page three alias")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse resumed page four alias")).not.toBeInTheDocument();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(`${snapshotId}:100`);
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("3");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(`${snapshotId}:100`);
+
+    await userEvent.click(page.getByRole("button", { name: "Previous aliases" }));
+    await expect.element(page.getByText("Page 2 · 175 matching aliases")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse resumed page two alias")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse resumed page three alias")).not.toBeInTheDocument();
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(`${snapshotId}:50`);
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(`${snapshotId}:50`);
+
+    for (const request of requests) {
+      expect(request.searchParams.get("q")).toBe("Lighthouse");
+      expect(request.searchParams.get("ownership")).toBe("editorial");
+      expect(request.searchParams.get("limit")).toBe("50");
+      expect(request.searchParams.has("offset")).toBe(false);
+    }
+    expect(new URLSearchParams(location.search).get("q")).toBe("Lighthouse");
+    expect(new URLSearchParams(location.search).get("ownership")).toBe("editorial");
+    expect(new URLSearchParams(location.search).get("region")).toBe("GB");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it.each([
   {
     description: "malformed",
