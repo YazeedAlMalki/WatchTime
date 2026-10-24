@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { request as httpRequest, ServerResponse } from "node:http";
+import { get as httpGet, request as httpRequest, ServerResponse } from "node:http";
 import request from "supertest";
 import {
   db,
@@ -831,22 +831,35 @@ describe("admin title aliases", () => {
     })));
 
     const batchQueries: string[] = [];
-    const originalQuery = pool.query.bind(pool);
-    const querySpy = vi.spyOn(pool, "query").mockImplementation(((...args: unknown[]) => {
-      const statement = args[0] as string | { text?: string };
-      const result = (originalQuery as (...queryArgs: unknown[]) => Promise<{ rows: unknown[] }>)(...args);
-      return result.then((value) => {
-        const queryText = typeof statement === "string" ? statement : statement.text ?? "";
-        if (
-          queryText.includes("title_aliases")
-          && /\border by\b/i.test(queryText)
-          && /\blimit\b/i.test(queryText)
-        ) {
-          batchQueries.push(queryText);
-        }
-        return value;
+    const originalConnect = pool.connect.bind(pool);
+    const connectSpy = vi.spyOn(pool, "connect").mockImplementation(((callback?: any) => {
+      if (callback) return originalConnect(callback);
+      return originalConnect().then((client) => {
+        const originalQuery = client.query.bind(client) as (...args: any[]) => Promise<any>;
+        const originalRelease = client.release.bind(client);
+        client.query = ((...args: any[]) => {
+          const statement = args[0] as string | { text?: string };
+          const result = originalQuery(...args);
+          return result.then((value: any) => {
+            const queryText = typeof statement === "string" ? statement : statement.text ?? "";
+            if (
+              queryText.includes("title_aliases")
+              && /\border by\b/i.test(queryText)
+              && /\blimit\b/i.test(queryText)
+            ) {
+              batchQueries.push(queryText);
+            }
+            return value;
+          });
+        }) as typeof client.query;
+        client.release = ((...args: any[]) => {
+          client.query = originalQuery as typeof client.query;
+          client.release = originalRelease as typeof client.release;
+          return originalRelease(...args);
+        }) as typeof client.release;
+        return client;
       });
-    }) as typeof pool.query);
+    }) as typeof pool.connect);
 
     const originalWrite = ServerResponse.prototype.write;
     let forcedBackpressure = false;
@@ -928,9 +941,104 @@ describe("admin title aliases", () => {
     } finally {
       client?.destroy();
       writeSpy.mockRestore();
-      querySpy.mockRestore();
+      connectSpy.mockRestore();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it("keeps the export count and rows on one snapshot when aliases change during the download", async () => {
+    const aliases = await db.insert(titleAliasesTable).values(
+      Array.from({ length: 501 }, (_, index) => ({
+        titleId: createdTitleIds[0],
+        alias: `Mid-download export ${String(index).padStart(4, "0")}`,
+        normalizedAlias: `middownloadexport${String(index).padStart(4, "0")}`,
+        language: "en",
+        sourceName: "Concurrent export test",
+        sourceUrl: `https://example.test/${"p".repeat(600)}`,
+        isEditorial: true,
+      })),
+    ).returning({ id: titleAliasesTable.id });
+
+    let changedAliasesDuringExport = false;
+    let exportCount: string | undefined;
+    let csvText = "";
+    let statusCode: number | undefined;
+    const server = app.listen(0, "127.0.0.1");
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("listening", resolve);
+        server.once("error", reject);
+      });
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Test server did not bind to a TCP port");
+
+      await new Promise<void>((resolve, reject) => {
+        const exportRequest = httpGet({
+          hostname: "127.0.0.1",
+          port: address.port,
+          path: "/api/admin/content-aliases/export?q=Mid-download%20export&ownership=editorial",
+        }, (response) => {
+          const chunks: Buffer[] = [];
+          let mutationStarted = false;
+          statusCode = response.statusCode;
+          const countHeader = response.headers["x-export-count"];
+          exportCount = Array.isArray(countHeader) ? countHeader[0] : countHeader;
+          response.on("data", (chunk: Buffer) => {
+            chunks.push(chunk);
+            if (mutationStarted) return;
+            mutationStarted = true;
+            response.pause();
+            void (async () => {
+              await db.delete(titleAliasesTable)
+                .where(eq(titleAliasesTable.id, aliases[500].id));
+              await db.insert(titleAliasesTable).values([
+                {
+                  titleId: createdTitleIds[0],
+                  alias: "Mid-download export inserted first",
+                  normalizedAlias: "middownloadexportinsertedfirst",
+                  language: "en",
+                  sourceName: "Concurrent export test",
+                  isEditorial: true,
+                },
+                {
+                  titleId: createdTitleIds[0],
+                  alias: "Mid-download export inserted second",
+                  normalizedAlias: "middownloadexportinsertedsecond",
+                  language: "en",
+                  sourceName: "Concurrent export test",
+                  isEditorial: true,
+                },
+              ]);
+              changedAliasesDuringExport = true;
+              response.resume();
+            })().catch((error) => {
+              response.resume();
+              reject(error);
+            });
+          });
+          response.on("end", () => {
+            csvText = Buffer.concat(chunks).toString("utf8");
+            resolve();
+          });
+          response.on("error", reject);
+        });
+        exportRequest.on("error", reject);
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+
+    const lines = csvText.split("\r\n");
+    const exportedIds = lines.slice(1)
+      .map((line) => Number(line.split(",", 1)[0].slice(1, -1)));
+    expect(statusCode).toBe(200);
+    expect(changedAliasesDuringExport).toBe(true);
+    expect(exportCount).toBe("501");
+    expect(exportedIds).toEqual(aliases.map(({ id }) => id));
+    expect(lines).toHaveLength(502);
+    expect(csvText).not.toContain("Mid-download export inserted");
   });
 
   it("rejects an unknown alias ownership filter", async () => {
