@@ -347,52 +347,57 @@ describe("shared rating-region preference", () => {
     }
   });
 
-  it("selects the same official rating when equal refresh timestamps arrive in reverse order", async () => {
+  it("prefers the higher-priority official rating when refresh timestamps tie in either query order", async () => {
     const updatedAt = new Date("2026-02-01T00:00:00.000Z");
-    const [rating] = await db.insert(safetyRecordsTable).values({
+    const [lowerPriority] = await db.insert(safetyRecordsTable).values({
       titleId,
       sourceName: "Wikidata",
       tier: 2,
       isCommunity: false,
       status: "available",
       updatedAt,
-      url: "https://example.test/same-official-rating",
+      url: "https://example.test/lower-priority-rating",
       items: [{
         category: "MPAA",
-        label: "PG-13",
+        label: "PG",
         score: null,
         maxScore: null,
-        description: "Official rating",
+        description: "Lower-priority official rating",
       }],
     }).returning({ id: safetyRecordsTable.id });
-    const duplicateRecordId = rating.id + 1_000_000_000;
-    let restoreOrder = mockSafetyRecordQueryOrder(db, "forward", {
-      sourceRecordId: rating.id,
-      duplicateRecordId,
-    });
-    let firstResponse;
-    try {
-      firstResponse = await supertest(app).get(`/api/safety?titleId=${titleId}`);
-    } finally {
-      restoreOrder();
-    }
+    const higherPriorityId = lowerPriority.id + 1_000_000_000;
 
-    restoreOrder = mockSafetyRecordQueryOrder(db, "reverse", {
-      sourceRecordId: rating.id,
-      duplicateRecordId,
-    });
-    try {
-      const reversedResponse = await supertest(app).get(`/api/safety?titleId=${titleId}`);
-
-      expect(firstResponse.status).toBe(200);
-      expect(reversedResponse.status).toBe(200);
-      expect(firstResponse.body.preferredRating).toEqual(reversedResponse.body.preferredRating);
-      expect(reversedResponse.body.preferredRating).toMatchObject({
-        recordId: rating.id,
-        lastRefreshedAt: updatedAt.toISOString(),
+    for (const order of ["forward", "reverse"] as const) {
+      const restoreOrder = mockSafetyRecordQueryOrder(db, order, {
+        sourceRecordId: lowerPriority.id,
+        duplicateRecordId: higherPriorityId,
+        overrides: {
+          tier: 1,
+          url: "https://example.test/higher-priority-rating",
+          items: [{
+            category: "MPAA",
+            label: "PG-13",
+            score: null,
+            maxScore: null,
+            description: "Higher-priority official rating",
+          }],
+        },
       });
-    } finally {
-      restoreOrder();
+      try {
+        const response = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.preferredRating).toMatchObject({
+          label: "PG-13",
+          sourceName: "Wikidata",
+          recordId: higherPriorityId,
+          lastRefreshedAt: updatedAt.toISOString(),
+          sourceUrl: "https://example.test/higher-priority-rating",
+        });
+        expect(response.body.preferredRating.recordId).not.toBe(lowerPriority.id);
+      } finally {
+        restoreOrder();
+      }
     }
   });
 

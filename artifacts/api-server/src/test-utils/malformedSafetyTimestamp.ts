@@ -86,7 +86,11 @@ export function mockMalformedSafetyTimestampDuplicate(
 export function mockSafetyRecordQueryOrder(
   database: object,
   order: "forward" | "reverse",
-  duplicate?: { sourceRecordId: number; duplicateRecordId: number },
+  duplicate?: {
+    sourceRecordId: number;
+    duplicateRecordId: number;
+    overrides?: Record<string, unknown>;
+  },
 ): () => void {
   const db = database as any;
   const originalSelect = db.select.bind(db);
@@ -101,7 +105,14 @@ export function mockSafetyRecordQueryOrder(
         ? rows.find((row) => row.id === duplicate.sourceRecordId)
         : undefined;
       const rowsToOrder = sourceRecord
-        ? [...rows, { ...sourceRecord, id: duplicate!.duplicateRecordId }]
+        ? [
+          ...rows,
+          {
+            ...sourceRecord,
+            ...duplicate!.overrides,
+            id: duplicate!.duplicateRecordId,
+          },
+        ]
         : rows;
       return order === "reverse" ? [...rowsToOrder].reverse() : rowsToOrder;
     });

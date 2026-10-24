@@ -14,6 +14,7 @@ import { runCatalogSync, type SourceItem } from "../seed-real";
 import {
   mockMalformedSafetyTimestamp,
   mockMalformedSafetyTimestampDuplicate,
+  mockSafetyRecordQueryOrder,
 } from "../test-utils/malformedSafetyTimestamp";
 
 vi.mock("../middlewares/auth", () => ({
@@ -110,6 +111,77 @@ describe("admin title aliases", () => {
       refreshTimestampMalformed: false,
       sourceUrl: "https://www.wikidata.org/wiki/Q123",
     });
+  });
+
+  it("keeps public and admin ratings on the higher-priority tier when refresh dates tie", async () => {
+    const updatedAt = new Date("2026-02-01T00:00:00.000Z");
+    const [lowerPriority] = await db.insert(safetyRecordsTable).values({
+      titleId: createdTitleIds[0],
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      url: "https://example.test/lower-priority-rating",
+      updatedAt,
+      items: [{
+        category: "MPAA",
+        label: "PG",
+        score: null,
+        maxScore: null,
+        description: "Lower-priority official rating",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+    const higherPriorityId = lowerPriority.id + 1_000_000_000;
+
+    const expectedRating = {
+      region: "US",
+      countryName: "United States",
+      system: "MPAA",
+      label: "PG-13",
+      sourceName: "Wikidata",
+      recordId: higherPriorityId,
+      lastRefreshedAt: updatedAt.toISOString(),
+      sourceUrl: "https://example.test/higher-priority-rating",
+    };
+
+    for (const order of ["forward", "reverse"] as const) {
+      const restoreOrder = mockSafetyRecordQueryOrder(db, order, {
+        sourceRecordId: lowerPriority.id,
+        duplicateRecordId: higherPriorityId,
+        overrides: {
+          tier: 1,
+          url: "https://example.test/higher-priority-rating",
+          items: [{
+            category: "MPAA",
+            label: "PG-13",
+            score: null,
+            maxScore: null,
+            description: "Higher-priority official rating",
+          }],
+        },
+      });
+      try {
+        const adminResponse = await request(app)
+          .get("/api/admin/content?q=Alias%20Test%20One")
+          .expect(200);
+        const publicResponse = await request(app)
+          .get(`/api/safety?titleId=${createdTitleIds[0]}`)
+          .expect(200);
+
+        expect(adminResponse.body[0].selectedRating).toEqual({
+          ...expectedRating,
+          refreshTimestampMalformed: false,
+        });
+        expect(publicResponse.body.preferredRating).toEqual(expectedRating);
+        expect({
+          ...publicResponse.body.preferredRating,
+          refreshTimestampMalformed: false,
+        }).toEqual(adminResponse.body[0].selectedRating);
+        expect(expectedRating.recordId).not.toBe(lowerPriority.id);
+      } finally {
+        restoreOrder();
+      }
+    }
   });
 
   it.each([

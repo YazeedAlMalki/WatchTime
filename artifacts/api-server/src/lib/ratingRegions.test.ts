@@ -135,6 +135,37 @@ describe("resolvePreferredRating", () => {
     expect(resolvePreferredRating([second, first], "US")?.label).toBe("PG");
   });
 
+  it("prefers the higher-priority source tier before stable content and record ID", () => {
+    const timestamp = new Date("2026-02-01T00:00:00.000Z");
+    const lowerPriority = {
+      ...records[0],
+      id: 10,
+      tier: 2,
+      updatedAt: timestamp,
+      url: "https://example.test/a",
+      items: [{ category: "MPAA", label: "PG" }],
+    };
+    const higherPriority = {
+      ...records[0],
+      id: 20,
+      tier: 1,
+      updatedAt: timestamp,
+      url: "https://example.test/z",
+      items: [{ category: "MPAA", label: "PG-13" }],
+    };
+
+    expect(resolvePreferredRating([lowerPriority, higherPriority], "US")).toMatchObject({
+      label: "PG-13",
+      recordId: 20,
+      lastRefreshedAt: timestamp.toISOString(),
+    });
+    expect(resolvePreferredRating([higherPriority, lowerPriority], "US")).toMatchObject({
+      label: "PG-13",
+      recordId: 20,
+      lastRefreshedAt: timestamp.toISOString(),
+    });
+  });
+
   it("uses stable content when refresh timestamps are missing", () => {
     const candidates = [
       {
