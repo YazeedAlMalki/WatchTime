@@ -277,8 +277,22 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   const shows = await render(
     <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
   );
+  try {
   await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeTruthy());
   await expectEpisodeScopedFailures(shows, client);
+  await checkPendingMarksAfterOpeningHistory(shows, client);
+  // Restore this journey's baseline without remounting the Expo screen.
+  mockWatched.clear();
+  mockWatched.add(101);
+  mockWatched.add(102);
+  mockMarkRequest.mockClear();
+  await act(async () => {
+    await Promise.all([
+      client.invalidateQueries({ queryKey: getGetMyShowsQueryKey() }),
+      client.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() }),
+    ]);
+  });
+  await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeEnabled());
   const api = require('@workspace/api-client-react');
   api.getMyShows.mockClear();
 
@@ -545,8 +559,119 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   expect(mockSeasonFetch).toHaveBeenCalledWith(1);
   expect(mockSeasonFetch).toHaveBeenCalledWith(2);
   await act(async () => detail.unmount());
-  client.clear();
+  } finally {
+    await cleanup();
+    client.clear();
+  }
 });
+
+async function checkPendingMarksAfterOpeningHistory(
+  shows: Awaited<ReturnType<typeof render>>,
+  client: QueryClient,
+) {
+  mockMarkRequest.mockClear();
+  const api = require('@workspace/api-client-react');
+  const activityKey = [
+    ...api.getGetMyRecentActivityQueryKey(), 'account', 'checkmarks-user',
+  ];
+  const failedMark = deferredMarkResponse();
+  const successfulMark = deferredMarkResponse();
+  const invalidate = jest.spyOn(client, 'invalidateQueries');
+
+  try {
+    await waitFor(() => {
+      expect(shows.getByTestId('mark-watched-201')).toBeEnabled();
+      expect(client.getQueryData(activityKey)).toEqual([]);
+    });
+    const activityQuery = client.getQueryCache().find({ queryKey: activityKey, exact: true })!;
+    expect(activityQuery.options).toEqual(expect.objectContaining({ staleTime: Infinity }));
+    expect(activityQuery.isStale()).toBe(false);
+    const initialHistoryFetches = mockRecentActivityFetch.mock.calls.length;
+    const initialShowsFetches = api.getMyShows.mock.calls.length;
+
+    mockMarkRequest.mockImplementationOnce(() => failedMark.promise);
+    await fireEvent.press(shows.getByTestId('mark-watched-201'));
+    await waitFor(() => {
+      expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+      expect(shows.getByTestId('mark-watched-201')).toBeDisabled();
+    });
+    await fireEvent.press(shows.getByTestId('tab-history'));
+    // The screen stays mounted, but the ShowRow owning the mutation does not.
+    expect(shows.queryByTestId('show-row-42')).toBeNull();
+    expect(shows.queryByTestId('mark-watched-201')).toBeNull();
+    expect(shows.queryByTestId('history-item-42')).toBeNull();
+    expect(client.getMutationCache().getAll().at(-1)?.state.status).toBe('pending');
+    expect(mockRecentActivityFetch).toHaveBeenCalledTimes(initialHistoryFetches);
+
+    await act(async () => failedMark.reject(new Error('Offline after opening History')));
+    await waitFor(() => {
+      expect(client.getMutationCache().getAll().at(-1)?.state.status).toBe('error');
+    });
+    expect(shows.queryByTestId('history-item-42')).toBeNull();
+    expect(client.getQueryData(activityKey)).toEqual([]);
+    expect([...mockWatched]).toEqual([101, 102]);
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(mockRecentActivityFetch).toHaveBeenCalledTimes(initialHistoryFetches);
+    expect(api.getMyShows).toHaveBeenCalledTimes(initialShowsFetches);
+
+    await fireEvent.press(shows.getByTestId('tab-shows'));
+    await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeEnabled());
+    const row = () => within(shows.getByTestId('show-row-42'));
+    expect(row().getByText('2 / 4 episodes')).toBeTruthy();
+    expect(row().getByText('S2 E1 · Third')).toBeTruthy();
+    expect(row().queryByTestId('mark-watched-202')).toBeNull();
+
+    mockMarkRequest.mockImplementationOnce(() => successfulMark.promise);
+    await fireEvent.press(row().getByTestId('mark-watched-201'));
+    await waitFor(() => {
+      expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+      expect(row().getByTestId('mark-watched-201')).toBeDisabled();
+    });
+    await fireEvent.press(shows.getByTestId('tab-history'));
+    expect(shows.queryByTestId('show-row-42')).toBeNull();
+    expect(shows.queryByTestId('mark-watched-201')).toBeNull();
+    expect(shows.queryByTestId('history-item-42')).toBeNull();
+    expect(client.getMutationCache().getAll().at(-1)?.state.status).toBe('pending');
+    expect(client.getQueryData(activityKey)).toEqual([]);
+    expect([...mockWatched]).toEqual([101, 102]);
+    expect(mockRecentActivityFetch).toHaveBeenCalledTimes(initialHistoryFetches);
+    expect(api.getMyShows).toHaveBeenCalledTimes(initialShowsFetches);
+
+    await act(async () => successfulMark.resolve({ ok: true }));
+    await waitFor(() => {
+      expect(client.getMutationCache().getAll().at(-1)?.state.status).toBe('success');
+      expect(shows.getByTestId('history-item-42')).toBeTruthy();
+      expect(within(shows.getByTestId('history-item-42')).getByText('S2E1')).toBeTruthy();
+      expect(mockRecentActivityFetch.mock.calls.length).toBeGreaterThan(initialHistoryFetches);
+      expect(api.getMyShows.mock.calls.length).toBeGreaterThan(initialShowsFetches);
+    });
+    expect(client.getQueryData(activityKey)).toEqual([
+      expect.objectContaining({ titleId: 42, kind: 'episode', episodeLabel: 'S2E1' }),
+    ]);
+    expect([...mockWatched]).toEqual([101, 102, 201]);
+
+    await fireEvent.press(shows.getByTestId('tab-shows'));
+    await waitFor(() => {
+      expect(row().getByText('3 / 4 episodes')).toBeTruthy();
+      expect(row().getByText('S2 E2 · Fourth')).toBeTruthy();
+      expect(row().getByTestId('mark-watched-202')).toBeEnabled();
+      expect(row().queryByTestId('mark-watched-201')).toBeNull();
+    });
+    expect(shows.queryByRole('alert')).toBeNull();
+    expect(shows.queryByText('Retry')).toBeNull();
+    expect(mockMarkRequest.mock.calls).toEqual([
+      [{ episodeId: 201, data: { includePrevious: true } }],
+      [{ episodeId: 201, data: { includePrevious: true } }],
+    ]);
+  } finally {
+    // Also release held requests on assertion failure before tearing down.
+    await act(async () => {
+      failedMark.resolve({ ok: true });
+      successfulMark.resolve({ ok: true });
+    });
+    invalidate.mockRestore();
+  }
+}
 
 async function expectEpisodeScopedFailures(
   shows: Awaited<ReturnType<typeof render>>,
