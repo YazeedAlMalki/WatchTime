@@ -278,6 +278,7 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
     <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
   );
   await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeTruthy());
+  await expectEpisodeScopedFailures(shows, client);
   const api = require('@workspace/api-client-react');
   api.getMyShows.mockClear();
 
@@ -546,5 +547,91 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   await act(async () => detail.unmount());
   client.clear();
 });
+
+async function expectEpisodeScopedFailures(
+  shows: Awaited<ReturnType<typeof render>>,
+  client: QueryClient,
+) {
+  mockWatched.clear();
+  mockMarkRequest.mockReset();
+  mockMarkRequest.mockResolvedValue({ ok: true });
+  const { getGetMyShowsQueryKey } = require('@workspace/api-client-react');
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
+  });
+  await waitFor(() => expect(shows.getByTestId('mark-watched-101')).toBeTruthy());
+  const row = shows.getByTestId('show-row-42');
+  const currentRow = () => within(shows.getByTestId('show-row-42'));
+  const expectCleanEpisode = (episodeId: number) => {
+    // A changed episode must update the existing row, not clear errors by remounting it.
+    expect(shows.getByTestId('show-row-42')).toBe(row);
+    expect(currentRow().getByTestId(`mark-watched-${episodeId}`)).toBeTruthy();
+    expect(currentRow().queryByRole('alert')).toBeNull();
+    expect(currentRow().queryByText('Retry')).toBeNull();
+    expect(currentRow().getByText('Watched')).toBeTruthy();
+    expect(currentRow().getByTestId('icon-check')).toBeTruthy();
+    expect(currentRow().queryByTestId('icon-refresh-cw')).toBeNull();
+  };
+  const advanceEpisode = async (watchedId: number, nextId: number) => {
+    mockWatched.add(watchedId); // Simulate progress saved by another session.
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
+    });
+    await waitFor(() => expect(currentRow().getByTestId(`mark-watched-${nextId}`)).toBeTruthy());
+    expect(currentRow().queryByTestId(`mark-watched-${watchedId}`)).toBeNull();
+  };
+
+  mockMarkRequest.mockRejectedValueOnce(new Error('First episode failed'));
+  await fireEvent.press(currentRow().getByTestId('mark-watched-101'));
+  await waitFor(() => {
+    expect(currentRow().getByRole('alert')).toBeTruthy();
+    expect(currentRow().getByText('Retry')).toBeTruthy();
+  });
+  expect(mockMarkRequest).toHaveBeenLastCalledWith({
+    episodeId: 101, data: { includePrevious: true },
+  });
+  await advanceEpisode(101, 102);
+  expectCleanEpisode(102);
+
+  const oldRequest = deferredMarkResponse();
+  mockMarkRequest.mockImplementationOnce(() => oldRequest.promise);
+  await fireEvent.press(currentRow().getByTestId('mark-watched-102'));
+  await waitFor(() => {
+    expect(currentRow().getByTestId('mark-watched-102')).toBeDisabled();
+    expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+  });
+  const pendingMutation = client.getMutationCache().getAll().find(
+    (mutation) => mutation.state.status === 'pending',
+  )!;
+  expect(pendingMutation.state.variables).toEqual({
+    episodeId: 102, data: { includePrevious: true },
+  });
+  await advanceEpisode(102, 201);
+  expectCleanEpisode(201);
+  await act(async () => oldRequest.reject(new Error('Old episode failed late')));
+  await waitFor(() => {
+    expect(pendingMutation.state.status).toBe('error');
+    expect(currentRow().getByTestId('mark-watched-201')).toBeEnabled();
+  });
+  expectCleanEpisode(201);
+  expect(currentRow().getByText('2 / 4 episodes')).toBeTruthy();
+  expect(currentRow().getByText('S2 E1 · Third')).toBeTruthy();
+
+  // Suppressing old failures must not suppress an actual failure for the new episode.
+  mockMarkRequest.mockRejectedValueOnce(new Error('Current episode failed'));
+  await fireEvent.press(currentRow().getByTestId('mark-watched-201'));
+  await waitFor(() => {
+    expect(currentRow().getByRole('alert').props.children).toBe(
+      "Couldn't mark this episode as watched. Please try again.",
+    );
+    expect(currentRow().getByText('Retry')).toBeTruthy();
+    expect(currentRow().getByTestId('icon-refresh-cw')).toBeTruthy();
+  });
+  expect(mockMarkRequest).toHaveBeenLastCalledWith({
+    episodeId: 201, data: { includePrevious: true },
+  });
+  expect([...mockWatched]).toEqual([101, 102]);
+  mockMarkRequest.mockClear();
+}
 
 afterEach(cleanup);

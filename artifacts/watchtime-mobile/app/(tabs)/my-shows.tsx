@@ -132,6 +132,7 @@ function ShowRow({ show }: { show: TrackedShow }) {
     },
   });
   const ep = show.nextEpisode;
+  const markFailed = markWatched.isError && markWatched.variables?.episodeId === ep?.id;
   const progress = show.totalEpisodes > 0 ? show.watchedEpisodes / show.totalEpisodes : 0;
   const progressPct = Math.round(progress * 100);
 
@@ -221,9 +222,9 @@ function ShowRow({ show }: { show: TrackedShow }) {
                 },
               ]}
             >
-              <Feather name={markWatched.isError ? 'refresh-cw' : 'check'} size={13} color={c.primaryForeground} />
+              <Feather name={markFailed ? 'refresh-cw' : 'check'} size={13} color={c.primaryForeground} />
               <Text style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>
-                {markWatched.isError ? 'Retry' : 'Watched'}
+                {markFailed ? 'Retry' : 'Watched'}
               </Text>
             </Pressable>
           </View>
@@ -235,7 +236,7 @@ function ShowRow({ show }: { show: TrackedShow }) {
             </Text>
           </View>
         )}
-        {ep && markWatched.isError ? (
+        {ep && markFailed ? (
           <Text
             accessibilityRole="alert"
             style={{ color: c.destructive, fontSize: 13, fontFamily: 'Inter_400Regular' }}
