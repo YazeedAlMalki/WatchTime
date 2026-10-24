@@ -1,7 +1,12 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { vi } from "vitest";
-import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+  useQuery,
+} from "@tanstack/react-query";
 import type {
   AdminContentAlias,
   AdminContentAliasRecord,
@@ -28,7 +33,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
-  ...await importOriginal<typeof import("@tanstack/react-query")>(),
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQueryClient: () => mocks.queryClient,
 }));
 
@@ -37,18 +42,21 @@ vi.mock("@workspace/api-client-react", () => ({
   useDeleteAdminContentAlias: () => mocks.deleteMutation,
   getListAdminContentAliasesQueryKey: () => ["/api/admin/content-aliases"],
   getSearchAdminContentQueryKey: () => ["/api/admin/content"],
-  useListAdminReports: (params: unknown) => useQuery({
-    queryKey: ["/api/admin/reports", params],
-    queryFn: () => mocks.listReports(params),
-    retry: false,
-  }),
-  useListAdminFeedback: (params: unknown) => useQuery({
-    queryKey: ["/api/admin/feedback", params],
-    queryFn: () => mocks.listFeedback(params),
-    retry: false,
-  }),
+  useListAdminReports: (params: unknown) =>
+    useQuery({
+      queryKey: ["/api/admin/reports", params],
+      queryFn: () => mocks.listReports(params),
+      retry: false,
+    }),
+  useListAdminFeedback: (params: unknown) =>
+    useQuery({
+      queryKey: ["/api/admin/feedback", params],
+      queryFn: () => mocks.listFeedback(params),
+      retry: false,
+    }),
   useUpdateAdminReport: () => useMutation({ mutationFn: mocks.updateReport }),
-  useUpdateAdminFeedback: () => useMutation({ mutationFn: mocks.updateFeedback }),
+  useUpdateAdminFeedback: () =>
+    useMutation({ mutationFn: mocks.updateFeedback }),
   getListAdminReportsQueryKey: () => ["/api/admin/reports"],
   getListAdminFeedbackQueryKey: () => ["/api/admin/feedback"],
   getGetAdminDashboardQueryKey: () => ["/api/admin/dashboard"],
@@ -157,10 +165,13 @@ describe("admin moderation queue page recovery", () => {
 
   async function selectValue(index: number, label: string) {
     act(() => {
-      container.querySelectorAll<HTMLElement>('[role="combobox"]')[index].click();
+      container
+        .querySelectorAll<HTMLElement>('[role="combobox"]')
+        [index].click();
     });
-    const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
-      .find((element) => element.textContent?.trim() === label);
+    const option = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="option"]'),
+    ).find((element) => element.textContent?.trim() === label);
     if (!option) throw new Error(`Option not found: ${label}`);
     act(() => option.click());
     await flushEffects();
@@ -183,9 +194,16 @@ describe("admin moderation queue page recovery", () => {
         pageSize = limit - 1;
         // Two initially full pages followed by one final item. Concurrent
         // cleanup can also remove the middle page when the final item is saved.
-        const count = offset === 0 ? pageSize + 1
-          : offset === pageSize ? (moderated && middlePageEmpty ? 0 : pageSize + 1)
-          : moderated ? 0 : 1;
+        const count =
+          offset === 0
+            ? pageSize + 1
+            : offset === pageSize
+              ? moderated && middlePageEmpty
+                ? 0
+                : pageSize + 1
+              : moderated
+                ? 0
+                : 1;
         return Array.from({ length: count }, (_, index) => ({
           id: offset + index + 1,
           titleName: `Report ${offset + index + 1}`,
@@ -196,25 +214,39 @@ describe("admin moderation queue page recovery", () => {
           createdAt: "2026-10-01T00:00:00Z",
         }));
       });
-      update.mockImplementation(async () => { moderated = true; });
-      act(() => root.render(
-        <QueryClientProvider client={client}>
-          {isReports ? <ReportsTab /> : <FeedbackTab />}
-        </QueryClientProvider>,
-      ));
-      await settle(() => expect(container.textContent).toContain(isReports ? "Report 1" : "Feedback 1"));
+      update.mockImplementation(async () => {
+        moderated = true;
+      });
+      act(() =>
+        root.render(
+          <QueryClientProvider client={client}>
+            {isReports ? <ReportsTab /> : <FeedbackTab />}
+          </QueryClientProvider>,
+        ),
+      );
+      await settle(() =>
+        expect(container.textContent).toContain(
+          isReports ? "Report 1" : "Feedback 1",
+        ),
+      );
       if (!isReports) {
         await selectValue(0, "Bug");
         await selectValue(1, "Reviewing");
       }
-      await settle(() => expect(button(container, "Next").disabled).toBe(false));
+      await settle(() =>
+        expect(button(container, "Next").disabled).toBe(false),
+      );
       act(() => button(container, "Next").click());
       await settle(() => expect(container.textContent).toContain("Page 2"));
-      await settle(() => expect(button(container, "Next").disabled).toBe(false));
+      await settle(() =>
+        expect(button(container, "Next").disabled).toBe(false),
+      );
       act(() => button(container, "Next").click());
       await settle(() => {
         expect(container.textContent).toContain("Page 3");
-        expect(container.textContent).toContain(`${isReports ? "Report" : "Feedback"} ${pageSize * 2 + 1}`);
+        expect(container.textContent).toContain(
+          `${isReports ? "Report" : "Feedback"} ${pageSize * 2 + 1}`,
+        );
       });
       if (isReports) {
         await act(async () => {
@@ -226,8 +258,12 @@ describe("admin moderation queue page recovery", () => {
       }
       const expectedOffset = middlePageEmpty ? 0 : pageSize;
       await settle(() => {
-        expect(container.textContent).toContain(middlePageEmpty ? "Page 1" : "Page 2");
-        expect(container.textContent).toContain(`${isReports ? "Report" : "Feedback"} ${expectedOffset + 1}`);
+        expect(container.textContent).toContain(
+          middlePageEmpty ? "Page 1" : "Page 2",
+        );
+        expect(container.textContent).toContain(
+          `${isReports ? "Report" : "Feedback"} ${expectedOffset + 1}`,
+        );
       });
       expect(update).toHaveBeenCalledWith(
         isReports
@@ -235,12 +271,20 @@ describe("admin moderation queue page recovery", () => {
           : { feedbackId: pageSize * 2 + 1, data: { status: "closed" } },
         expect.anything(),
       );
-      const preservedFilters = isReports ? { status: "open" } : { status: "reviewing", category: "bug" };
+      const preservedFilters = isReports
+        ? { status: "open" }
+        : { status: "reviewing", category: "bug" };
       expect(list).toHaveBeenLastCalledWith({
-        ...preservedFilters, offset: expectedOffset, limit: pageSize + 1,
+        ...preservedFilters,
+        offset: expectedOffset,
+        limit: pageSize + 1,
       });
-      const filters = Array.from(container.querySelectorAll('[role="combobox"]')).slice(0, isReports ? 1 : 2);
-      expect(filters.map((filter) => filter.textContent)).toEqual(isReports ? ["Open"] : ["Bug", "Reviewing"]);
+      const filters = Array.from(
+        container.querySelectorAll('[role="combobox"]'),
+      ).slice(0, isReports ? 1 : 2);
+      expect(filters.map((filter) => filter.textContent)).toEqual(
+        isReports ? ["Open"] : ["Bug", "Reviewing"],
+      );
     },
   );
 });
@@ -259,12 +303,18 @@ describe("admin alternate-title review", () => {
     mocks.updateMutation.mutate.mockReset();
     mocks.deleteMutation.mutate.mockReset();
     mocks.updateMutation.mutate.mockImplementation(
-      async (_variables: unknown, options?: { onSuccess?: () => Promise<void> }) => {
+      async (
+        _variables: unknown,
+        options?: { onSuccess?: () => Promise<void> },
+      ) => {
         await options?.onSuccess?.();
       },
     );
     mocks.deleteMutation.mutate.mockImplementation(
-      async (_variables: unknown, options?: { onSuccess?: () => Promise<void> }) => {
+      async (
+        _variables: unknown,
+        options?: { onSuccess?: () => Promise<void> },
+      ) => {
         await options?.onSuccess?.();
       },
     );
@@ -303,9 +353,7 @@ describe("admin alternate-title review", () => {
     mocks.queryClient.invalidateQueries.mockImplementation(
       ({ queryKey }: { queryKey: string[] }) => {
         const request =
-          queryKey[0] === "/api/admin/content-aliases"
-            ? "aliases"
-            : "catalog";
+          queryKey[0] === "/api/admin/content-aliases" ? "aliases" : "catalog";
         return failedRequests.includes(request)
           ? Promise.reject(new Error(`${request} refresh unavailable`))
           : Promise.resolve();
@@ -346,32 +394,43 @@ describe("admin alternate-title review", () => {
   it("pins and highlights a linked alias outside the current result set and copies its record link", async () => {
     const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     try {
-      act(() => root.render(
-        <AliasReview
-          aliases={[]}
-          isLoading={false}
-          isError={false}
-          isFetching={false}
-          onRetry={() => {}}
-          ownership="provider"
-          onOwnershipChange={() => {}}
-          reviewUrl="/admin?tab=content&region=FR&q=Other&ownership=provider"
-          linkedAliasId={17}
-          linkedAlias={initialAlias}
-        />,
-      ));
+      act(() =>
+        root.render(
+          <AliasReview
+            aliases={[]}
+            isLoading={false}
+            isError={false}
+            isFetching={false}
+            onRetry={() => {}}
+            ownership="provider"
+            onOwnershipChange={() => {}}
+            reviewUrl="/admin?tab=content&region=FR&q=Other&ownership=provider"
+            linkedAliasId={17}
+            linkedAlias={initialAlias}
+          />,
+        ),
+      );
       expect(container.textContent).toContain("Shared Local Title");
-      expect(container.textContent).toContain("shown above the filtered results");
-      expect(container.querySelector("tr.bg-primary\\/10")?.textContent).toContain("Shared Local Title");
+      expect(container.textContent).toContain(
+        "shown above the filtered results",
+      );
+      expect(
+        container.querySelector("tr.bg-primary\\/10")?.textContent,
+      ).toContain("Shared Local Title");
       act(() => button(container, "Copy link").click());
       await flushEffects();
       const copied = new URL(writeText.mock.calls[0][0]);
       expect(copied.searchParams.get("aliasId")).toBe("17");
       expect(copied.searchParams.get("q")).toBe("Other");
       expect(copied.searchParams.get("ownership")).toBe("provider");
-      expect(mocks.toast).toHaveBeenCalledWith({ title: "Alternate title link copied" });
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: "Alternate title link copied",
+      });
     } finally {
       if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
       else Reflect.deleteProperty(navigator, "clipboard");
@@ -384,7 +443,11 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).toContain("2 titles");
     act(() => button(container, "Edit").click());
     act(() => {
-      setInput(container, "Alternate title for The Lighthouse", "Corrected Local Title");
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Corrected Local Title",
+      );
       setInput(container, "Language for Shared Local Title", "fr");
       setInput(
         container,
@@ -407,12 +470,18 @@ describe("admin alternate-title review", () => {
       },
       expect.any(Object),
     );
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["/api/admin/content-aliases"],
-    }, { throwOnError: true });
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["/api/admin/content"],
-    }, { throwOnError: true });
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith(
+      {
+        queryKey: ["/api/admin/content-aliases"],
+      },
+      { throwOnError: true },
+    );
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith(
+      {
+        queryKey: ["/api/admin/content"],
+      },
+      { throwOnError: true },
+    );
 
     render([uniqueAlias()]);
     expect(container.textContent).toContain("Corrected Local Title");
@@ -569,7 +638,10 @@ describe("admin alternate-title review", () => {
       "The alternate title must differ from the canonical title.",
     ];
     mocks.updateMutation.mutate.mockImplementation(
-      (_variables: unknown, options?: { onError?: (error: unknown) => void }) => {
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => void },
+      ) => {
         options?.onError?.({ data: { error: errors.shift() } });
       },
     );
@@ -577,17 +649,26 @@ describe("admin alternate-title review", () => {
     act(() => button(container, "Edit").click());
 
     act(() => {
-      setInput(container, "Alternate title for The Lighthouse", "Duplicate title");
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Duplicate title",
+      );
       button(container, "Save").click();
     });
     act(() => {
-      setInput(container, "Alternate title for The Lighthouse", "The Lighthouse");
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "The Lighthouse",
+      );
       button(container, "Save").click();
     });
 
     expect(mocks.toast).toHaveBeenNthCalledWith(1, {
       title: "Could not update alternate title",
-      description: "That alternate title already belongs to another catalog title.",
+      description:
+        "That alternate title already belongs to another catalog title.",
       variant: "destructive",
     });
     expect(mocks.toast).toHaveBeenNthCalledWith(2, {
@@ -600,7 +681,10 @@ describe("admin alternate-title review", () => {
 
   it("shows only the editorial citation when an editorial draft is stale", async () => {
     mocks.updateMutation.mutate.mockImplementation(
-      (_variables: unknown, options?: { onError?: (error: unknown) => Promise<void> }) => {
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
         void options?.onError?.({
           data: {
             code: "stale_alias",
@@ -632,33 +716,49 @@ describe("admin alternate-title review", () => {
     act(() => button(container, "Edit").click());
 
     act(() => {
-      setInput(container, "Alternate title for The Lighthouse", "Stale correction");
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale correction",
+      );
       button(container, "Save").click();
     });
     await flushEffects();
 
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["/api/admin/content-aliases"],
-    }, { throwOnError: true });
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["/api/admin/content"],
-    }, { throwOnError: true });
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith(
+      {
+        queryKey: ["/api/admin/content-aliases"],
+      },
+      { throwOnError: true },
+    );
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith(
+      {
+        queryKey: ["/api/admin/content"],
+      },
+      { throwOnError: true },
+    );
     expect(mocks.toast).toHaveBeenCalledWith({
       title: "Could not update alternate title",
       description:
         "Your draft was not saved. Review the newer correction below before trying again.",
       variant: "destructive",
     });
-    expect(container.textContent).toContain("A newer correction is already saved");
+    expect(container.textContent).toContain(
+      "A newer correction is already saved",
+    );
     expect(container.textContent).toContain("Newer Admin Correction");
     expect(container.textContent).toContain("de");
     const sourceSection = Array.from(
       container.querySelectorAll('[role="alert"] dl > div'),
     )
-      .find((field) => field.querySelector("dt")?.textContent?.trim() === "Source")
+      .find(
+        (field) => field.querySelector("dt")?.textContent?.trim() === "Source",
+      )
       ?.querySelector("dd");
     expect(sourceSection?.textContent).toContain("Admin editorial");
-    expect(sourceSection?.textContent).not.toContain("Unrelated provider citation");
+    expect(sourceSection?.textContent).not.toContain(
+      "Unrelated provider citation",
+    );
     expect(sourceSection?.querySelectorAll("a")).toHaveLength(1);
     expect(sourceSection?.querySelector("a")?.getAttribute("href")).toBe(
       "https://example.test/newer-correction",
@@ -666,6 +766,111 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).toContain("Unique");
     expect(container.textContent).toContain("Current version");
     expect(container.textContent).not.toContain("Save");
+  });
+
+  it("replaces stale correction details after a second rejected save", async () => {
+    const firstCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "First server correction",
+      language: "de",
+      sourceName: "First correction source",
+      sourceUrl: "https://example.test/first-correction",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    const latestCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Latest server correction",
+      language: "it",
+      sourceName: "Latest correction source",
+      sourceUrl: "https://example.test/latest-correction",
+      updatedAt: "2026-09-19T12:30:00.000Z",
+    };
+    const corrections = [firstCorrection, latestCorrection];
+    let correctionIndex = 0;
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        const current = corrections[correctionIndex++];
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error:
+              "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
+            current,
+          },
+        });
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "First stale draft",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain(firstCorrection.alias);
+    expect(container.textContent).toContain(firstCorrection.language);
+    expect(container.textContent).toContain(firstCorrection.sourceName);
+    expect(container.textContent).toContain(
+      new Date(firstCorrection.updatedAt).toLocaleString(),
+    );
+
+    act(() => button(container, "Edit current correction").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for current correction",
+        "Second stale draft",
+      );
+      setInput(container, "Language for current correction", "es");
+      setInput(
+        container,
+        "Source link for current correction",
+        "https://example.test/second-stale-draft",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(mocks.updateMutation.mutate).toHaveBeenNthCalledWith(
+      2,
+      {
+        id: initialAlias.id,
+        data: {
+          alias: "Second stale draft",
+          language: "es",
+          sourceUrl: "https://example.test/second-stale-draft",
+          expectedUpdatedAt: firstCorrection.updatedAt,
+        },
+      },
+      expect.any(Object),
+    );
+    const warning = container.querySelector('[role="alert"]');
+    expect(warning?.textContent).toContain(latestCorrection.alias);
+    expect(warning?.textContent).toContain(latestCorrection.language);
+    expect(warning?.textContent).toContain(latestCorrection.sourceName);
+    expect(warning?.textContent).toContain(
+      new Date(latestCorrection.updatedAt).toLocaleString(),
+    );
+    expect(
+      warning?.querySelector(`a[href="${latestCorrection.sourceUrl}"]`)
+        ?.textContent,
+    ).toBe(latestCorrection.sourceName);
+    expect(warning?.textContent).not.toContain(firstCorrection.alias);
+    expect(warning?.textContent).not.toContain(firstCorrection.language);
+    expect(warning?.textContent).not.toContain(firstCorrection.sourceName);
+    expect(warning?.textContent).not.toContain(
+      new Date(firstCorrection.updatedAt).toLocaleString(),
+    );
+    expect(warning?.textContent).not.toContain("Second stale draft");
   });
 
   it("shows every provider citation link when a provider-owned draft is stale", async () => {
@@ -686,7 +891,10 @@ describe("admin alternate-title review", () => {
       ],
     };
     mocks.updateMutation.mutate.mockImplementation(
-      (_variables: unknown, options?: { onError?: (error: unknown) => Promise<void> }) => {
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
         void options?.onError?.({
           data: {
             code: "stale_alias",
@@ -703,7 +911,11 @@ describe("admin alternate-title review", () => {
     render([providerAlias]);
     act(() => button(container, "Edit").click());
     act(() => {
-      setInput(container, "Alternate title for The Lighthouse", "Stale provider draft");
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale provider draft",
+      );
       button(container, "Save").click();
     });
     await flushEffects();
@@ -712,7 +924,9 @@ describe("admin alternate-title review", () => {
     const sourceSection = Array.from(
       container.querySelectorAll('[role="alert"] dl > div'),
     )
-      .find((field) => field.querySelector("dt")?.textContent?.trim() === "Source")
+      .find(
+        (field) => field.querySelector("dt")?.textContent?.trim() === "Source",
+      )
       ?.querySelector("dd");
     expect(sourceSection?.textContent).toContain("TVMaze");
     expect(sourceSection?.textContent).toContain("EN Wikipedia");
@@ -1003,9 +1217,7 @@ describe("admin alternate-title review", () => {
       await Promise.resolve();
     });
     expect(button(container, "Retrying…").disabled).toBe(true);
-    expect(container.textContent).toContain(
-      "Refreshing alternate-title views",
-    );
+    expect(container.textContent).toContain("Refreshing alternate-title views");
     expect(container.textContent).toContain(
       "A newer refresh is in progress. Earlier requests cannot replace its status.",
     );
@@ -1024,9 +1236,7 @@ describe("admin alternate-title review", () => {
       await Promise.resolve();
     });
     expect(button(container, "Retrying…").disabled).toBe(true);
-    expect(container.textContent).toContain(
-      "Refreshing alternate-title views",
-    );
+    expect(container.textContent).toContain("Refreshing alternate-title views");
     expect(container.textContent).toContain(
       "A newer refresh is in progress. Earlier requests cannot replace its status.",
     );
@@ -1071,9 +1281,9 @@ describe("admin alternate-title review", () => {
     });
 
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
-    expect(
-      container.textContent,
-    ).not.toContain("Alternate-title refresh is taking longer than expected");
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000);
@@ -1224,8 +1434,9 @@ describe("admin alternate-title review", () => {
     let rows = Array.from(container.querySelectorAll("tbody tr"));
     expect(getReviewCell(rows[0])).toContain("2 titles · may be stale");
     expect(getReviewCell(rows[1])).toContain("Unique · may be stale");
-    expect(rows[0]?.querySelector('[aria-label*="Collision results may be stale"]'))
-      .not.toBeNull();
+    expect(
+      rows[0]?.querySelector('[aria-label*="Collision results may be stale"]'),
+    ).not.toBeNull();
 
     setRefreshFailures([]);
     act(() => button(container, "Retry refresh").click());
@@ -1236,8 +1447,9 @@ describe("admin alternate-title review", () => {
     expect(getReviewCell(rows[0])).not.toContain("may be stale");
     expect(getReviewCell(rows[1])).toContain("Unique");
     expect(getReviewCell(rows[1])).not.toContain("may be stale");
-    expect(rows[0]?.querySelector('[aria-label*="Collision results may be stale"]'))
-      .toBeNull();
+    expect(
+      rows[0]?.querySelector('[aria-label*="Collision results may be stale"]'),
+    ).toBeNull();
   });
 
   it("narrows simultaneous failures to only the request still failing", async () => {
@@ -1325,7 +1537,9 @@ describe("admin alternate-title review", () => {
     });
     await flushEffects();
 
-    expect(container.textContent).toContain("A newer correction is already saved");
+    expect(container.textContent).toContain(
+      "A newer correction is already saved",
+    );
     mocks.queryClient.invalidateQueries.mockRejectedValueOnce(
       new Error("Alias refresh unavailable"),
     );
@@ -1353,15 +1567,19 @@ describe("admin alternate-title review", () => {
     const savedRow = container.querySelector("tbody tr");
     expect(savedRow?.textContent).toContain(savedRecord.alias);
     expect(savedRow?.textContent).toContain(savedRecord.language);
-    expect(savedRow?.querySelector<HTMLAnchorElement>(
-      `a[href="${savedRecord.sourceUrl}"]`,
-    )?.textContent).toBe(savedRecord.sourceName);
+    expect(
+      savedRow?.querySelector<HTMLAnchorElement>(
+        `a[href="${savedRecord.sourceUrl}"]`,
+      )?.textContent,
+    ).toBe(savedRecord.sourceName);
     expect(container.textContent).toContain("Alternate-title refresh failed");
     expect(container.textContent).toContain(
       "Your saved correction is shown in the table below",
     );
     expect(container.textContent).toContain("Retry refresh");
-    expect(container.textContent).not.toContain("A newer correction is already saved");
+    expect(container.textContent).not.toContain(
+      "A newer correction is already saved",
+    );
 
     const latestServerAlias: AdminContentAlias = {
       ...currentAlias,
@@ -1436,7 +1654,9 @@ describe("admin alternate-title review", () => {
     });
     await flushEffects();
 
-    expect(container.textContent).toContain("A newer correction is already saved");
+    expect(container.textContent).toContain(
+      "A newer correction is already saved",
+    );
     render([]);
     act(() => button(container, "Edit current correction").click());
     expect(
@@ -1577,9 +1797,8 @@ describe("admin alternate-title review", () => {
       },
       expect.any(Object),
     );
-    const conflictNotice = container.querySelector<HTMLElement>(
-      '[role="alert"]',
-    );
+    const conflictNotice =
+      container.querySelector<HTMLElement>('[role="alert"]');
     expect(conflictNotice?.textContent).toContain(newestCorrection.alias);
     expect(conflictNotice?.textContent).toContain(newestCorrection.language);
     expect(conflictNotice?.textContent).toContain(newestCorrection.sourceName);
@@ -1723,7 +1942,9 @@ describe("admin alternate-title review", () => {
       button(container, "Save").click();
     });
     await flushEffects();
-    expect(container.textContent).toContain("A newer correction is already saved");
+    expect(container.textContent).toContain(
+      "A newer correction is already saved",
+    );
     expect(container.textContent).toContain(currentCorrection.alias);
 
     render([currentCorrection]);
@@ -1802,7 +2023,8 @@ describe("admin alternate-title review", () => {
     const removeButton = Array.from(
       unrelatedRow?.querySelectorAll("button") ?? [],
     ).find((candidate) => candidate.textContent?.trim() === "Remove");
-    if (!removeButton) throw new Error("Unrelated alias Remove button not found");
+    if (!removeButton)
+      throw new Error("Unrelated alias Remove button not found");
     act(() => removeButton.click());
     await flushEffects();
 
@@ -1998,7 +2220,9 @@ describe("admin alternate-title review", () => {
       button(container, "Save").click();
     });
     await flushEffects();
-    expect(container.textContent).toContain("A newer correction is already saved");
+    expect(container.textContent).toContain(
+      "A newer correction is already saved",
+    );
     expect(container.textContent).toContain(currentCorrection.alias);
 
     render([currentCorrection]);
@@ -2070,12 +2294,18 @@ describe("admin alternate-title review", () => {
       },
       expect.any(Object),
     );
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["/api/admin/content-aliases"],
-    }, { throwOnError: true });
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["/api/admin/content"],
-    }, { throwOnError: true });
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith(
+      {
+        queryKey: ["/api/admin/content-aliases"],
+      },
+      { throwOnError: true },
+    );
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith(
+      {
+        queryKey: ["/api/admin/content"],
+      },
+      { throwOnError: true },
+    );
 
     render([uniqueAlias()]);
     expect(container.textContent).toContain("Unique");
@@ -2084,7 +2314,10 @@ describe("admin alternate-title review", () => {
 
   it("refreshes collision badges and explains a stale removal conflict", async () => {
     mocks.deleteMutation.mutate.mockImplementation(
-      (_variables: unknown, options?: { onError?: (error: unknown) => Promise<void> }) => {
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
         void options?.onError?.({
           data: {
             error:
@@ -2106,12 +2339,18 @@ describe("admin alternate-title review", () => {
       },
       expect.any(Object),
     );
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["/api/admin/content-aliases"],
-    }, { throwOnError: true });
-    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["/api/admin/content"],
-    }, { throwOnError: true });
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith(
+      {
+        queryKey: ["/api/admin/content-aliases"],
+      },
+      { throwOnError: true },
+    );
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith(
+      {
+        queryKey: ["/api/admin/content"],
+      },
+      { throwOnError: true },
+    );
     expect(mocks.toast).toHaveBeenCalledWith({
       title: "Could not remove alternate title",
       description:
@@ -2276,7 +2515,8 @@ describe("admin alternate-title review", () => {
     await flushEffects();
 
     expect(mocks.queryClient.setQueriesData).toHaveBeenCalledTimes(2);
-    for (const [filters, update] of mocks.queryClient.setQueriesData.mock.calls) {
+    for (const [filters, update] of mocks.queryClient.setQueriesData.mock
+      .calls) {
       expect(filters).toEqual({ queryKey: ["/api/admin/content-aliases"] });
       expect(update).toEqual(expect.any(Function));
     }
@@ -2333,7 +2573,9 @@ describe("admin alternate-title review", () => {
     act(() => button(container, "Retry refresh").click());
     await flushEffects();
     expect(aliasRefreshCount).toBe(3);
-    expect(container.textContent).not.toContain("Alternate-title refresh failed");
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
     expect(container.textContent).not.toContain("Removed alternate title:");
     expect(container.textContent).not.toContain(
       "2 alternate titles were removed",
