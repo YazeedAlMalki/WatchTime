@@ -521,7 +521,7 @@ describe("admin alternate-title review", () => {
     act(() => secondEditButton?.click());
 
     expect(confirmSpy).toHaveBeenCalledWith(
-      'Discard your unsaved changes to “Shared Local Title” and edit “Second Local Title” instead?',
+      "Discard your unsaved changes to “Shared Local Title” and edit “Second Local Title” instead?",
     );
     expect(
       container.querySelector<HTMLInputElement>(
@@ -550,6 +550,35 @@ describe("admin alternate-title review", () => {
 
   it("keeps a saved correction visible when a successful refresh removes it from the active search", async () => {
     let updateFilteredAliases!: () => void;
+    const firstSavedRecord: AdminContentAliasRecord = {
+      id: initialAlias.id,
+      titleId: initialAlias.titleId,
+      alias: "Updated Local Title",
+      normalizedAlias: "updated local title",
+      language: "fr",
+      sourceName: initialAlias.sourceName,
+      sourceUrl: "https://example.test/first-correction",
+      isEditorial: true,
+      createdAt: initialAlias.updatedAt,
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    const secondSavedRecord: AdminContentAliasRecord = {
+      ...firstSavedRecord,
+      alias: "Revised Local Title",
+      normalizedAlias: "revised local title",
+      updatedAt: "2026-09-18T00:00:00.000Z",
+    };
+    const savedRecords = [firstSavedRecord, secondSavedRecord];
+    mocks.updateMutation.mutate.mockImplementation(
+      async (
+        _variables: unknown,
+        options?: {
+          onSuccess?: (savedRecord?: AdminContentAliasRecord) => Promise<void>;
+        },
+      ) => {
+        await options?.onSuccess?.(savedRecords.shift());
+      },
+    );
     function FilteredAliasReview() {
       const [aliases, setAliases] = React.useState([initialAlias]);
       const [total, setTotal] = React.useState(1);
@@ -588,6 +617,12 @@ describe("admin alternate-title review", () => {
         "Alternate title for The Lighthouse",
         "Updated Local Title",
       );
+      setInput(container, "Language for Shared Local Title", "fr");
+      setInput(
+        container,
+        "Source link for Shared Local Title",
+        "https://example.test/first-correction",
+      );
       button(container, "Save").click();
     });
     await flushEffects();
@@ -601,6 +636,57 @@ describe("admin alternate-title review", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.textContent).toContain("Updated Local Title");
     expect(rows[0]?.textContent).not.toContain(initialAlias.alias);
+
+    act(() => button(container, "Edit").click());
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for The Lighthouse"]',
+      )?.value,
+    ).toBe("Updated Local Title");
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Language for Updated Local Title"]',
+      )?.value,
+    ).toBe("fr");
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Source link for Updated Local Title"]',
+      )?.value,
+    ).toBe("https://example.test/first-correction");
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Revised Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(mocks.updateMutation.mutate).toHaveBeenNthCalledWith(
+      2,
+      {
+        id: initialAlias.id,
+        data: {
+          alias: "Revised Local Title",
+          language: "fr",
+          sourceUrl: "https://example.test/first-correction",
+          expectedUpdatedAt: firstSavedRecord.updatedAt,
+        },
+      },
+      expect.any(Object),
+    );
+    expect(container.textContent).toContain("0 aliases");
+    expect(container.textContent).toContain(
+      "Saved correction: Revised Local Title is shown separately above the current page of filtered results. The result count and page navigation remain based on the filtered list.",
+    );
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(1);
+    expect(container.querySelector("tbody tr")?.textContent).toContain(
+      "Revised Local Title",
+    );
+    expect(container.querySelector("tbody tr")?.textContent).not.toContain(
+      "Updated Local Title",
+    );
 
     const nextSearchAlias: AdminContentAlias = {
       ...initialAlias,
