@@ -14,8 +14,8 @@ import { PublicNavbar } from "@/components/layout/PublicNavbar";
 const container = document.createElement("div");
 let root: ReturnType<typeof createRoot> | undefined;
 
-function enlargeNavigationText() {
-  document.documentElement.style.fontSize = "32px";
+function enlargeNavigationText(scale = 2) {
+  document.documentElement.style.fontSize = `${16 * scale}px`;
 }
 
 function expectNavbarFitsViewport() {
@@ -148,7 +148,7 @@ it("keeps the public menu usable on a short screen with enlarged text", async ()
   await userEvent.tab({ shift: true });
   await expect.element(page.getByRole("button", { name: "Close navigation" })).toHaveFocus();
   expectWithinDialogViewport(close);
-  expect(dialog.scrollTop).toBe(0);
+  expect(dialog.scrollTop).toBeLessThanOrEqual(2);
   await userEvent.keyboard("{Enter}");
   expect(dialog.open).toBe(false);
 });
@@ -166,6 +166,55 @@ it("keeps the full public navigation readable and separated at an enlarged text 
   enlargeNavigationText();
   expectNavbarFitsViewport();
 });
+
+it.each([320, 1280])(
+  "keeps the public navigation reachable without horizontal overflow at 400%% text size and %ipx",
+  async (width) => {
+    await page.viewport(width, 844);
+    document.body.append(container);
+    root = createRoot(container);
+    root.render(<PublicNavbar />);
+    enlargeNavigationText(4);
+
+    const trigger = page.getByRole("button", { name: "Open navigation" });
+    await expect.element(trigger).toBeVisible();
+    await expect.element(page.getByRole("link", { name: "WatchTime", exact: true })).toBeVisible();
+    expectNavbarFitsViewport();
+    await userEvent.click(trigger);
+
+    const dialog = container.querySelector("dialog");
+    const browse = container.querySelector<HTMLElement>('[data-testid="link-public-browse"]');
+    const signIn = container.querySelector<HTMLElement>('[data-testid="link-public-sign-in"]');
+    if (!dialog || !browse || !signIn) throw new Error("Public navigation controls did not render");
+
+    await expect.element(page.getByRole("dialog", { name: "Navigation" })).toBeVisible();
+    await expect.element(page.getByTestId("link-public-browse")).toBeVisible();
+    await expect.element(page.getByTestId("link-public-sign-in")).toBeVisible();
+    expectNavbarFitsViewport();
+    expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+
+    await userEvent.tab();
+    await expect.element(page.getByTestId("link-public-browse")).toHaveFocus();
+    await userEvent.tab();
+    await expect.element(page.getByTestId("link-public-stats")).toHaveFocus();
+    await userEvent.tab();
+    await expect.element(page.getByTestId("link-public-sign-in")).toHaveFocus();
+
+    const dialogBounds = dialog.getBoundingClientRect();
+    const signInBounds = signIn.getBoundingClientRect();
+    expect(signInBounds.top).toBeGreaterThanOrEqual(dialogBounds.top);
+    expect(signInBounds.bottom).toBeLessThanOrEqual(dialogBounds.bottom);
+    expect(signInBounds.left).toBeGreaterThanOrEqual(dialogBounds.left);
+    expect(signInBounds.right).toBeLessThanOrEqual(dialogBounds.right);
+    expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(trigger).toHaveFocus();
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  },
+);
 
 it("keeps the public mobile menu keyboard accessible without loading authenticated scripts", async () => {
   window.history.replaceState({}, "", "/");

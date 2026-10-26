@@ -16,6 +16,16 @@
   }
 }
 
+@container public-navbar-content (max-width: 39em) {
+  .public-navbar-desktop-links {
+    display: none;
+  }
+
+  .public-navbar-menu {
+    display: flex;
+  }
+}
+
 @theme inline {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));

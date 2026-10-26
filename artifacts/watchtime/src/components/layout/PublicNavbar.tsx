@@ -19,15 +19,15 @@ export function PublicNavbar() {
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="container public-navbar-content mx-auto flex h-16 items-center justify-between px-4 sm:px-8">
+      <div className="container public-navbar-content mx-auto flex h-16 items-center justify-between px-2 sm:px-8">
         <div className="flex items-center gap-6">
-          <Link href="/" className="group flex items-center gap-2">
-            <div className="rounded-lg bg-primary p-1.5 text-primary-foreground transition-transform duration-200 group-hover:scale-105">
-              <Popcorn className="h-5 w-5" />
+          <Link href="/" aria-label="WatchTime" className="group flex items-center gap-[8px]">
+            <div className="rounded-lg bg-primary p-[6px] text-primary-foreground transition-transform duration-200 group-hover:scale-105">
+              <Popcorn className="h-[20px] w-[20px]" />
             </div>
             <span className="public-navbar-brand-label font-display text-xl font-bold tracking-tight text-foreground">WatchTime</span>
           </Link>
-          <div className="hidden items-center gap-1 xl:flex">
+          <div className="public-navbar-desktop-links hidden items-center gap-1 xl:flex">
             <Link href="/browse" className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground">
               Browse
             </Link>
@@ -37,11 +37,11 @@ export function PublicNavbar() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <Link href="/browse" aria-label="Browse titles" className="hidden rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground sm:flex">
-            <Search aria-hidden="true" className="h-5 w-5" />
+        <div className="flex items-center gap-[12px]">
+          <Link href="/browse" aria-label="Browse titles" className="hidden rounded-full p-[8px] text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground sm:flex">
+            <Search aria-hidden="true" className="h-[20px] w-[20px]" />
           </Link>
-          <div className="hidden items-center gap-2 xl:flex">
+          <div className="public-navbar-desktop-links hidden items-center gap-2 xl:flex">
             <Link href="/sign-in" className="px-3 py-2 text-sm font-medium text-foreground transition-colors hover:text-primary">
               Sign In
             </Link>
@@ -49,10 +49,11 @@ export function PublicNavbar() {
               <Button size="sm" className="rounded-full shadow-sm">Get Started</Button>
             </Link>
           </div>
-          <div className="flex xl:hidden">
+          <div className="public-navbar-menu flex items-center gap-[12px] xl:hidden">
             <Button
               variant="ghost"
               size="icon"
+              className="h-[44px] w-[44px] shrink-0"
               aria-label="Open navigation"
               aria-haspopup="dialog"
               aria-expanded={menuOpen}
@@ -60,7 +61,7 @@ export function PublicNavbar() {
               onClick={openMenu}
               data-testid="button-open-public-navigation"
             >
-              <Menu className="h-6 w-6" />
+              <Menu className="h-[24px] w-[24px]" />
             </Button>
             <dialog
               ref={menuRef}
@@ -72,25 +73,25 @@ export function PublicNavbar() {
                   closeMenu();
                 }
               }}
-              className="fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-dvh w-[280px] max-w-full overflow-x-hidden overflow-y-auto overscroll-contain border-l border-border bg-background p-6 text-foreground shadow-lg backdrop:bg-black/80"
+              className="fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-dvh w-[320px] max-w-full overflow-x-hidden overflow-y-auto overscroll-contain border-l border-border bg-background p-2 text-foreground shadow-lg backdrop:bg-black/80"
             >
               <h2 id="public-navigation-title" className="sr-only">Navigation</h2>
-              <div className="flex min-h-full flex-col gap-3">
+              <div className="flex min-h-full flex-col gap-[12px]">
                 <button
                   type="button"
                   aria-label="Close navigation"
                   onClick={closeMenu}
                   autoFocus
                   data-testid="button-close-public-navigation"
-                  className="mb-4 ml-auto rounded-sm p-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="mb-[16px] ml-auto rounded-sm p-[8px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-[20px] w-[20px]" />
                 </button>
-                <Link href="/browse" className="rounded-md px-4 py-2 text-sm font-medium hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="link-public-browse">Browse</Link>
-                <Link href="/stats" className="rounded-md px-4 py-2 text-sm font-medium hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="link-public-stats">Stats</Link>
-                <div className="mt-auto flex flex-col gap-3">
-                  <Link href="/sign-in" className="rounded-md border px-4 py-2 text-center text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="link-public-sign-in">Sign In</Link>
-                  <Link href="/sign-up" className="rounded-md border border-primary-border bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="link-public-sign-up">Get Started</Link>
+                <Link href="/browse" className="rounded-md px-2 py-2 text-sm font-medium hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="link-public-browse">Browse</Link>
+                <Link href="/stats" className="rounded-md px-2 py-2 text-sm font-medium hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="link-public-stats">Stats</Link>
+                <div className="mt-auto flex flex-col gap-[12px]">
+                  <Link href="/sign-in" className="rounded-md border px-2 py-2 text-center text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="link-public-sign-in">Sign In</Link>
+                  <Link href="/sign-up" className="rounded-md border border-primary-border bg-primary px-2 py-2 text-center text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="link-public-sign-up">Get Started</Link>
                 </div>
               </div>
             </dialog>
