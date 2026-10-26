@@ -9,7 +9,9 @@
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:api-contract": "pnpm --filter @workspace/api-spec run codegen:check && pnpm run typecheck",
-    "test": "jest"
+    "test": "jest",
+    "test:device-layout": "node scripts/device-layout/run.mjs",
+    "test:device-layout:unit": "node --test scripts/device-layout/*.test.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

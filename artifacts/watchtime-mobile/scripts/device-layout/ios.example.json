@@ -1,0 +1,15 @@
+{
+  "serverUrl": "http://127.0.0.1:4723",
+  "appId": "host.exp.Exponent",
+  "capabilities": {
+    "platformName": "iOS",
+    "appium:automationName": "XCUITest",
+    "appium:udid": "REPLACE_WITH_DEVICE_ID",
+    "appium:bundleId": "host.exp.Exponent",
+    "appium:noReset": true,
+    "appium:newCommandTimeout": 120
+  },
+  "browseUrl": "exp://REPLACE_WITH_METRO_HOST/--/browse",
+  "titleUrl": "exp://REPLACE_WITH_METRO_HOST/--/title/1",
+  "expected": { "titleId": 1, "logicalWidth": 375, "fontScale": 1, "fontState": "loaded" }
+}

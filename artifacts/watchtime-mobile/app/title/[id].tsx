@@ -51,6 +51,7 @@ import {
 import { ErrorState, Loading, PosterCard, SectionHeader } from '@/components/ui';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
+import { EvidenceText, LayoutEvidence } from '@/components/layout-evidence';
 
 const SEVERITY_OPTIONS = ['none', 'mild', 'moderate', 'severe'] as const;
 const REPORT_REASONS = [
@@ -898,9 +899,10 @@ export default function TitleDetailScreen() {
       </View>
 
       <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
-        <Text style={{ color: c.foreground, fontSize: 24, fontFamily: 'Inter_700Bold' }}>
+        <LayoutEvidence screen="title" titleId={titleId} />
+        <EvidenceText evidenceId="title-heading" style={{ color: c.foreground, fontSize: 24, fontFamily: 'Inter_700Bold' }}>
           {t.name}
-        </Text>
+        </EvidenceText>
         <Text style={{ color: c.mutedForeground, fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 4 }}>
           {[
             t.type.toUpperCase(),
@@ -962,7 +964,8 @@ export default function TitleDetailScreen() {
               size={16}
               color={t.inWatchlist ? c.foreground : c.primaryForeground}
             />
-            <Text
+            <EvidenceText
+              evidenceId="title-watchlist"
               style={{
                 color: t.inWatchlist ? c.foreground : c.primaryForeground,
                 fontSize: 14,
@@ -971,7 +974,7 @@ export default function TitleDetailScreen() {
               }}
             >
               {t.inWatchlist ? 'In Watchlist' : 'Watchlist'}
-            </Text>
+            </EvidenceText>
             {!isSignedIn ? (
               <Feather name="lock" size={12} color={c.primaryForeground} />
             ) : null}
@@ -1007,7 +1010,8 @@ export default function TitleDetailScreen() {
               ]}
             >
               <Feather name="check-circle" size={16} color={t.watched ? c.primary : c.foreground} />
-              <Text
+              <EvidenceText
+                evidenceId="title-watched"
                 style={{
                   color: t.watched ? c.primary : c.foreground,
                   fontSize: 14,
@@ -1016,7 +1020,7 @@ export default function TitleDetailScreen() {
                 }}
               >
                 {t.watched ? 'Watched' : 'Mark watched'}
-              </Text>
+              </EvidenceText>
               {!isSignedIn ? (
                 <Feather name="lock" size={12} color={c.mutedForeground} />
               ) : null}

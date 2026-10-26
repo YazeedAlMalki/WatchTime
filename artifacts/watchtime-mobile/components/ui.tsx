@@ -13,6 +13,7 @@ import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
 import type { Title } from '@workspace/api-client-react';
+import { EvidenceText } from './layout-evidence';
 
 export function SectionHeader({ title }: { title: string }) {
   const c = useColors();
@@ -203,10 +204,12 @@ export function Chip({
   label,
   active,
   onPress,
+  evidenceId,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
+  evidenceId?: string;
 }) {
   const c = useColors();
   return (
@@ -229,7 +232,8 @@ export function Chip({
         },
       ]}
     >
-      <Text
+      <EvidenceText
+        evidenceId={evidenceId ?? `chip-${label}`}
         style={{
           color: active ? c.primaryForeground : c.secondaryForeground,
           fontSize: 13,
@@ -237,7 +241,7 @@ export function Chip({
         }}
       >
         {label}
-      </Text>
+      </EvidenceText>
     </Pressable>
   );
 }

@@ -2459,9 +2459,6 @@ export function AliasReview({
     const attempt = ++aliasRefreshAttempt.current;
     setIsAliasRefreshTimedOut(false);
     setIsRefreshingAliasViews(true);
-    if (requests.includes("catalog") || requests.includes("collisions")) {
-      setIsCollisionResultsStale(true);
-    }
     const recoveryTimer = window.setTimeout(() => {
       if (aliasRefreshAttempt.current !== attempt) return;
       setIsAliasRefreshTimedOut(true);

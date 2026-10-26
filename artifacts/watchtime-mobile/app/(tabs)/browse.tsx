@@ -16,6 +16,7 @@ import {
 import { Chip, EmptyState, ErrorState, Loading, PosterCard } from '@/components/ui';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
+import { LayoutEvidence } from '@/components/layout-evidence';
 
 const TYPES: { label: string; value: ListTitlesParams['type'] | undefined }[] = [
   { label: 'All', value: undefined },
@@ -95,6 +96,7 @@ export default function BrowseScreen() {
             <Chip
               key={t.label}
               label={t.label}
+              evidenceId={`browse-chip-${t.label}`}
               active={type === t.value}
               onPress={() => setType(t.value)}
             />
@@ -104,6 +106,7 @@ export default function BrowseScreen() {
             <Chip
               key={s.value}
               label={s.label}
+              evidenceId={`browse-chip-${s.label}`}
               active={sort === s.value}
               onPress={() => setSort(s.value)}
             />
@@ -136,6 +139,7 @@ export default function BrowseScreen() {
           renderItem={({ item }) => <PosterCard title={item} width={104} />}
         />
       )}
+      <LayoutEvidence screen="browse" contentReady={titles.isSuccess && (titles.data?.length ?? 0) > 0} />
     </View>
   );
 }

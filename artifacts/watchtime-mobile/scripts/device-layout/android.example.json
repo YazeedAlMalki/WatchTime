@@ -1,0 +1,15 @@
+{
+  "serverUrl": "http://127.0.0.1:4723",
+  "appId": "host.exp.exponent",
+  "capabilities": {
+    "platformName": "Android",
+    "appium:automationName": "UiAutomator2",
+    "appium:udid": "REPLACE_WITH_USB_DEVICE_ID",
+    "appium:appPackage": "host.exp.exponent",
+    "appium:noReset": true,
+    "appium:newCommandTimeout": 120
+  },
+  "browseUrl": "exp://REPLACE_WITH_METRO_HOST/--/browse",
+  "titleUrl": "exp://REPLACE_WITH_METRO_HOST/--/title/1",
+  "expected": { "titleId": 1, "logicalWidth": 360, "fontScale": 1, "fontState": "loaded" }
+}
