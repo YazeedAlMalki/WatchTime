@@ -128,8 +128,12 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
     }
   });
 
-  it("rolls back the queue when PostgreSQL rejects the audit's admin foreign key", async () => {
+  it(trigger === "retry"
+    ? "recovers on the same source after PostgreSQL rejects the retry audit's admin foreign key"
+    : "rolls back the queue when PostgreSQL rejects the audit's admin foreign key", async () => {
     const { path, sourceRunId } = await prepareRequest();
+    const runIdsBefore = await db.select({ id: catalogSyncRunsTable.id })
+      .from(catalogSyncRunsTable).orderBy(catalogSyncRunsTable.id);
     const sourceRunsBefore = sourceRunId === undefined ? [] : await db.select()
       .from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, sourceRunId));
     const sourceItemsBefore = sourceRunId === undefined ? [] : await db.select()
@@ -199,6 +203,8 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
       .where(eq(catalogSyncRunsTable.id, queuedRunId!))).toEqual([]);
     expect(await db.select().from(catalogSyncItemsTable)
       .where(eq(catalogSyncItemsTable.runId, queuedRunId!))).toEqual([]);
+    expect(await db.select({ id: catalogSyncRunsTable.id }).from(catalogSyncRunsTable)
+      .orderBy(catalogSyncRunsTable.id)).toEqual(runIdsBefore);
     expect(await db.select().from(adminAuditLogTable).where(inArray(
       adminAuditLogTable.adminId, [adminId, missingAdminId],
     ))).toEqual([]);
@@ -209,6 +215,50 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(runCatalogSync).not.toHaveBeenCalled();
     if (sourceRunId !== undefined) {
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, sourceRunId))).toEqual(sourceRunsBefore);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, sourceRunId))).toEqual(sourceItemsBefore);
+
+      // Retry the exact same failed source on the same pool, with no interception.
+      transactionSpy.mockRestore();
+      runCatalogSync.mockResolvedValueOnce({
+        selected: 1, succeeded: 1, episodes: 0, failures: [],
+      });
+      const response = await request(app).post(path);
+      if (response.body.runId !== undefined) createdRunIds.push(response.body.runId);
+      expect(response.status).toBe(202);
+      const recoveredRunId = response.body.runId as number;
+      expect(recoveredRunId).toEqual(expect.any(Number));
+      expect(recoveredRunId).not.toBe(sourceRunId);
+      expect(recoveredRunId).not.toBe(queuedRunId);
+      await waitForFinishedRun(recoveredRunId);
+
+      expect(runCatalogSync).toHaveBeenCalledOnce();
+      expect(runCatalogSync.mock.calls[0][1]).toEqual([
+        expect.objectContaining({ key: "catalog-refresh-audit-item" }),
+      ]);
+      expect(await db.select({ id: catalogSyncRunsTable.id }).from(catalogSyncRunsTable)
+        .orderBy(catalogSyncRunsTable.id)).toEqual([...runIdsBefore, { id: recoveredRunId }]);
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, recoveredRunId))).toEqual([
+        expect.objectContaining({ trigger: "retry", status: "succeeded", totalItems: 1 }),
+      ]);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, recoveredRunId))).toEqual([
+        expect.objectContaining({ itemKey: "catalog-refresh-audit-item" }),
+      ]);
+      expect(await db.select().from(adminAuditLogTable).where(inArray(
+        adminAuditLogTable.adminId, [adminId, missingAdminId],
+      ))).toEqual([
+        expect.objectContaining({
+          adminId,
+          action: "retry_catalog_refresh",
+          entityType: "catalog_sync",
+          entityId: recoveredRunId,
+          details: { sourceRunId },
+        }),
+      ]);
       expect(await db.select().from(catalogSyncRunsTable)
         .where(eq(catalogSyncRunsTable.id, sourceRunId))).toEqual(sourceRunsBefore);
       expect(await db.select().from(catalogSyncItemsTable)
