@@ -239,8 +239,11 @@ import HomeScreen from '../app/(tabs)/index';
 
 describe('mobile startup contracts', () => {
   let pendingFrames: Array<(time: number) => void> = [];
+  const originalSkipInterLoading = process.env.EXPO_PUBLIC_SKIP_INTER_LOADING;
+  const originalDev = __DEV__;
 
   beforeEach(() => {
+    delete process.env.EXPO_PUBLIC_SKIP_INTER_LOADING;
     mockClerkProviderError = null;
     mockUseFonts.mockReset().mockReturnValue([true, null]);
     mockUseAuth.mockReset().mockReturnValue({
@@ -262,6 +265,12 @@ describe('mobile startup contracts', () => {
 
   afterEach(() => {
     cleanup();
+    if (originalSkipInterLoading === undefined) {
+      delete process.env.EXPO_PUBLIC_SKIP_INTER_LOADING;
+    } else {
+      process.env.EXPO_PUBLIC_SKIP_INTER_LOADING = originalSkipInterLoading;
+    }
+    Object.assign(globalThis, { __DEV__: originalDev });
     jest.restoreAllMocks();
     jest.useRealTimers();
     pendingFrames = [];
@@ -394,6 +403,68 @@ describe('mobile startup contracts', () => {
     expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
     expect(mockMarkStartup).toHaveBeenCalledWith('font-error');
     expect(mockReportStartupFailure).toHaveBeenCalledWith('font-error');
+  });
+
+  it.each([undefined, '0', 'true', ''])(
+    'loads Inter normally in development without the exact opt-in (%s)',
+    async (optIn) => {
+      Object.assign(globalThis, { __DEV__: true });
+      if (optIn !== undefined) process.env.EXPO_PUBLIC_SKIP_INTER_LOADING = optIn;
+
+      const { getByTestId } = await render(<RootLayout />);
+
+      expect(getByTestId('root-navigation')).toBeTruthy();
+      expect(mockUseFonts).toHaveBeenCalledWith({
+        Inter_400Regular: {},
+        Inter_500Medium: {},
+        Inter_600SemiBold: {},
+        Inter_700Bold: {},
+      });
+      expect(mockMarkStartup).toHaveBeenCalledWith('fonts-ready');
+      expect(mockReportStartupFailure).not.toHaveBeenCalled();
+    },
+  );
+
+  it('skips Inter and uses font-failure recovery only with the development opt-in', async () => {
+    Object.assign(globalThis, { __DEV__: true });
+    process.env.EXPO_PUBLIC_SKIP_INTER_LOADING = '1';
+    mockUseFonts.mockReturnValue([false, null]);
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { getByTestId } = await render(<RootLayout />);
+
+    expect(mockUseFonts).not.toHaveBeenCalled();
+    expect(getByTestId('root-navigation')).toBeTruthy();
+    expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('font-error', {
+      error: 'Development-only forced Inter font loading failure',
+      source: 'font-loader-throw',
+    });
+    expect(mockMarkStartup).not.toHaveBeenCalledWith('fonts-ready');
+    expect(mockReportStartupFailure).toHaveBeenCalledWith('font-error');
+  });
+
+  it('ignores the Inter opt-in in production and retains the normal loading gate', async () => {
+    Object.assign(globalThis, { __DEV__: false });
+    process.env.EXPO_PUBLIC_SKIP_INTER_LOADING = '1';
+    mockUseFonts.mockReturnValue([false, null]);
+
+    const screen = await render(<RootLayout />);
+
+    expect(mockUseFonts).toHaveBeenCalled();
+    expect(screen.queryByTestId('root-navigation')).toBeNull();
+    expect(SplashScreen.hideAsync).not.toHaveBeenCalled();
+    expect(mockReportStartupFailure).not.toHaveBeenCalled();
+
+    mockUseFonts.mockReturnValue([true, null]);
+    await act(async () => {
+      screen.rerender(<RootLayout />);
+    });
+
+    expect(screen.getByTestId('root-navigation')).toBeTruthy();
+    expect(SplashScreen.hideAsync).toHaveBeenCalledTimes(1);
+    expect(mockMarkStartup).toHaveBeenCalledWith('fonts-ready');
+    expect(mockReportStartupFailure).not.toHaveBeenCalled();
   });
 
   it('reports a synchronous font-loader throw and keeps root navigation available', async () => {

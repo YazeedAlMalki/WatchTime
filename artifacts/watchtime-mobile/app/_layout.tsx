@@ -296,6 +296,20 @@ function FontLoaderFailureFallback({ error }: { error: Error }) {
 }
 
 function FontGatedRootLayout() {
+  // Reviewer opt-in only: skip the hook entirely so Inter is not registered.
+  // Cold-start with EXPO_PUBLIC_SKIP_INTER_LOADING=1; release builds ignore it.
+  if (
+    typeof __DEV__ !== 'undefined' &&
+    __DEV__ &&
+    process.env.EXPO_PUBLIC_SKIP_INTER_LOADING === '1'
+  ) {
+    throw new Error('Development-only forced Inter font loading failure');
+  }
+
+  return <InterFontGatedRootLayout />;
+}
+
+function InterFontGatedRootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,

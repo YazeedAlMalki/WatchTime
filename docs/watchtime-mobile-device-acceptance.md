@@ -30,6 +30,23 @@ needed.
   phone's app switcher, then reopen WatchTime from **Preview on your phone**;
   the one-shot choice has already been consumed, so startup is unforced.
 
+## Check fallback fonts in development
+
+For a fallback-font run, start Metro with `EXPO_PUBLIC_SKIP_INTER_LOADING=1`
+in its environment, then cold-start WatchTime in Expo Go. Only the exact value
+`1` opts in, and only in development builds. The root font loader skips the Inter
+loading hook and exercises the existing font-error recovery path: startup metrics
+report `font-error` with source `font-loader-throw`, the splash is released, and
+root navigation remains available. No font assets or typography styles change.
+
+Remove the opt-in, restart Metro, and cold-start the app to return to normal
+Inter loading. A full app restart is important in both directions: fonts already
+registered in a running app cannot be unloaded by this switch. Production builds
+ignore the opt-in, even if it is set.
+
+This switch is testing support, not evidence that fallback text fits. Record
+layout results separately on physical iOS and Android devices.
+
 ## If sign-in blocks the preview
 
 Treat an Expo Go sign-in prompt, a missing managed session, or an Expo CLI
