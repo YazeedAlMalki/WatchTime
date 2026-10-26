@@ -632,6 +632,95 @@ describe("admin alternate-title review", () => {
     );
   });
 
+  it("identifies a saved correction preview after a failed active-search refresh and replaces it on retry", async () => {
+    const refreshedAlias: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Updated Local Title",
+      language: "fr",
+      sourceUrl: "https://example.test/updated",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    let updateFilteredAliases!: () => void;
+    let setAliasLoadError!: (hasError: boolean) => void;
+    let failAliasRefresh = true;
+    function FilteredAliasReview() {
+      const [aliases, setAliases] = React.useState([initialAlias]);
+      const [total, setTotal] = React.useState(1);
+      const [hasAliasLoadError, setHasAliasLoadError] = React.useState(false);
+      setAliasLoadError = setHasAliasLoadError;
+      updateFilteredAliases = () => {
+        setAliases([refreshedAlias]);
+        setTotal(1);
+        setHasAliasLoadError(false);
+      };
+      return (
+        <AliasReview
+          aliases={aliases}
+          q="Local Title"
+          aliasTotal={total}
+          isLoading={false}
+          isError={hasAliasLoadError}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="all"
+          onOwnershipChange={() => {}}
+        />
+      );
+    }
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) => {
+        if (queryKey[0] === "/api/admin/content-aliases") {
+          if (failAliasRefresh) {
+            setAliasLoadError(true);
+            return Promise.reject(new Error("alias refresh unavailable"));
+          }
+          updateFilteredAliases();
+        }
+        return Promise.resolve();
+      },
+    );
+    act(() => root.render(<FilteredAliasReview />));
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        refreshedAlias.alias,
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("1 aliases");
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain(
+      "The alternate-title list may be stale",
+    );
+    expect(container.textContent).toContain(
+      "Your saved correction is shown in the table below, but its review details may be out of date.",
+    );
+    expect(container.textContent).toContain(
+      "The filtered alternate-title results could not be refreshed.",
+    );
+    expect(button(container, "Retry results")).toBeTruthy();
+    const previewRow = container.querySelector("tbody tr");
+    expect(previewRow?.textContent).toContain("Updated Local Title");
+    expect(previewRow?.textContent).toContain("Saved correction preview");
+    expect(previewRow?.textContent).not.toContain(initialAlias.alias);
+
+    failAliasRefresh = false;
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+
+    expect(container.textContent).not.toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain("1 aliases");
+    const refreshedRow = container.querySelector("tbody tr");
+    expect(refreshedRow?.textContent).toContain(refreshedAlias.alias);
+    expect(refreshedRow?.textContent).not.toContain("Saved correction preview");
+    expect(refreshedRow?.textContent).not.toContain(initialAlias.alias);
+  });
+
   it("keeps duplicate and canonical-title conflicts visible to the admin", () => {
     const errors = [
       "That alternate title already belongs to another catalog title.",

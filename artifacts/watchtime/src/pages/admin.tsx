@@ -2733,7 +2733,9 @@ export function AliasReview({
             </SelectContent>
           </Select>
           <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-            {isError ? "Aliases unavailable" : `${visibleAliasTotal} aliases`}
+            {isError && !savedAliasPreview
+              ? "Aliases unavailable"
+              : `${visibleAliasTotal} aliases`}
           </span>
           <Button
             type="button"
@@ -2794,6 +2796,24 @@ export function AliasReview({
         <div role="alert" className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
           The linked title is available, but the filtered alternate titles could not load.{" "}
           <button type="button" className="text-primary underline" onClick={onRetry}>Retry results</button>
+        </div>
+      )}
+      {isError && savedAliasPreview && (
+        <div
+          role="alert"
+          className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
+        >
+          The filtered alternate-title results could not be refreshed. Your saved
+          correction preview remains visible below, but its review details may be
+          stale.{" "}
+          <button
+            type="button"
+            className="text-primary underline"
+            onClick={onRetry}
+            disabled={isFetching}
+          >
+            {isFetching ? "Retrying results…" : "Retry results"}
+          </button>
         </div>
       )}
       {refreshError && (
@@ -3026,7 +3046,7 @@ export function AliasReview({
       )}
       {isLoading ? (
         <div className="h-24 animate-pulse bg-secondary/30 rounded-2xl" />
-      ) : isError && !linkedAlias ? (
+      ) : isError && !linkedAlias && !savedAliasPreview ? (
         <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
           <p className="font-medium text-foreground">Could not load alternate titles.</p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -3080,9 +3100,12 @@ export function AliasReview({
                   className={
                     linkedAliasId === alias.id
                       ? "bg-primary/10 ring-2 ring-inset ring-primary/50"
-                      : savedPreviewOutsidePage?.id === alias.id
-                        ? "bg-primary/5"
-                        : undefined
+                      : savedAliasPreview?.id === alias.id &&
+                          !savedAliasRefreshSucceeded
+                        ? "bg-primary/10"
+                        : savedPreviewOutsidePage?.id === alias.id
+                          ? "bg-primary/5"
+                          : undefined
                   }
                 >
                   <td className="px-4 py-3 font-medium text-foreground min-w-52">
@@ -3099,7 +3122,15 @@ export function AliasReview({
                         aria-label={`Alternate title for ${alias.titleName}`}
                       />
                     ) : (
-                      alias.alias
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        {alias.alias}
+                        {savedAliasPreview?.id === alias.id &&
+                          !savedAliasRefreshSucceeded && (
+                            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                              Saved correction preview
+                            </span>
+                          )}
+                      </span>
                     )}
                   </td>
                   <td className="px-4 py-3">
