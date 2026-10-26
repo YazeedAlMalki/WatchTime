@@ -564,6 +564,8 @@ const ar: Record<Key, string> = {
 
 const dicts = { en, ar } as const;
 
+export const moodTranslations = dicts;
+
 export function getT(lang: "en" | "ar") {
   const t = (key: string, params?: Record<string, string | number>) => {
     const d = dicts[lang] as Record<string, string>;

@@ -567,15 +567,31 @@ const ar: Record<Key, string> = {
 
 const dicts = { en, ar } as const;
 
+export const moodTranslations = dicts;
+
+function translate(lang: "en" | "ar", key: string, params?: Record<string, string | number>) {
+  const d = dicts[lang] as Record<string, string>;
+  let value = d[key] ?? (en as Record<string, string>)[key] ?? key;
+  if (params) {
+    for (const [name, replacement] of Object.entries(params)) {
+      value = value.split(`{${name}}`).join(String(replacement));
+    }
+  }
+  return value;
+}
+
+export function getT(lang: "en" | "ar") {
+  return {
+    t: (key: string, params?: Record<string, string | number>) => translate(lang, key, params),
+    lang,
+    dir: lang === "ar" ? ("rtl" as const) : ("ltr" as const),
+  };
+}
+
 export function useT() {
   const { lang } = useStore();
   const t = useCallback(
-    (key: string, params?: Record<string, string | number>) => {
-      const d = dicts[lang] as Record<string, string>;
-      let s = d[key] ?? (en as Record<string, string>)[key] ?? key;
-      if (params) for (const [k, v] of Object.entries(params)) s = s.split(`{${k}}`).join(String(v));
-      return s;
-    },
+    (key: string, params?: Record<string, string | number>) => translate(lang, key, params),
     [lang],
   );
   return { t, lang, dir: lang === "ar" ? ("rtl" as const) : ("ltr" as const) };
