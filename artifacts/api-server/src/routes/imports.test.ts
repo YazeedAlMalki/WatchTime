@@ -212,9 +212,10 @@ describe("private, idempotent watch-history imports", () => {
     { name: "matches a fresh regional import to the current alias owner after a refresh", freshImport: true, removeAlias: false, resolveEpisode: false },
     { name: "leaves a fresh import unmatched after its regional alias is removed without changing an earlier preview", freshImport: true, removeAlias: true, resolveEpisode: false },
     { name: "matches a fresh import to an editorially preserved regional alias after its provider withdraws it", freshImport: true, removeAlias: true, resolveEpisode: false, preserveEditorial: true },
+    { name: "matches and tracks a fresh regional import while another catalog provider still supports its alias", freshImport: true, removeAlias: false, resolveEpisode: false, retainProvider: true },
     { name: "records only the chosen show's episode and parent history after reviewing a shared regional title", freshImport: false, removeAlias: false, resolveEpisode: true },
     { name: "does not add history twice when a shared-alias episode becomes watched before manual review", freshImport: false, removeAlias: false, resolveEpisode: true, alreadyWatched: true },
-  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, preserveEditorial = false }) => {
+  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, preserveEditorial = false, retainProvider = false }) => {
     // Catalog-refresh scenarios must not consume the quota of later import tests.
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
@@ -256,6 +257,11 @@ describe("private, idempotent watch-history imports", () => {
     let freshImportId: number | undefined;
     let regionalTitleIds: number[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      if (retainProvider && String(input) === "https://en.wikipedia.org/api/rest_v1/page/summary/Import_refresh_primary") {
+        return new Response(JSON.stringify({ extract: "A second provider's summary of the regional fixture." }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
       const fixture = fixtures.find((item) => String(input).includes(`/shows/${item.tvmazeId}?`));
       if (!fixture) throw new Error(`Unexpected catalog request: ${input}`);
       return new Response(JSON.stringify({
@@ -283,6 +289,21 @@ describe("private, idempotent watch-history imports", () => {
       expect(refreshed?.succeeded).toBe(2);
       expect(refreshed?.failures).toEqual([]);
 
+      if (retainProvider) {
+        const secondProvider = await runCatalogSync({ dryRun: false, allowPartial: true }, [{
+          key: "test:import-refresh-primary-wikipedia",
+          source: "wikipedia",
+          type: "tv",
+          name: fixtures[0].name,
+          imdbId: fixtures[0].expectedImdbId!,
+          wikiPage: "Import_refresh_primary",
+          aliases: [fixtures[0].aliases![0]],
+          popularity: 0,
+        }]);
+        expect(secondProvider?.succeeded).toBe(1);
+        expect(secondProvider?.failures).toEqual([]);
+      }
+
       const titles = await db.select().from(titlesTable).where(inArray(titlesTable.imdbId, ["tt9990091", "tt9990092"]));
       expect(titles).toHaveLength(2);
       const primaryId = titles.find((title) => title.imdbId === "tt9990091")!.id;
@@ -292,6 +313,7 @@ describe("private, idempotent watch-history imports", () => {
       expect(aliases.find((alias) => alias.titleId === primaryId && alias.alias === "地域限定タイトル")).toMatchObject({
         language: "ja",
         isEditorial: false,
+        providerSources: retainProvider ? ["tvmaze", "wikipedia"] : ["tvmaze"],
       });
       expect(aliases.filter((alias) => alias.alias === "共通タイトル")).toHaveLength(2);
       const [regionalEpisode] = await db.select().from(episodesTable).where(and(
@@ -482,8 +504,10 @@ describe("private, idempotent watch-history imports", () => {
         }).where(eq(titleAliasesTable.id, regionalAlias.id));
       }
 
-      // Remove the original regional name, optionally assigning it to a different
-      // title. Saved previews must retain the title IDs selected before refresh.
+      // Withdraw TVMaze's original regional name. Editorial preservation or a
+      // second provider can keep it on the original title; otherwise it is
+      // removed or assigned elsewhere.
+      // Saved previews must retain the title IDs selected before refresh.
       const changedFixtures: SourceItem[] = [
         { ...fixtures[0], aliases: [
           { alias: "地域限定タイトル改訂", language: "ja", sourceName: "JA Wikipedia", sourceUrl: "https://ja.wikipedia.org/wiki/地域限定タイトル改訂" },
@@ -491,14 +515,14 @@ describe("private, idempotent watch-history imports", () => {
         ] },
         { ...fixtures[1], aliases: [
           ...fixtures[1].aliases!,
-          ...(removeAlias ? [] : [fixtures[0].aliases![0]]),
+          ...(removeAlias || retainProvider ? [] : [fixtures[0].aliases![0]]),
         ] },
       ];
       const changed = await runCatalogSync({ dryRun: false, allowPartial: true }, changedFixtures);
       expect(changed?.succeeded).toBe(2);
       expect(changed?.failures).toEqual([]);
       const movedAlias = await db.select().from(titleAliasesTable).where(eq(titleAliasesTable.alias, "地域限定タイトル"));
-      const expectedAliasOwners = preserveEditorial ? [primaryId] : removeAlias ? [] : [secondaryId];
+      const expectedAliasOwners = preserveEditorial || retainProvider ? [primaryId] : removeAlias ? [] : [secondaryId];
       expect(movedAlias.filter((alias) => [primaryId, secondaryId].includes(alias.titleId)).map((alias) => alias.titleId))
         .toEqual(expectedAliasOwners);
       if (preserveEditorial) {
@@ -511,8 +535,23 @@ describe("private, idempotent watch-history imports", () => {
           sourceUrl: regionalAlias.sourceUrl,
         });
       }
+      if (retainProvider) {
+        const remainingAlias = movedAlias.find((alias) => alias.titleId === primaryId);
+        expect(remainingAlias).toMatchObject({
+          id: aliases.find((alias) => alias.titleId === primaryId && alias.alias === "地域限定タイトル")!.id,
+          alias: "地域限定タイトル",
+          language: "ja",
+          isEditorial: false,
+          providerSources: ["wikipedia"],
+          providerCitations: { wikipedia: {
+            sourceName: fixtures[0].aliases![0].sourceName,
+            sourceUrl: fixtures[0].aliases![0].sourceUrl,
+          } },
+        });
+        expect(remainingAlias!.providerCitations).not.toHaveProperty("tvmaze");
+      }
       const updatedTitles = await db.select().from(titlesTable).where(inArray(titlesTable.id, [primaryId, secondaryId]));
-      expect(updatedTitles.find((title) => title.id === primaryId)!.altTitles.includes("地域限定タイトル")).toBe(preserveEditorial);
+      expect(updatedTitles.find((title) => title.id === primaryId)!.altTitles.includes("地域限定タイトル")).toBe(preserveEditorial || retainProvider);
       expect(updatedTitles.find((title) => title.id === primaryId)!.altTitles).toContain("地域限定タイトル改訂");
       expect(updatedTitles.filter((title) => title.altTitles.includes("地域限定タイトル")).map((title) => title.id))
         .toEqual(expectedAliasOwners);
@@ -529,7 +568,7 @@ describe("private, idempotent watch-history imports", () => {
         // reusing the fingerprint (and saved matches) of the reviewed import.
         const fresh = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
           source: "generic",
-          fileName: preserveEditorial ? "editorial-regional-name.csv" : removeAlias ? "removed-regional-name.csv" : "current-regional-owner.csv",
+          fileName: preserveEditorial ? "editorial-regional-name.csv" : removeAlias ? "removed-regional-name.csv" : retainProvider ? "supported-regional-name.csv" : "current-regional-owner.csv",
           content: "kind,title,type,year\nwatchlist,地域限定タイトル,tv,2020",
         });
         expect(fresh.status).toBe(201);
@@ -540,7 +579,7 @@ describe("private, idempotent watch-history imports", () => {
         expect(fresh.body.items).toHaveLength(1);
         const expectedMatch = isUnmatched
           ? { classification: "unmatched", titleId: null, episodeId: null, selected: false, errorCode: "title_not_found", candidates: [] }
-          : { classification: "matched", titleId: preserveEditorial ? primaryId : secondaryId, selected: true };
+          : { classification: "matched", titleId: preserveEditorial || retainProvider ? primaryId : secondaryId, selected: true };
         expect(fresh.body.items[0]).toMatchObject({ kind: "watchlist", ...expectedMatch });
 
         const freshPreview = await supertest(app).get(`/api/imports/${freshImportId}`).set("x-test-user", USER_A);
