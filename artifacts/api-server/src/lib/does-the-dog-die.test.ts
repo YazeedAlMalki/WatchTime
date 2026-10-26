@@ -208,6 +208,24 @@ describe("Does the Dog Die refresh persistence", () => {
     if (healthBefore) await db.insert(integrationHealthTable).values(healthBefore);
   });
 
+  async function resetTitleDataOrderingBaseline() {
+    const baselineAt = new Date("2020-01-01T00:00:00.000Z");
+    await db.update(providerMappingsTable).set({
+      externalId: "old-provider-id",
+      status: "mapped",
+      lastRefreshedAt: baselineAt,
+    }).where(and(
+      eq(providerMappingsTable.titleId, titleId),
+      eq(providerMappingsTable.provider, provider),
+    ));
+    await db.update(safetyRecordsTable).set({
+      updatedAt: baselineAt,
+    }).where(and(
+      eq(safetyRecordsTable.titleId, titleId),
+      eq(safetyRecordsTable.sourceName, provider),
+    ));
+  }
+
   it("persists the matched provider record and mapping on success", async () => {
     const client = {
       searchItems: async () => [item({ id: 10752 })],
@@ -313,16 +331,17 @@ describe("Does the Dog Die refresh persistence", () => {
     });
     let olderRefresh: ReturnType<typeof refreshDoesTheDogDieTitle> | undefined;
 
+    await resetTitleDataOrderingBaseline();
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
-      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
       await db.delete(integrationHealthTable).where(eq(integrationHealthTable.provider, provider));
 
       olderRefresh = refreshDoesTheDogDieTitle(titleId, {
         searchItems: async () => {
           signalOlderSearchStarted();
           await olderSearchGate;
-          throw new DoesTheDogDieError("late older failure", "rate_limited", 429);
+          throw new DoesTheDogDieError("late older failure", "missing_mapping");
         },
         getItem: async () => {
           throw new Error("should not fetch details after search fails");
@@ -330,7 +349,7 @@ describe("Does the Dog Die refresh persistence", () => {
       });
       await olderSearchStarted;
 
-      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+      vi.setSystemTime(new Date("2030-01-01T00:00:01.000Z"));
       await expect(refreshDoesTheDogDieTitle(titleId, {
         searchItems: async () => [item({ id: 10752 })],
         getItem: async () => ({
@@ -340,8 +359,8 @@ describe("Does the Dog Die refresh persistence", () => {
       })).resolves.toMatchObject({ ok: true });
       const [afterNewerRefresh] = await db.select().from(integrationHealthTable)
         .where(eq(integrationHealthTable.provider, provider));
-      expect(afterNewerRefresh.lastSyncAt).toEqual(new Date("2026-01-01T00:00:01.000Z"));
-      expect(afterNewerRefresh.lastSuccessAt).toEqual(new Date("2026-01-01T00:00:01.000Z"));
+      expect(afterNewerRefresh.lastSyncAt).toEqual(new Date("2030-01-01T00:00:01.000Z"));
+      expect(afterNewerRefresh.lastSuccessAt).toEqual(new Date("2030-01-01T00:00:01.000Z"));
 
       releaseOlderSearch();
       await expect(olderRefresh).resolves.toMatchObject({
@@ -360,8 +379,98 @@ describe("Does the Dog Die refresh persistence", () => {
       });
       expect(afterOlderRefresh.lastSyncAt).toEqual(afterNewerRefresh.lastSyncAt);
       expect(afterOlderRefresh.lastSuccessAt).toEqual(afterNewerRefresh.lastSuccessAt);
+      const [mappingAfterOlderFailure] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, titleId),
+        eq(providerMappingsTable.provider, provider),
+      ));
+      expect(mappingAfterOlderFailure).toMatchObject({
+        externalId: "10752",
+        status: "mapped",
+        lastRefreshedAt: new Date("2030-01-01T00:00:01.000Z"),
+      });
     } finally {
       releaseOlderSearch();
+      if (olderRefresh) await olderRefresh.catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps newer title data when an older successful lookup finishes late", async () => {
+    let releaseOlderDetails!: () => void;
+    let signalOlderDetailsStarted!: () => void;
+    const olderDetailsGate = new Promise<void>((resolve) => {
+      releaseOlderDetails = resolve;
+    });
+    const olderDetailsStarted = new Promise<void>((resolve) => {
+      signalOlderDetailsStarted = resolve;
+    });
+    let olderRefresh: ReturnType<typeof refreshDoesTheDogDieTitle> | undefined;
+
+    await resetTitleDataOrderingBaseline();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+      olderRefresh = refreshDoesTheDogDieTitle(titleId, {
+        searchItems: async () => [item({ id: 20751 })],
+        getItem: async () => {
+          signalOlderDetailsStarted();
+          await olderDetailsGate;
+          return {
+            ...item({ id: 20751 }),
+            topicItemStats: [{
+              topicItemId: 1,
+              yesSum: 2,
+              noSum: 1,
+              numComments: 0,
+              topicId: 2,
+              topicName: "older topic",
+              itemId: 20751,
+            }],
+          };
+        },
+      });
+      await olderDetailsStarted;
+
+      vi.setSystemTime(new Date("2030-01-01T00:00:01.000Z"));
+      await expect(refreshDoesTheDogDieTitle(titleId, {
+        searchItems: async () => [item({ id: 20752 })],
+        getItem: async () => ({
+          ...item({ id: 20752 }),
+          topicItemStats: [{
+            topicItemId: 2,
+            yesSum: 8,
+            noSum: 1,
+            numComments: 3,
+            topicId: 3,
+            topicName: "newer topic",
+            itemId: 20752,
+          }],
+        }),
+      })).resolves.toMatchObject({ ok: true, externalId: "20752" });
+
+      releaseOlderDetails();
+      await expect(olderRefresh).resolves.toMatchObject({ ok: true, externalId: "20751" });
+
+      const [mapping] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, titleId),
+        eq(providerMappingsTable.provider, provider),
+      ));
+      const [record] = await db.select().from(safetyRecordsTable).where(and(
+        eq(safetyRecordsTable.titleId, titleId),
+        eq(safetyRecordsTable.sourceName, provider),
+      ));
+      expect(mapping).toMatchObject({
+        externalId: "20752",
+        status: "mapped",
+        lastRefreshedAt: new Date("2030-01-01T00:00:01.000Z"),
+      });
+      expect(record).toMatchObject({
+        url: "https://www.doesthedogdie.com/media/20752",
+        updatedAt: new Date("2030-01-01T00:00:01.000Z"),
+      });
+      expect(record.items[0]).toMatchObject({ label: "newer topic", score: 8 });
+    } finally {
+      releaseOlderDetails();
       if (olderRefresh) await olderRefresh.catch(() => undefined);
       vi.useRealTimers();
     }

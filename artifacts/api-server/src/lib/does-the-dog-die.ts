@@ -407,25 +407,47 @@ async function updateIntegrationHealth(values: {
 
 async function updateMappingStatus(
   titleId: number,
-  currentMapping: typeof providerMappingsTable.$inferSelect | undefined,
   status: "missing" | "error",
+  refreshedAt: Date,
 ) {
-  if (!currentMapping) {
-    await db.insert(providerMappingsTable).values({
-      titleId,
-      provider: DOES_THE_DOG_DIE_PROVIDER,
-      externalId: null,
-      status,
-      lastRefreshedAt: null,
-    });
-    return;
-  }
-  // A known-good mapping is never replaced by a failed provider lookup.
-  if (currentMapping.status === "mapped" && currentMapping.externalId) return;
-  await db
-    .update(providerMappingsTable)
-    .set({ status })
-    .where(eq(providerMappingsTable.id, currentMapping.id));
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:catalog-sync'))`);
+    const [currentMapping] = await tx
+      .select()
+      .from(providerMappingsTable)
+      .where(
+        and(
+          eq(providerMappingsTable.titleId, titleId),
+          eq(providerMappingsTable.provider, DOES_THE_DOG_DIE_PROVIDER),
+        ),
+      )
+      .limit(1);
+    if (!currentMapping) {
+      await tx.insert(providerMappingsTable).values({
+        titleId,
+        provider: DOES_THE_DOG_DIE_PROVIDER,
+        externalId: null,
+        status,
+        lastRefreshedAt: null,
+      });
+      return;
+    }
+    // A known-good or more recently refreshed mapping is never replaced by a
+    // failed lookup that started earlier.
+    if (
+      (currentMapping.status === "mapped" && currentMapping.externalId)
+      || (currentMapping.lastRefreshedAt && !isRefreshNewer(currentMapping.lastRefreshedAt, refreshedAt))
+    ) return;
+    await tx
+      .update(providerMappingsTable)
+      .set({ status })
+      .where(eq(providerMappingsTable.id, currentMapping.id));
+  });
+}
+
+function isRefreshNewer(storedAt: Date | null | undefined, startedAt: Date): boolean {
+  // Equal timestamps are ambiguous, so keep the data that was persisted first.
+  return !storedAt || startedAt > storedAt;
 }
 
 export async function refreshDoesTheDogDieTitle(
@@ -447,15 +469,6 @@ export async function refreshDoesTheDogDieTitle(
     return { ok: false, titleId, titleName: "", status: "missing", error: "Title not found" };
   }
 
-  const [currentMapping] = await db
-    .select()
-    .from(providerMappingsTable)
-    .where(
-      and(
-        eq(providerMappingsTable.titleId, titleId),
-        eq(providerMappingsTable.provider, DOES_THE_DOG_DIE_PROVIDER),
-      ),
-    );
   const now = new Date();
 
   try {
@@ -476,7 +489,7 @@ export async function refreshDoesTheDogDieTitle(
           ),
         )
         .limit(1);
-      if (lockedMapping) {
+      if (lockedMapping && isRefreshNewer(lockedMapping.lastRefreshedAt, now)) {
         await tx
           .update(providerMappingsTable)
           .set({
@@ -485,7 +498,7 @@ export async function refreshDoesTheDogDieTitle(
             lastRefreshedAt: now,
           })
           .where(eq(providerMappingsTable.id, lockedMapping.id));
-      } else {
+      } else if (!lockedMapping) {
         await tx.insert(providerMappingsTable).values({
           titleId,
           provider: DOES_THE_DOG_DIE_PROVIDER,
@@ -515,9 +528,9 @@ export async function refreshDoesTheDogDieTitle(
         items,
         updatedAt: now,
       };
-      if (existingRecord) {
+      if (existingRecord && isRefreshNewer(existingRecord.updatedAt, now)) {
         await tx.update(safetyRecordsTable).set(values).where(eq(safetyRecordsTable.id, existingRecord.id));
-      } else {
+      } else if (!existingRecord) {
         await tx.insert(safetyRecordsTable).values(values);
       }
     });
@@ -540,7 +553,11 @@ export async function refreshDoesTheDogDieTitle(
       ? caught
       : new DoesTheDogDieError("Unexpected Does the Dog Die refresh failure", "unavailable");
     if (error.code === "missing_mapping" || error.code === "ambiguous_mapping") {
-      await updateMappingStatus(titleId, currentMapping, error.code === "missing_mapping" ? "missing" : "error");
+      await updateMappingStatus(
+        titleId,
+        error.code === "missing_mapping" ? "missing" : "error",
+        now,
+      );
     }
     await updateIntegrationHealth({
       status: errorHealthStatus(error),
