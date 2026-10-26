@@ -746,10 +746,19 @@ describe("catalog refresh recovery", () => {
     const startupGate = new Promise<void>((resolve) => { finishStartup = resolve; });
     let rollbackRecovery!: () => void;
     const recoveryGate = new Promise<void>((resolve) => { rollbackRecovery = resolve; });
-    let signalRecoveryWritten!: (run: typeof catalogSyncRunsTable.$inferSelect) => void;
-    const recoveryWritten = new Promise<typeof catalogSyncRunsTable.$inferSelect>((resolve) => {
+    let signalRecoveryWritten!: (snapshot: {
+      run: typeof catalogSyncRunsTable.$inferSelect;
+      items: typeof catalogSyncItemsTable.$inferSelect[];
+    }) => void;
+    const recoveryWritten = new Promise<Parameters<typeof signalRecoveryWritten>[0]>((resolve) => {
       signalRecoveryWritten = resolve;
     });
+    const items = sourceItems.slice(0, 2);
+    expect(items).toHaveLength(2);
+    let resumeProgress!: () => void;
+    const progressGate = new Promise<void>((resolve) => { resumeProgress = resolve; });
+    let signalProgressWritten!: () => void;
+    const progressWritten = new Promise<void>((resolve) => { signalProgressWritten = resolve; });
     let finishSync!: () => void;
     const syncGate = new Promise<void>((resolve) => { finishSync = resolve; });
     let signalStartupFinished!: () => void;
@@ -767,7 +776,9 @@ describe("catalog refresh recovery", () => {
           await callback(tx);
           const [writtenRun] = await tx.select().from(catalogSyncRunsTable)
             .where(eq(catalogSyncRunsTable.id, runId!));
-          signalRecoveryWritten(writtenRun);
+          const writtenItems = await tx.select().from(catalogSyncItemsTable)
+            .where(eq(catalogSyncItemsTable.runId, runId!)).orderBy(catalogSyncItemsTable.id);
+          signalRecoveryWritten({ run: writtenRun, items: writtenItems });
           await recoveryGate;
           throw recoveryError;
         }, config),
@@ -779,13 +790,26 @@ describe("catalog refresh recovery", () => {
       } as unknown as ReturnType<typeof db.delete>;
     });
     const lockProbe = await pool.connect();
-    runCatalogSyncMock.mockImplementation(async () => {
+    runCatalogSyncMock.mockImplementation(async (
+      ...[_options, selected, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+    ) => {
+      if (!selected || !onProgress) throw new Error("Expected explicit titles and progress callback");
+      await progressGate;
+      for (const [index, item] of selected.entries()) {
+        await onProgress({
+          item, status: "running", attempted: index + 1, succeeded: index, episodes: index * 3,
+        });
+        await onProgress({
+          item, status: "succeeded", attempted: index + 1, succeeded: index + 1, episodes: (index + 1) * 3,
+        });
+      }
+      signalProgressWritten();
       await syncGate;
-      return { selected: 0, succeeded: 0, episodes: 0, failures: [] };
+      return { selected: selected.length, succeeded: selected.length, episodes: selected.length * 3, failures: [] };
     });
     let recoveryOutcome: Promise<unknown> | undefined;
     try {
-      runId = await startCatalogRefresh("manual", []);
+      runId = await startCatalogRefresh("manual", items);
       createdRunIds.push(runId);
       await vi.waitFor(() => expect(transactionSpy).toHaveBeenCalledTimes(1));
       await db.update(catalogSyncRunsTable).set({
@@ -793,21 +817,34 @@ describe("catalog refresh recovery", () => {
       }).where(eq(catalogSyncRunsTable.id, runId));
       const [queuedRun] = await db.select().from(catalogSyncRunsTable)
         .where(eq(catalogSyncRunsTable.id, runId));
+      const queuedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(queuedItems.map((item) => item.itemKey)).toEqual(items.map((item) => item.key));
+      for (const item of queuedItems) {
+        expect(item).toMatchObject({ status: "queued", error: null, startedAt: null, finishedAt: null });
+      }
 
       // Attach the rejection handler before releasing recovery to roll back.
       recoveryOutcome = recoverFromOtherProcess().then(
         () => undefined,
         (error: unknown) => error,
       );
-      const uncommittedRun = await recoveryWritten;
+      const { run: uncommittedRun, items: uncommittedItems } = await recoveryWritten;
       expect(uncommittedRun.status).toBe("failed");
       expect(uncommittedRun.error).toBe(
         "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles",
       );
       expect(uncommittedRun.finishedAt).toBeInstanceOf(Date);
       expect(uncommittedRun.startedAt).toBeNull();
+      expect(uncommittedItems).toHaveLength(items.length);
+      for (const item of uncommittedItems) {
+        expect(item).toMatchObject({ status: "failed", error: uncommittedRun.error, startedAt: null });
+        expect(item.finishedAt).toBeInstanceOf(Date);
+      }
       expect(await db.select().from(catalogSyncRunsTable)
         .where(eq(catalogSyncRunsTable.id, runId))).toEqual([queuedRun]);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id)).toEqual(queuedItems);
 
       finishStartup();
       // A real ungranted lock proves startup is waiting on recovery's lease,
@@ -833,7 +870,7 @@ describe("catalog refresh recovery", () => {
       await expect(recoveryOutcome).resolves.toBe(recoveryError);
       await vi.waitFor(() => expect(runCatalogSyncMock).toHaveBeenCalledTimes(1));
       expect(runCatalogSyncMock).toHaveBeenCalledWith(
-        { dryRun: false, allowPartial: true }, [], expect.any(Function), false,
+        { dryRun: false, allowPartial: true }, items, expect.any(Function), false,
       );
       const [runningRun] = await db.select().from(catalogSyncRunsTable)
         .where(eq(catalogSyncRunsTable.id, runId));
@@ -841,6 +878,31 @@ describe("catalog refresh recovery", () => {
       expect(runningRun.startedAt).toBeInstanceOf(Date);
       expect(runningRun.error).toBeNull();
       expect(runningRun.finishedAt).toBeNull();
+      expect(runningRun).toMatchObject({
+        totalItems: 2, processedItems: 0, succeededItems: 0, failedItems: 0, episodesUpdated: 0,
+      });
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id)).toEqual(queuedItems);
+      expect(cleanupSpy).not.toHaveBeenCalled();
+
+      resumeProgress();
+      await progressWritten;
+      const progressedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(progressedItems).toHaveLength(items.length);
+      for (const [index, item] of progressedItems.entries()) {
+        expect(item).toMatchObject({ id: queuedItems[index].id, status: "succeeded", error: null });
+        expect(item.startedAt).toBeInstanceOf(Date);
+        expect(item.startedAt!.getTime()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime());
+        expect(item.finishedAt).toBeInstanceOf(Date);
+        expect(item.finishedAt!.getTime()).toBeGreaterThanOrEqual(item.startedAt!.getTime());
+      }
+      const [progressedRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(progressedRun).toMatchObject({
+        status: "running", totalItems: 2, processedItems: 2, succeededItems: 2,
+        failedItems: 0, episodesUpdated: 6, error: null, finishedAt: null,
+      });
       expect(cleanupSpy).not.toHaveBeenCalled();
 
       finishSync();
@@ -852,10 +914,16 @@ describe("catalog refresh recovery", () => {
       expect(completedRun.error).toBeNull();
       expect(completedRun.finishedAt).toBeInstanceOf(Date);
       expect(completedRun.finishedAt!.getTime()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime());
+      expect(completedRun).toMatchObject({
+        totalItems: 2, processedItems: 2, succeededItems: 2, failedItems: 0, episodesUpdated: 6,
+      });
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id)).toEqual(progressedItems);
       expect(runCatalogSyncMock).toHaveBeenCalledTimes(1);
     } finally {
       finishStartup();
       rollbackRecovery();
+      resumeProgress();
       finishSync();
       try {
         await recoveryOutcome;
