@@ -1750,6 +1750,9 @@ describe("admin alternate-title review", () => {
         await Promise.resolve();
       }
     });
+    const pendingSave = mocks.updateMutation.mutate.mock.results.at(-1)
+      ?.value as Promise<void> | undefined;
+    if (!pendingSave) throw new Error("The stale-alias save did not start");
 
     const findConflictNotice = () =>
       Array.from(container.querySelectorAll<HTMLElement>('[role="alert"]')).find(
@@ -1765,10 +1768,7 @@ describe("admin alternate-title review", () => {
 
     await act(async () => {
       resolveCatalogRefresh();
-      await catalogRefresh;
-      for (let index = 0; index < 5; index += 1) {
-        await Promise.resolve();
-      }
+      await pendingSave;
     });
     expect(findConflictNotice()?.textContent).toContain(
       "3 titles share this alias",

@@ -2224,6 +2224,8 @@ function ContentTab({
       <AliasReview
         aliases={aliasesPage?.items}
         q={debouncedQ}
+        searchTerm={q}
+        searchPending={q.trim() !== debouncedQ.trim()}
         getToken={getToken}
         aliasTotal={aliasesPage?.total}
         aliasPage={aliasPage}
@@ -2270,6 +2272,8 @@ function getAliasReviewLoadExplanation(error: unknown): string | undefined {
 export function AliasReview({
   aliases,
   q = "",
+  searchTerm = q,
+  searchPending = false,
   getToken = async () => null,
   aliasTotal = aliases?.length ?? 0,
   aliasPage = 1,
@@ -2293,6 +2297,8 @@ export function AliasReview({
 }: {
   aliases: AdminContentAlias[] | undefined;
   q?: string;
+  searchTerm?: string;
+  searchPending?: boolean;
   getToken?: () => Promise<string | null>;
   aliasTotal?: number;
   aliasPage?: number;
@@ -3203,7 +3209,13 @@ export function AliasReview({
           Loading alternate titles for page {aliasPage}…
         </p>
       )}
-      {isLoading ? (
+      {searchPending ? (
+        <p role="status" className="mb-3 text-sm text-muted-foreground">
+          {searchTerm.trim()
+            ? `Preparing alternate-title results for “${searchTerm.trim()}”…`
+            : "Updating alternate-title results…"}
+        </p>
+      ) : isLoading ? (
         <div className="h-24 animate-pulse bg-secondary/30 rounded-2xl" />
       ) : isError && !linkedAlias && !savedAliasPreview ? (
         <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
