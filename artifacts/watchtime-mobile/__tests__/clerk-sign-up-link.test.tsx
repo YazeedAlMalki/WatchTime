@@ -130,6 +130,50 @@ describe('Clerk sign-up switch to sign-in', () => {
     });
   });
 
+  it('keeps credentials available and retries account creation after a rejected request', async () => {
+    mockUseLocalSearchParams.mockReturnValue({});
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: [] as string[],
+      missingFields: ['email_address', 'password'],
+      password: jest.fn()
+        .mockRejectedValueOnce(new Error('Private network transport details'))
+        .mockImplementationOnce(async () => {
+          signUp.unverifiedFields = ['email_address'];
+          signUp.missingFields = [];
+          return { error: null };
+        }),
+      verifications: { sendEmailCode: jest.fn(async () => ({ error: null })) },
+    };
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('email-input'), 'viewer@example.com');
+    await fireEvent.changeText(screen.getByTestId('password-input'), 'test-password');
+    await fireEvent.press(screen.getByTestId('sign-up-button'));
+
+    expect(screen.getByTestId('sign-up-error')).toHaveTextContent(
+      'Could not create your account. Please try again.',
+    );
+    expect(screen.getByTestId('sign-up-error').props.accessibilityRole).toBe('alert');
+    expect(screen.queryByText('Private network transport details')).toBeNull();
+    expect(screen.getByTestId('email-input').props.value).toBe('viewer@example.com');
+    expect(screen.getByTestId('password-input').props.value).toBe('test-password');
+    expect(screen.getByTestId('sign-up-button')).toBeEnabled();
+
+    await fireEvent.press(screen.getByTestId('sign-up-button'));
+
+    expect(signUp.password).toHaveBeenCalledTimes(2);
+    expect(signUp.password.mock.calls).toEqual([
+      [{ emailAddress: 'viewer@example.com', password: 'test-password' }],
+      [{ emailAddress: 'viewer@example.com', password: 'test-password' }],
+    ]);
+    expect(signUp.verifications.sendEmailCode).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('sign-up-error')).toBeNull();
+    expect(screen.getByText('Check your email')).toBeTruthy();
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+  });
+
   it.each([
     { params: { returnTo: '/title/456' }, destination: '/title/456', decorated: '/title/456?verified=1' },
     { params: {}, destination: '/', decorated: '/' },

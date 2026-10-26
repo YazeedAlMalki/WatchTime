@@ -36,6 +36,7 @@ function ClerkSignUpScreen() {
 
   const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
+  const [signUpError, setSignUpError] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [emailCodeSent, setEmailCodeSent] = useState(false);
   const [resendStatus, setResendStatus] = useState<{ message: string; failed: boolean } | null>(null);
@@ -66,7 +67,14 @@ function ClerkSignUpScreen() {
   };
 
   const handleSubmit = async () => {
-    const { error } = await signUp.password({ emailAddress, password });
+    setSignUpError(null);
+    let error: unknown;
+    try {
+      ({ error } = await signUp.password({ emailAddress, password }));
+    } catch {
+      setSignUpError('Could not create your account. Please try again.');
+      return;
+    }
     if (error) return;
     setResending(true);
     setResendStatus(null);
@@ -298,6 +306,16 @@ function ClerkSignUpScreen() {
             {errors.fields.password ? (
               <Text style={{ color: c.destructive, fontSize: 13, marginBottom: 8 }}>
                 {errors.fields.password.message}
+              </Text>
+            ) : null}
+            {signUpError ? (
+              <Text
+                testID="sign-up-error"
+                accessibilityRole="alert"
+                accessibilityLiveRegion="polite"
+                style={{ color: c.destructive, fontSize: 13, marginBottom: 8 }}
+              >
+                {signUpError}
               </Text>
             ) : null}
             <Pressable
