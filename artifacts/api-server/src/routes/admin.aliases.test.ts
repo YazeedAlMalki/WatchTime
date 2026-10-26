@@ -564,6 +564,34 @@ describe("admin title aliases", () => {
     ]);
   });
 
+  it("finds the same stored accented alias with composed and decomposed query text", async () => {
+    const storedAlias = "Café Noir";
+    await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[0],
+      alias: storedAlias,
+      normalizedAlias: "cafenoir",
+      language: "fr",
+      sourceName: "Editorial test",
+      isEditorial: true,
+    });
+
+    const composedResponse = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Café" })
+      .expect(200);
+    const decomposedResponse = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Cafe\u0301" })
+      .expect(200);
+
+    expect(composedResponse.body.items).toEqual([
+      expect.objectContaining({ alias: storedAlias }),
+    ]);
+    expect(decomposedResponse.body.items).toEqual([
+      expect.objectContaining({ alias: storedAlias }),
+    ]);
+  });
+
   it("shows the remaining provider citation after another provider withdraws a shared alias", async () => {
     const tvMazeCitation = {
       sourceName: "TVMaze",
