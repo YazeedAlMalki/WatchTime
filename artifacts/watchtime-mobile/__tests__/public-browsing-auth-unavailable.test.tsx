@@ -220,14 +220,17 @@ describe('public browsing while authentication is unavailable', () => {
     expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
 
+    mockTitleRefetch.mockImplementationOnce(async () => {
+      mockTitleQueryState.current = {
+        data: mockPublicTitle,
+        isLoading: false,
+        isError: false,
+      };
+      return { data: mockPublicTitle };
+    });
     await fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
 
     expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
-    mockTitleQueryState.current = {
-      data: mockPublicTitle,
-      isLoading: false,
-      isError: false,
-    };
     await detail.rerender(
       <AppAuthUnavailableProvider>
         <TitleDetailScreen />
