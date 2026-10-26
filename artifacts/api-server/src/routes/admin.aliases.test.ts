@@ -1418,6 +1418,45 @@ describe("admin title aliases", () => {
       .toEqual([]);
   });
 
+  it("clears shared-alias collisions after an admin corrects one alias", async () => {
+    const [correctedRow] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
+    const [untouchedRow] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[1]));
+
+    expect(correctedRow.normalizedAlias).toBe(untouchedRow.normalizedAlias);
+
+    await request(app)
+      .patch(`/api/admin/content-aliases/${correctedRow.id}`)
+      .send({
+        alias: "Corrected Local Title",
+        language: "en",
+        sourceUrl: "https://example.test/corrected",
+        expectedUpdatedAt: correctedRow.updatedAt.toISOString(),
+      })
+      .expect(200);
+
+    const refreshedList = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Alias Test" })
+      .expect(200);
+
+    expect(refreshedList.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: correctedRow.id,
+        alias: "Corrected Local Title",
+        collision: false,
+        collisionTitleCount: 1,
+      }),
+      expect.objectContaining({
+        id: untouchedRow.id,
+        alias: "Shared Local Title",
+        collision: false,
+        collisionTitleCount: 1,
+      }),
+    ]));
+  });
+
   it("rejects a stale correction without leaving collision badges behind", async () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
