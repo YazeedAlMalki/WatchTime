@@ -211,9 +211,10 @@ describe("private, idempotent watch-history imports", () => {
     { name: "reuses the saved preview for identical uploads after a regional alias moves and confirms idempotently", freshImport: false, removeAlias: false, resolveEpisode: false },
     { name: "matches a fresh regional import to the current alias owner after a refresh", freshImport: true, removeAlias: false, resolveEpisode: false },
     { name: "leaves a fresh import unmatched after its regional alias is removed without changing an earlier preview", freshImport: true, removeAlias: true, resolveEpisode: false },
+    { name: "matches a fresh import to an editorially preserved regional alias after its provider withdraws it", freshImport: true, removeAlias: true, resolveEpisode: false, preserveEditorial: true },
     { name: "records only the chosen show's episode and parent history after reviewing a shared regional title", freshImport: false, removeAlias: false, resolveEpisode: true },
     { name: "does not add history twice when a shared-alias episode becomes watched before manual review", freshImport: false, removeAlias: false, resolveEpisode: true, alreadyWatched: true },
-  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false }) => {
+  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, preserveEditorial = false }) => {
     // Catalog-refresh scenarios must not consume the quota of later import tests.
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
@@ -470,6 +471,17 @@ describe("private, idempotent watch-history imports", () => {
       ));
       expect(previewHistory).toHaveLength(0);
 
+      const regionalAlias = aliases.find((alias) => alias.titleId === primaryId && alias.alias === "地域限定タイトル")!;
+      if (preserveEditorial) {
+        // Mirror an explicit admin preservation, retaining the provider citation
+        // while marking this alias as editorial rather than legacy metadata.
+        await db.update(titleAliasesTable).set({
+          isEditorial: true,
+          sourceName: "Admin editorial",
+          updatedAt: new Date(),
+        }).where(eq(titleAliasesTable.id, regionalAlias.id));
+      }
+
       // Remove the original regional name, optionally assigning it to a different
       // title. Saved previews must retain the title IDs selected before refresh.
       const changedFixtures: SourceItem[] = [
@@ -486,13 +498,24 @@ describe("private, idempotent watch-history imports", () => {
       expect(changed?.succeeded).toBe(2);
       expect(changed?.failures).toEqual([]);
       const movedAlias = await db.select().from(titleAliasesTable).where(eq(titleAliasesTable.alias, "地域限定タイトル"));
+      const expectedAliasOwners = preserveEditorial ? [primaryId] : removeAlias ? [] : [secondaryId];
       expect(movedAlias.filter((alias) => [primaryId, secondaryId].includes(alias.titleId)).map((alias) => alias.titleId))
-        .toEqual(removeAlias ? [] : [secondaryId]);
+        .toEqual(expectedAliasOwners);
+      if (preserveEditorial) {
+        expect(movedAlias.find((alias) => alias.id === regionalAlias.id)).toMatchObject({
+          titleId: primaryId,
+          alias: regionalAlias.alias,
+          language: "ja",
+          isEditorial: true,
+          sourceName: "Admin editorial",
+          sourceUrl: regionalAlias.sourceUrl,
+        });
+      }
       const updatedTitles = await db.select().from(titlesTable).where(inArray(titlesTable.id, [primaryId, secondaryId]));
-      expect(updatedTitles.find((title) => title.id === primaryId)!.altTitles).not.toContain("地域限定タイトル");
+      expect(updatedTitles.find((title) => title.id === primaryId)!.altTitles.includes("地域限定タイトル")).toBe(preserveEditorial);
       expect(updatedTitles.find((title) => title.id === primaryId)!.altTitles).toContain("地域限定タイトル改訂");
       expect(updatedTitles.filter((title) => title.altTitles.includes("地域限定タイトル")).map((title) => title.id))
-        .toEqual(removeAlias ? [] : [secondaryId]);
+        .toEqual(expectedAliasOwners);
       const persistedPreview = await supertest(app).get(`/api/imports/${importId}`).set("x-test-user", USER_A);
       expect(persistedPreview.status).toBe(200);
       // Database reads do not guarantee the original CSV row order.
@@ -506,17 +529,18 @@ describe("private, idempotent watch-history imports", () => {
         // reusing the fingerprint (and saved matches) of the reviewed import.
         const fresh = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
           source: "generic",
-          fileName: removeAlias ? "removed-regional-name.csv" : "current-regional-owner.csv",
+          fileName: preserveEditorial ? "editorial-regional-name.csv" : removeAlias ? "removed-regional-name.csv" : "current-regional-owner.csv",
           content: "kind,title,type,year\nwatchlist,地域限定タイトル,tv,2020",
         });
         expect(fresh.status).toBe(201);
         freshImportId = fresh.body.id;
         expect(freshImportId).not.toBe(importId);
-        expect(fresh.body.summary).toMatchObject({ matched: removeAlias ? 0 : 1, ambiguous: 0, unmatched: removeAlias ? 1 : 0 });
+        const isUnmatched = removeAlias && !preserveEditorial;
+        expect(fresh.body.summary).toMatchObject({ matched: isUnmatched ? 0 : 1, ambiguous: 0, unmatched: isUnmatched ? 1 : 0 });
         expect(fresh.body.items).toHaveLength(1);
-        const expectedMatch = removeAlias
+        const expectedMatch = isUnmatched
           ? { classification: "unmatched", titleId: null, episodeId: null, selected: false, errorCode: "title_not_found", candidates: [] }
-          : { classification: "matched", titleId: secondaryId, selected: true };
+          : { classification: "matched", titleId: preserveEditorial ? primaryId : secondaryId, selected: true };
         expect(fresh.body.items[0]).toMatchObject({ kind: "watchlist", ...expectedMatch });
 
         const freshPreview = await supertest(app).get(`/api/imports/${freshImportId}`).set("x-test-user", USER_A);
@@ -526,13 +550,13 @@ describe("private, idempotent watch-history imports", () => {
         const confirmed = await supertest(app).post(`/api/imports/${freshImportId}/confirm`).set("x-test-user", USER_A);
         expect(confirmed.status).toBe(200);
         expect(confirmed.body.status).toBe("confirmed");
-        expect(confirmed.body.summary).toMatchObject({ selected: removeAlias ? 0 : 1, applied: removeAlias ? 0 : 1, skipped: removeAlias ? 1 : 0 });
+        expect(confirmed.body.summary).toMatchObject({ selected: isUnmatched ? 0 : 1, applied: isUnmatched ? 0 : 1, skipped: isUnmatched ? 1 : 0 });
         expect(confirmed.body.items[0]).toMatchObject(expectedMatch);
         const tracked = await db.select().from(watchlistTable).where(and(
           eq(watchlistTable.userId, USER_A),
           inArray(watchlistTable.titleId, [primaryId, secondaryId]),
         ));
-        expect(tracked.map((row) => row.titleId)).toEqual(removeAlias ? [] : [secondaryId]);
+        expect(tracked.map((row) => row.titleId)).toEqual(expectedAliasOwners);
         const watched = await db.select().from(watchedEpisodesTable).where(and(
           eq(watchedEpisodesTable.userId, USER_A),
           inArray(watchedEpisodesTable.titleId, [primaryId, secondaryId]),
