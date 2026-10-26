@@ -592,6 +592,55 @@ describe("admin title aliases", () => {
     ]);
   });
 
+  it("treats percent and underscore in alias searches as literal characters", async () => {
+    await db.insert(titleAliasesTable).values([
+      {
+        titleId: createdTitleIds[0],
+        alias: "Wildcard 100% Match",
+        normalizedAlias: "wildcard100match",
+        sourceName: "Editorial test",
+        isEditorial: true,
+      },
+      {
+        titleId: createdTitleIds[1],
+        alias: "Wildcard 100 Percent Match",
+        normalizedAlias: "wildcard100percentmatch",
+        sourceName: "Editorial test",
+        isEditorial: true,
+      },
+      {
+        titleId: createdTitleIds[0],
+        alias: "Wildcard_under_score",
+        normalizedAlias: "wildcardunderscore",
+        sourceName: "Editorial test",
+        isEditorial: true,
+      },
+      {
+        titleId: createdTitleIds[1],
+        alias: "Wildcard under score",
+        normalizedAlias: "wildcardunderscore",
+        sourceName: "Editorial test",
+        isEditorial: true,
+      },
+    ]);
+
+    const percentResponse = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "100%" })
+      .expect(200);
+    const underscoreResponse = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "_under" })
+      .expect(200);
+
+    expect(percentResponse.body.items.map(({ alias }: { alias: string }) => alias)).toEqual([
+      "Wildcard 100% Match",
+    ]);
+    expect(underscoreResponse.body.items.map(({ alias }: { alias: string }) => alias)).toEqual([
+      "Wildcard_under_score",
+    ]);
+  });
+
   it("shows the remaining provider citation after another provider withdraws a shared alias", async () => {
     const tvMazeCitation = {
       sourceName: "TVMaze",

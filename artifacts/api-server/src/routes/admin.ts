@@ -790,6 +790,8 @@ router.get("/content", async (req, res) => {
 const normalizeAlias = (value: string) =>
   value.normalize("NFKD").replace(/\p{M}+/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
+const escapeLikePattern = (value: string) => value.replace(/[\\%_]/gu, "\\$&");
+
 function buildContentAliasWhere(
   q: string,
   ownership?: "provider" | "editorial",
@@ -798,11 +800,15 @@ function buildContentAliasWhere(
   if (requestedId !== undefined) return eq(titleAliasesTable.id, requestedId);
 
   const normalizedQ = normalizeAlias(q);
+  const hasLikeWildcard = /[%_]/u.test(q);
+  const searchPattern = `%${escapeLikePattern(q)}%`;
   const searchFilter = q
     ? or(
-        ilike(titleAliasesTable.alias, `%${q}%`),
-        normalizedQ ? ilike(titleAliasesTable.normalizedAlias, `%${normalizedQ}%`) : undefined,
-        ilike(titlesTable.name, `%${q}%`),
+        ilike(titleAliasesTable.alias, searchPattern),
+        !hasLikeWildcard && normalizedQ
+          ? ilike(titleAliasesTable.normalizedAlias, `%${normalizedQ}%`)
+          : undefined,
+        ilike(titlesTable.name, searchPattern),
       )
     : undefined;
   const ownershipFilter =
