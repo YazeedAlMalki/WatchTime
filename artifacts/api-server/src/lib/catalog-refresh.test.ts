@@ -1384,7 +1384,7 @@ describe("catalog refresh history cleanup failure", () => {
       rejectCleanup = reject;
     });
     runCatalogSyncMock.mockResolvedValueOnce({
-      selected: 0, succeeded: 0, episodes: 0, failures: [],
+      selected: 3, succeeded: 3, episodes: 12, failures: [],
     });
     const deleteSpy = vi.spyOn(db, "delete").mockReturnValue({
       where: () => ({ returning: () => cleanupGate }),
@@ -1400,8 +1400,15 @@ describe("catalog refresh history cleanup failure", () => {
       await vi.waitFor(() => expect(deleteSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
       const [beforeCleanup] = await db.select().from(catalogSyncRunsTable)
         .where(eq(catalogSyncRunsTable.id, runId));
-      expect(beforeCleanup.status).toBe("succeeded");
-      expect(beforeCleanup.finishedAt).toBeInstanceOf(Date);
+      expect(beforeCleanup).toMatchObject({
+        status: "succeeded",
+        error: null,
+        processedItems: 3,
+        succeededItems: 3,
+        failedItems: 0,
+        episodesUpdated: 12,
+        finishedAt: expect.any(Date),
+      });
 
       rejectCleanup(cleanupError);
       await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(
@@ -1410,8 +1417,7 @@ describe("catalog refresh history cleanup failure", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       const [afterCleanup] = await db.select().from(catalogSyncRunsTable)
         .where(eq(catalogSyncRunsTable.id, runId));
-      expect(afterCleanup.status).toBe("succeeded");
-      expect(afterCleanup.error).toBeNull();
+      expect(afterCleanup).toEqual(beforeCleanup);
       expect(unhandledRejections).toEqual([]);
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
