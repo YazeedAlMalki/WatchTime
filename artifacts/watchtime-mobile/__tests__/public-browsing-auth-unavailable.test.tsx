@@ -13,6 +13,8 @@ const mockTrendingEnabled: boolean[] = [];
 const mockPrivateQueryCalls: string[] = [];
 const mockTitleFetch = jest.fn();
 const mockTitleRefetch = jest.fn();
+const mockTitleSafetyFetch = jest.fn();
+const mockTitleSafetyRefetch = jest.fn();
 const mockPublicTitle = {
   id: 771,
   name: 'Public show while sign-in is down',
@@ -30,6 +32,11 @@ const mockTitleQueryState: {
   current: { data: typeof mockPublicTitle | null; isLoading: boolean; isError: boolean };
 } = {
   current: { data: mockPublicTitle, isLoading: false, isError: false },
+};
+const mockTitleSafetyQueryState: {
+  current: { data: unknown; isLoading: boolean; isError: boolean };
+} = {
+  current: { data: null, isLoading: false, isError: false },
 };
 
 jest.mock('expo-router', () => ({
@@ -84,7 +91,13 @@ jest.mock('@workspace/api-client-react', () => ({
   },
   getGetTitleQueryKey: (id: number) => [`/api/titles/${id}`],
   useGetSimilarTitles: () => ({ data: [] }),
-  useGetTitleSafety: () => ({ data: null, isLoading: false }),
+  useGetTitleSafety: (params: unknown) => {
+    mockTitleSafetyFetch(params);
+    return {
+      ...mockTitleSafetyQueryState.current,
+      refetch: mockTitleSafetyRefetch,
+    };
+  },
   useAddToWatchlist: () => ({ mutate: jest.fn(), isPending: false }),
   useRemoveFromWatchlist: () => ({ mutate: jest.fn(), isPending: false }),
   useMarkTitleWatched: () => ({ mutate: jest.fn(), isPending: false }),
@@ -173,8 +186,15 @@ describe('public browsing while authentication is unavailable', () => {
     mockPrivateQueryCalls.length = 0;
     mockTitleFetch.mockClear();
     mockTitleRefetch.mockClear();
+    mockTitleSafetyFetch.mockClear();
+    mockTitleSafetyRefetch.mockClear();
     mockTitleQueryState.current = {
       data: mockPublicTitle,
+      isLoading: false,
+      isError: false,
+    };
+    mockTitleSafetyQueryState.current = {
+      data: null,
       isLoading: false,
       isError: false,
     };
@@ -276,6 +296,40 @@ describe('public browsing while authentication is unavailable', () => {
     expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
     expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+
+  it('keeps public title details visible when safety information fails', async () => {
+    mockTitleQueryState.current = {
+      data: mockPublicTitle,
+      isLoading: false,
+      isError: false,
+    };
+    mockTitleSafetyQueryState.current = {
+      data: null,
+      isLoading: false,
+      isError: true,
+    };
+
+    const detail = await render(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    await waitFor(() => {
+      expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+      expect(
+        detail.getByText('A public synopsis remains available while sign-in is down.'),
+      ).toBeTruthy();
+      expect(detail.getByText("Couldn't load safety info")).toBeTruthy();
+      expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    });
+
+    expect(mockTitleFetch).toHaveBeenCalledWith(771);
+    expect(mockTitleSafetyFetch).toHaveBeenCalledWith({ titleId: 771 });
     expect(mockPrivateQueryCalls).toEqual([]);
     expect(mockRouter.push).not.toHaveBeenCalled();
     expect(mockRouter.replace).not.toHaveBeenCalled();
