@@ -928,6 +928,44 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("schedules exactly one overdue refresh after 1,000 ms when the latest completed run is older than one week", async () => {
+    vi.restoreAllMocks();
+    const overdueCreatedAt = new Date(Date.now() - WEEK_MS - 24 * 60 * 60 * 1000);
+    // Isolate the history read without inserting or deleting shared runs.
+    const captureTimers = () => vi.spyOn(globalThis, "setTimeout").mockClear();
+    let setTimeoutSpy: ReturnType<typeof captureTimers> | undefined;
+    const latestRunRead = vi.fn(async () => {
+      // Let recovery finish on real timers before observing refresh scheduling.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      setTimeoutSpy = captureTimers();
+      return [{ createdAt: overdueCreatedAt }];
+    });
+    const latestRunQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: latestRunRead,
+    };
+    const selectSpy = vi.spyOn(db, "select").mockReturnValueOnce(
+      latestRunQuery as unknown as ReturnType<typeof db.select>,
+    );
+
+    try {
+      await scheduleCatalogRefresh();
+
+      expect(selectSpy).toHaveBeenCalledTimes(1);
+      expect(latestRunQuery.from).toHaveBeenCalledWith(catalogSyncRunsTable);
+      expect(latestRunRead).toHaveBeenCalledExactlyOnceWith(1);
+      expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1_000);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the next scheduled run one week after an immediate completed run", async () => {
     const now = new Date();
     const [run] = await db.insert(catalogSyncRunsTable).values({
