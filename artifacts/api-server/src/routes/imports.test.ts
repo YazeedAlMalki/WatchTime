@@ -212,7 +212,8 @@ describe("private, idempotent watch-history imports", () => {
     { name: "matches a fresh regional import to the current alias owner after a refresh", freshImport: true, removeAlias: false, resolveEpisode: false },
     { name: "leaves a fresh import unmatched after its regional alias is removed without changing an earlier preview", freshImport: true, removeAlias: true, resolveEpisode: false },
     { name: "records only the chosen show's episode and parent history after reviewing a shared regional title", freshImport: false, removeAlias: false, resolveEpisode: true },
-  ])("$name", async ({ freshImport, removeAlias, resolveEpisode }) => {
+    { name: "does not add history twice when a shared-alias episode becomes watched before manual review", freshImport: false, removeAlias: false, resolveEpisode: true, alreadyWatched: true },
+  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false }) => {
     // Catalog-refresh scenarios must not consume the quota of later import tests.
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
@@ -339,6 +340,54 @@ describe("private, idempotent watch-history imports", () => {
           eq(watchedTitlesTable.userId, USER_A),
           inArray(watchedTitlesTable.titleId, regionalTitleIds),
         );
+        if (alreadyWatched) {
+          expect(await db.select().from(watchedEpisodesTable).where(historyFilter)).toEqual([]);
+          expect(await db.select().from(watchedTitlesTable).where(parentHistoryFilter)).toEqual([]);
+          // Another action marks this exact episode watched after preview but
+          // before the user chooses the ambiguous title.
+          const existingEpisodes = await db.insert(watchedEpisodesTable).values({
+            userId: USER_A,
+            titleId: chosenCandidate.titleId,
+            episodeId: chosenEpisode.id,
+          }).returning();
+          const existingParents = await db.insert(watchedTitlesTable).values({
+            userId: USER_A,
+            titleId: chosenCandidate.titleId,
+          }).returning();
+          const resolved = await supertest(app)
+            .patch(`/api/imports/${importId}/items/${item.id}`)
+            .set("x-test-user", USER_A)
+            .send({ titleId: chosenCandidate.titleId });
+          const duplicateMatch = {
+            id: item.id,
+            kind: "watched_episode",
+            classification: "duplicate",
+            titleId: chosenCandidate.titleId,
+            episodeId: chosenEpisode.id,
+            selected: false,
+            errorCode: "already_exists",
+          };
+          expect(resolved.status).toBe(200);
+          expect(resolved.body).toMatchObject(duplicateMatch);
+          expect(await db.select().from(watchedEpisodesTable).where(historyFilter)).toEqual(existingEpisodes);
+          expect(await db.select().from(watchedTitlesTable).where(parentHistoryFilter)).toEqual(existingParents);
+
+          const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
+          expect(confirmed.status).toBe(200);
+          expect(confirmed.body.status).toBe("confirmed");
+          expect(confirmed.body.summary).toMatchObject({ selected: 0, applied: 0, duplicates: 1, skipped: 1 });
+          expect(confirmed.body.items).toHaveLength(1);
+          expect(confirmed.body.items[0]).toMatchObject(duplicateMatch);
+          // Compare complete rows, not only counts: confirmation must preserve
+          // the original episode and parent history, leaving the other show alone.
+          expect(await db.select().from(watchedEpisodesTable).where(historyFilter)).toEqual(existingEpisodes);
+          expect(await db.select().from(watchedTitlesTable).where(parentHistoryFilter)).toEqual(existingParents);
+          expect(await db.select().from(watchlistTable).where(and(
+            eq(watchlistTable.userId, USER_A),
+            inArray(watchlistTable.titleId, regionalTitleIds),
+          ))).toEqual([]);
+          return;
+        }
         const resolved = await supertest(app)
           .patch(`/api/imports/${importId}/items/${item.id}`)
           .set("x-test-user", USER_A)
