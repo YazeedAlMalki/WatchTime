@@ -822,6 +822,84 @@ describe("catalog refresh recovery", () => {
       .where(eq(catalogSyncRunsTable.id, run.id))).toEqual([recovered]);
   });
 
+  it("keeps a concurrent recovery from changing saved failure details and retries pending work after unlock", async () => {
+    // Model two API processes with separate module-local state and one real database.
+    const database = databaseModule;
+    vi.resetModules();
+    vi.doMock("@workspace/db", () => database);
+    const { recoverInterruptedRuns: recoverFromOtherProcess } = await import("./catalog-refresh");
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const [firstRun] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual",
+      status: "running",
+      startedAt: new Date(cutoff.getTime() - 1_000),
+    }).returning();
+    createdRunIds.push(firstRun.id);
+
+    let releaseFirstRecovery!: () => void;
+    const firstRecoveryGate = new Promise<void>((resolve) => { releaseFirstRecovery = resolve; });
+    let signalFirstWrite!: () => void;
+    const firstWrite = new Promise<void>((resolve) => { signalFirstWrite = resolve; });
+    const transaction = db.transaction.bind(db);
+    const transactionSpy = vi.spyOn(db, "transaction").mockImplementationOnce(async (callback, config) => {
+      const result = await transaction(callback, config);
+      // The failed status, error, and timestamp are committed, but this
+      // recovery still owns the catalog lock until its finally block runs.
+      signalFirstWrite();
+      await firstRecoveryGate;
+      return result;
+    });
+    let firstRecovery: Promise<void> | undefined;
+
+    try {
+      firstRecovery = recoverInterruptedRuns(cutoff);
+      await firstWrite;
+      const [savedFailure] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, firstRun.id));
+      expect(savedFailure.status).toBe("failed");
+      expect(savedFailure.error).toBe("Catalog refresh was interrupted by a server restart");
+      expect(savedFailure.finishedAt).toBeInstanceOf(Date);
+
+      // This run becomes pending after the first process has committed its
+      // write. The second process must not sweep it while the first owns the
+      // catalog-wide lock.
+      const [pendingRun] = await db.insert(catalogSyncRunsTable).values({
+        trigger: "manual",
+        status: "running",
+        startedAt: new Date(cutoff.getTime() - 1_000),
+      }).returning();
+      createdRunIds.push(pendingRun.id);
+
+      await expect(recoverFromOtherProcess(cutoff)).resolves.toBeUndefined();
+      const [unchangedFailure, stillPending] = await db.select().from(catalogSyncRunsTable)
+        .where(inArray(catalogSyncRunsTable.id, [firstRun.id, pendingRun.id]))
+        .orderBy(catalogSyncRunsTable.id);
+      expect(unchangedFailure).toEqual(savedFailure);
+      expect(stillPending).toEqual(pendingRun);
+
+      releaseFirstRecovery();
+      await firstRecovery;
+      firstRecovery = undefined;
+
+      // Once the first process releases its lock, the independent module can
+      // recover the work that remained pending.
+      await recoverFromOtherProcess(cutoff);
+      const [recoveredFailure, recoveredPending] = await db.select().from(catalogSyncRunsTable)
+        .where(inArray(catalogSyncRunsTable.id, [firstRun.id, pendingRun.id]))
+        .orderBy(catalogSyncRunsTable.id);
+      expect(recoveredFailure).toEqual(savedFailure);
+      expect(recoveredPending.status).toBe("failed");
+      expect(recoveredPending.error).toBe("Catalog refresh was interrupted by a server restart");
+      expect(recoveredPending.finishedAt).toBeInstanceOf(Date);
+    } finally {
+      releaseFirstRecovery();
+      await firstRecovery?.catch(() => {});
+      transactionSpy.mockRestore();
+      vi.doUnmock("@workspace/db");
+      vi.resetModules();
+    }
+  });
+
   it("does not recover queued work while its local startup write is pending, even when stale", async () => {
     let finishStartup!: () => void;
     const startupGate = new Promise<void>((resolve) => { finishStartup = resolve; });
