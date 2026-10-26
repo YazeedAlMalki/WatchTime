@@ -8,6 +8,8 @@
 
 export * from './adminContentAlias';
 export * from './adminContentAliasCitation';
+export * from './adminContentAliasCollisionCount';
+export * from './adminContentAliasCollisionLookup';
 export * from './adminContentAliasConflict';
 export * from './adminContentAliasConflictCode';
 export * from './adminContentAliasDelete';

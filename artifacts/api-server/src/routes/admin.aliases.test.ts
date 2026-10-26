@@ -438,6 +438,60 @@ describe("admin title aliases", () => {
     expect(editorialResponse.body.items.every((alias: { isEditorial: boolean }) => alias.isEditorial)).toBe(true);
   });
 
+  it("looks up current collision counts independently of alias-list results", async () => {
+    const response = await request(app)
+      .post("/api/admin/content-alias-collisions")
+      .send({
+        aliases: [
+          "Shared Local Title",
+          "SHARED local title",
+          "Unique local alias",
+        ],
+      })
+      .expect(200);
+
+    expect(response.body).toEqual([
+      {
+        alias: "Shared Local Title",
+        collision: true,
+        collisionTitleCount: 2,
+      },
+      {
+        alias: "SHARED local title",
+        collision: true,
+        collisionTitleCount: 2,
+      },
+      {
+        alias: "Unique local alias",
+        collision: false,
+        collisionTitleCount: 1,
+      },
+    ]);
+    await request(app)
+      .post("/api/admin/content-alias-collisions")
+      .send({ aliases: ["   "] })
+      .expect(400);
+
+    await db
+      .update(titleAliasesTable)
+      .set({
+        alias: "Different local title",
+        normalizedAlias: "differentlocaltitle",
+      })
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[1]));
+    const refreshed = await request(app)
+      .post("/api/admin/content-alias-collisions")
+      .send({ aliases: ["Shared Local Title"] })
+      .expect(200);
+    expect(refreshed.body).toEqual([
+      {
+        alias: "Shared Local Title",
+        collision: false,
+        collisionTitleCount: 1,
+      },
+    ]);
+  });
+
   it("finds aliases when accents or punctuation differ without changing their display spelling", async () => {
     const aliases = [
       {

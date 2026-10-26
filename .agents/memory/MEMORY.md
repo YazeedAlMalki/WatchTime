@@ -41,4 +41,5 @@
 - [Timestamp-review SQL ranking](timestamp-review-sql-ranking.md) — SQL filtering must mirror the shared rating resolver's millisecond precision and deterministic tie-breaks.
 - [Scheduler timer isolation](scheduler-timer-test-isolation.md) — database recovery adds timers; existing timer spies can survive fake-timer restoration and contaminate later tests.
 - [Alternate-title query planning](alternate-title-query-planning.md) — correlated alias `EXISTS` can become a catalog-wide scan; verify plans and prefer per-title bounded lookups.
+- [Alias collision freshness](alias-collision-freshness.md) — collision badges need an independent authoritative lookup so alias-list failures do not mask current counts.
 - [Streaming export race tests](streaming-export-race-tests.md) — pause a real HTTP download to coordinate concurrent database mutations between streamed batches.

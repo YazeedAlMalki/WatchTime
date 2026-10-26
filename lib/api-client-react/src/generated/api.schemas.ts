@@ -778,6 +778,23 @@ export interface AdminContentAlias {
   updatedAt: string;
 }
 
+export interface AdminContentAliasCollisionLookup {
+  /**
+     * @minItems 1
+     * @maxItems 100
+     * @items.minLength 1
+     * @items.maxLength 300
+     */
+  aliases: string[];
+}
+
+export interface AdminContentAliasCollisionCount {
+  alias: string;
+  collision: boolean;
+  /** @minimum 1 */
+  collisionTitleCount: number;
+}
+
 export interface AdminContentAliasPage {
   items: AdminContentAlias[];
   /** @minimum 0 */

@@ -1448,6 +1448,30 @@ export const ListAdminContentAliasesResponse = zod.object({
 
 
 /**
+ * @summary Refresh collision counts for alternate-title values
+ */
+export const lookupAdminContentAliasCollisionsBodyAliasesItemMax = 300;
+
+export const lookupAdminContentAliasCollisionsBodyAliasesMax = 100;
+
+
+
+export const LookupAdminContentAliasCollisionsBody = zod.object({
+  "aliases": zod.array(zod.string().min(1).max(lookupAdminContentAliasCollisionsBodyAliasesItemMax)).min(1).max(lookupAdminContentAliasCollisionsBodyAliasesMax)
+})
+
+
+
+
+export const LookupAdminContentAliasCollisionsResponseItem = zod.object({
+  "alias": zod.string(),
+  "collision": zod.boolean(),
+  "collisionTitleCount": zod.int().min(1)
+})
+export const LookupAdminContentAliasCollisionsResponse = zod.array(LookupAdminContentAliasCollisionsResponseItem)
+
+
+/**
  * @summary Export all matching alternate-title review rows as CSV
  */
 export const ExportAdminContentAliasesQueryParams = zod.object({

@@ -1055,6 +1055,30 @@ paths:
                 $ref: "#/components/schemas/AdminContentAliasPage"
         "403":
           description: Forbidden
+  /admin/content-alias-collisions:
+    post:
+      operationId: lookupAdminContentAliasCollisions
+      tags: [admin]
+      summary: Refresh collision counts for alternate-title values
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminContentAliasCollisionLookup"
+      responses:
+        "200":
+          description: Current collision counts for requested alternate-title values
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminContentAliasCollisionCount"
+        "400":
+          description: Invalid collision lookup request
+        "403":
+          description: Forbidden
   /admin/content-aliases/export:
     get:
       operationId: exportAdminContentAliases
@@ -1880,6 +1904,25 @@ components:
         collision: { type: boolean }
         collisionTitleCount: { type: integer }
         updatedAt: { type: string, format: date-time }
+    AdminContentAliasCollisionLookup:
+      type: object
+      required: [aliases]
+      properties:
+        aliases:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 300
+    AdminContentAliasCollisionCount:
+      type: object
+      required: [alias, collision, collisionTitleCount]
+      properties:
+        alias: { type: string }
+        collision: { type: boolean }
+        collisionTitleCount: { type: integer, minimum: 1 }
     AdminContentAliasCitation:
       type: object
       required: [provider, sourceName, sourceUrl]

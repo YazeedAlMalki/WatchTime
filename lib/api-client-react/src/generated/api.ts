@@ -20,6 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AdminContentAliasCollisionCount,
+  AdminContentAliasCollisionLookup,
   AdminContentAliasDelete,
   AdminContentAliasPage,
   AdminContentAliasRecord,
@@ -3710,6 +3712,77 @@ export function useListAdminContentAliases<TData = Awaited<ReturnType<typeof lis
 
 
 
+
+export const getLookupAdminContentAliasCollisionsUrl = () => {
+
+
+
+
+  return `/api/admin/content-alias-collisions`
+}
+
+/**
+ * @summary Refresh collision counts for alternate-title values
+ */
+export const lookupAdminContentAliasCollisions = async (adminContentAliasCollisionLookup: AdminContentAliasCollisionLookup, options?: Parameters<typeof customFetch>[1]): Promise<AdminContentAliasCollisionCount[]> => {
+
+  return customFetch<AdminContentAliasCollisionCount[]>(getLookupAdminContentAliasCollisionsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminContentAliasCollisionLookup)
+  }
+);}
+
+
+
+
+
+export const getLookupAdminContentAliasCollisionsMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof lookupAdminContentAliasCollisions>>, TError,{data: BodyType<AdminContentAliasCollisionLookup>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof lookupAdminContentAliasCollisions>>, TError,{data: BodyType<AdminContentAliasCollisionLookup>}, TContext> => {
+
+const mutationKey = ['lookupAdminContentAliasCollisions'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof lookupAdminContentAliasCollisions>>, {data: BodyType<AdminContentAliasCollisionLookup>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  lookupAdminContentAliasCollisions(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LookupAdminContentAliasCollisionsMutationResult = NonNullable<Awaited<ReturnType<typeof lookupAdminContentAliasCollisions>>>
+    export type LookupAdminContentAliasCollisionsMutationBody = BodyType<AdminContentAliasCollisionLookup>
+    export type LookupAdminContentAliasCollisionsMutationError = ErrorType<void>
+
+    /**
+ * @summary Refresh collision counts for alternate-title values
+ */
+export const useLookupAdminContentAliasCollisions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof lookupAdminContentAliasCollisions>>, TError,{data: BodyType<AdminContentAliasCollisionLookup>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof lookupAdminContentAliasCollisions>>,
+        TError,
+        {data: BodyType<AdminContentAliasCollisionLookup>},
+        TContext
+      > => {
+      return useMutation(getLookupAdminContentAliasCollisionsMutationOptions(options));
+    }
 
 export const getExportAdminContentAliasesUrl = (params?: ExportAdminContentAliasesParams,) => {
   const normalizedParams = new URLSearchParams();

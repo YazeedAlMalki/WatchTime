@@ -33,6 +33,8 @@ import {
   ExportAdminContentAliasesQueryParams,
   ListAdminContentRefreshBatchHistoryResponse,
   SearchAdminContentQueryParams,
+  LookupAdminContentAliasCollisionsBody,
+  LookupAdminContentAliasCollisionsResponse,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middlewares/auth";
 import {
@@ -799,6 +801,30 @@ async function getAliasCollisionCounts(normalizedAliases: string[], queryDb: any
   }
   return new Map(collisionRows.map((row) => [row.normalizedAlias, row.titleCount]));
 }
+
+router.post("/content-alias-collisions", async (req, res): Promise<void> => {
+  const parsed = LookupAdminContentAliasCollisionsBody.safeParse(req.body);
+  if (!parsed.success || parsed.data.aliases.some((alias) => !normalizeAlias(alias))) {
+    res.status(400).json({ error: "Invalid alternate-title collision lookup" });
+    return;
+  }
+
+  const collisionCounts = await getAliasCollisionCounts([
+    ...new Set(parsed.data.aliases.map(normalizeAlias)),
+  ]);
+  res.json(
+    LookupAdminContentAliasCollisionsResponse.parse(
+      parsed.data.aliases.map((alias) => {
+        const collisionTitleCount = collisionCounts.get(normalizeAlias(alias)) ?? 1;
+        return {
+          alias,
+          collision: collisionTitleCount > 1,
+          collisionTitleCount,
+        };
+      }),
+    ),
+  );
+});
 
 const ALIAS_REVIEW_SNAPSHOT_TTL_MS = 15 * 60 * 1000;
 const ALIAS_REVIEW_SNAPSHOT_LIMIT = 20;

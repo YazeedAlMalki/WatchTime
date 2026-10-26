@@ -33,9 +33,11 @@ import {
   getListCatalogRefreshesQueryKey,
   getGetAdminContentRefreshBatchQueryKey,
   getListAdminContentRefreshBatchHistoryQueryKey,
+  lookupAdminContentAliasCollisions,
   type AdminContentRefreshBatch,
   type AdminContentRefreshBatchHistoryEntry,
   type AdminContentAlias,
+  type AdminContentAliasCollisionCount,
   type AdminContentAliasPage,
   type AdminContentAliasRecord,
   type ContentMapping,
@@ -96,6 +98,8 @@ import { useToast } from "@/hooks/use-toast";
 
 const ALIAS_REFRESH_RECOVERY_TIMEOUT_MS = 30_000;
 const MODERATION_QUEUE_PAGE_SIZE = 50;
+const ADMIN_CONTENT_ALIAS_COLLISION_QUERY_KEY =
+  "/api/admin/content-alias-collisions";
 
 export default function AdminPage() {
   const [, setLocation] = useLocation();
@@ -2302,6 +2306,9 @@ export function AliasReview({
     aliasTotal -
       (aliases?.filter((alias) => removedAliasIds.has(alias.id)).length ?? 0),
   );
+  const collisionLookupAliases = Array.from(
+    new Set(visibleAliases?.map((alias) => alias.alias) ?? []),
+  );
   const copyAliasLink = async (alias: AdminContentAlias) => {
     if (!reviewUrl) return;
     try {
@@ -2389,7 +2396,25 @@ export function AliasReview({
   const [conflictAlias, setConflictAlias] = useState<AdminContentAlias | null>(
     null,
   );
-  type ReviewRefreshRequest = "aliases" | "catalog";
+  const [collisionCountOverrides, setCollisionCountOverrides] = useState<
+    Map<string, AdminContentAliasCollisionCount>
+  >(() => new Map());
+  React.useEffect(() => {
+    setCollisionCountOverrides((current) =>
+      current.size > 0 ? new Map() : current,
+    );
+  }, [aliases]);
+  const aliasesWithCurrentCollisionCounts = visibleAliases?.map((alias) => {
+    const collisionCount = collisionCountOverrides.get(alias.alias);
+    return collisionCount
+      ? {
+          ...alias,
+          collision: collisionCount.collision,
+          collisionTitleCount: collisionCount.collisionTitleCount,
+        }
+      : alias;
+  });
+  type ReviewRefreshRequest = "aliases" | "catalog" | "collisions";
   const [refreshError, setRefreshError] = useState<
     ReviewRefreshRequest[] | null
   >(null);
@@ -2402,7 +2427,9 @@ export function AliasReview({
     const requestNames = failedRequests.map((request) =>
       request === "aliases"
         ? "alternate-title list (alias records)"
-        : "catalog search (collision results)",
+        : request === "catalog"
+          ? "catalog search (collision results)"
+          : "alternate-title collision counts",
     );
     return `Failed refresh ${
       requestNames.length === 1 ? "request" : "requests"
@@ -2413,8 +2440,10 @@ export function AliasReview({
     failedRequests: ReviewRefreshRequest[],
   ) => {
     const aliasesFailed = failedRequests.includes("aliases");
-    const catalogFailed = failedRequests.includes("catalog");
-    if (aliasesFailed && catalogFailed) {
+    const collisionResultsFailed =
+      failedRequests.includes("catalog") ||
+      failedRequests.includes("collisions");
+    if (aliasesFailed && collisionResultsFailed) {
       return "The alternate-title list and collision results may be stale.";
     }
     if (aliasesFailed) {
@@ -2424,16 +2453,20 @@ export function AliasReview({
   };
 
   const refreshAliasViews = async (
-    requests: ReviewRefreshRequest[] = ["aliases", "catalog"],
+    requests: ReviewRefreshRequest[] = ["aliases", "catalog", "collisions"],
+    aliasesForCollisionLookup: string[] = collisionLookupAliases,
   ): Promise<ReviewRefreshRequest[] | null> => {
     const attempt = ++aliasRefreshAttempt.current;
     setIsAliasRefreshTimedOut(false);
     setIsRefreshingAliasViews(true);
+    if (requests.includes("catalog") || requests.includes("collisions")) {
+      setIsCollisionResultsStale(true);
+    }
     const recoveryTimer = window.setTimeout(() => {
       if (aliasRefreshAttempt.current !== attempt) return;
       setIsAliasRefreshTimedOut(true);
       setRefreshError(requests);
-      if (requests.includes("catalog")) {
+      if (requests.includes("catalog") || requests.includes("collisions")) {
         setIsCollisionResultsStale(true);
       }
       setIsRefreshingAliasViews(false);
@@ -2441,8 +2474,15 @@ export function AliasReview({
     try {
       const results = await Promise.allSettled(
         requests.map((request) =>
-          Promise.resolve().then(() =>
-            qc.invalidateQueries(
+          Promise.resolve().then(async () => {
+            if (request === "collisions") {
+              return aliasesForCollisionLookup.length === 0
+                ? []
+                : await lookupAdminContentAliasCollisions({
+                    aliases: aliasesForCollisionLookup,
+                  });
+            }
+            return await qc.invalidateQueries(
               {
                 queryKey:
                   request === "aliases"
@@ -2450,8 +2490,8 @@ export function AliasReview({
                     : getSearchAdminContentQueryKey(),
               },
               { throwOnError: true },
-            ),
-          ),
+            );
+          }),
         ),
       );
       const failedRequests = requests.filter(
@@ -2459,8 +2499,25 @@ export function AliasReview({
       );
       if (aliasRefreshAttempt.current !== attempt) return null;
       setRefreshError(failedRequests.length > 0 ? failedRequests : null);
-      if (requests.includes("catalog")) {
-        setIsCollisionResultsStale(failedRequests.includes("catalog"));
+      const collisionRequestIndex = requests.indexOf("collisions");
+      if (collisionRequestIndex >= 0) {
+        const collisionResult = results[collisionRequestIndex];
+        if (
+          collisionResult.status === "fulfilled" &&
+          Array.isArray(collisionResult.value)
+        ) {
+          setCollisionCountOverrides(
+            new Map(
+              collisionResult.value.map((entry) => [entry.alias, entry]),
+            ),
+          );
+        }
+      }
+      if (requests.includes("catalog") || requests.includes("collisions")) {
+        setIsCollisionResultsStale(
+          failedRequests.includes("catalog") ||
+            failedRequests.includes("collisions"),
+        );
       }
       setIsAliasRefreshTimedOut(false);
       if (
@@ -2574,11 +2631,24 @@ export function AliasReview({
           setConflictAlias((current) =>
             current?.id === editingId ? null : current,
           );
+          const savedAlias = savedRecord?.alias ?? alias;
+          const aliasesForCollisionLookup = Array.from(
+            new Set(
+              (visibleAliases ?? []).map((visibleAlias) =>
+                visibleAlias.id === editingId
+                  ? savedAlias
+                  : visibleAlias.alias,
+              ),
+            ),
+          );
+          if (!aliasesForCollisionLookup.includes(savedAlias)) {
+            aliasesForCollisionLookup.push(savedAlias);
+          }
           if (editedAlias) {
             setSavedAliasPreviewState({
               alias: {
                 ...editedAlias,
-                alias: savedRecord?.alias ?? alias,
+                alias: savedAlias,
                 language: savedRecord?.language ?? (draft.language.trim() || null),
                 sourceName: savedRecord?.sourceName ?? editedAlias.sourceName,
                 sourceUrl:
@@ -2591,7 +2661,10 @@ export function AliasReview({
               refreshed: false,
             });
           }
-          const failedRequests = await refreshAliasViews();
+          const failedRequests = await refreshAliasViews(
+            undefined,
+            aliasesForCollisionLookup,
+          );
           if (!failedRequests) return;
           toast(
             failedRequests.length === 0
@@ -2679,7 +2752,17 @@ export function AliasReview({
           setConflictAlias((current) =>
             current?.id === alias.id ? null : current,
           );
-          const failedRequests = await refreshAliasViews();
+          const aliasesForCollisionLookup = Array.from(
+            new Set(
+              (visibleAliases ?? [])
+                .filter((visibleAlias) => visibleAlias.id !== alias.id)
+                .map((visibleAlias) => visibleAlias.alias),
+            ),
+          );
+          const failedRequests = await refreshAliasViews(
+            undefined,
+            aliasesForCollisionLookup,
+          );
           if (!failedRequests) return;
           toast(
             failedRequests.length === 0
@@ -3093,7 +3176,7 @@ export function AliasReview({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {visibleAliases.map((alias) => (
+              {aliasesWithCurrentCollisionCounts?.map((alias) => (
                 <tr
                   key={alias.id}
                   ref={linkedAliasId === alias.id ? linkedRowRef : undefined}

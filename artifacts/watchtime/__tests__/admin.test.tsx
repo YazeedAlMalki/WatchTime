@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     invalidateQueries: vi.fn().mockResolvedValue(undefined),
     setQueriesData: vi.fn(),
   },
+  lookupAdminContentAliasCollisions: vi.fn().mockResolvedValue([]),
   toast: vi.fn(),
   updateMutation: {
     isPending: false,
@@ -40,6 +41,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
 vi.mock("@workspace/api-client-react", () => ({
   useUpdateAdminContentAlias: () => mocks.updateMutation,
   useDeleteAdminContentAlias: () => mocks.deleteMutation,
+  lookupAdminContentAliasCollisions: mocks.lookupAdminContentAliasCollisions,
   getListAdminContentAliasesQueryKey: () => ["/api/admin/content-aliases"],
   getSearchAdminContentQueryKey: () => ["/api/admin/content"],
   useListAdminReports: (params: unknown) =>
@@ -299,6 +301,8 @@ describe("admin alternate-title review", () => {
     mocks.queryClient.invalidateQueries.mockReset();
     mocks.queryClient.invalidateQueries.mockResolvedValue(undefined);
     mocks.queryClient.setQueriesData.mockReset();
+    mocks.lookupAdminContentAliasCollisions.mockReset();
+    mocks.lookupAdminContentAliasCollisions.mockResolvedValue([]);
     mocks.toast.mockClear();
     mocks.updateMutation.mutate.mockReset();
     mocks.deleteMutation.mutate.mockReset();
@@ -2558,6 +2562,15 @@ describe("admin alternate-title review", () => {
   ])(
     "identifies $scenario refresh failures and retries the current review",
     async ({ failedQueryKeys, expectedFailure, unaffectedData }) => {
+      mocks.lookupAdminContentAliasCollisions.mockImplementation(
+        async ({ aliases }: { aliases: string[] }) =>
+          aliases.map((alias) => ({
+            alias,
+            collision: alias !== "Corrected Local Title",
+            collisionTitleCount:
+              alias === "Corrected Local Title" ? 1 : 2,
+          })),
+      );
       const failedQueries = new Set(failedQueryKeys);
       const rejectedQueries = new Set<string>();
       mocks.queryClient.invalidateQueries.mockImplementation(
@@ -2592,7 +2605,28 @@ describe("admin alternate-title review", () => {
       if (unaffectedData) {
         expect(container.textContent).not.toContain(unaffectedData);
       }
-      expect(container.textContent).toContain("2 titles");
+      expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenCalledWith({
+        aliases: ["Corrected Local Title"],
+      });
+      const collisionCell = container.querySelector(
+        "tbody tr td:nth-child(5)",
+      );
+      if (failedQueryKeys.includes("/api/admin/content-aliases")) {
+        expect(
+          container.querySelector("tbody tr td:first-child")?.textContent,
+        ).toContain("Corrected Local Title");
+        expect(collisionCell?.textContent).toContain("Unique");
+      } else {
+        expect(collisionCell?.textContent).toContain("2 titles");
+      }
+      const staleCollisionBadge = container.querySelector(
+        '[aria-label^="Collision results may be stale:"]',
+      );
+      if (failedQueryKeys.includes("/api/admin/content")) {
+        expect(staleCollisionBadge).not.toBeNull();
+      } else {
+        expect(staleCollisionBadge).toBeNull();
+      }
       expect(mocks.toast).toHaveBeenCalledWith(
         expect.objectContaining({
           title: "Alternate title updated, but refresh failed",
