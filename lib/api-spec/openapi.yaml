@@ -116,6 +116,38 @@ paths:
           description: Invalid preference
         "401":
           description: Not authenticated
+  /me/mood-discovery:
+    get:
+      operationId: getMyMoodDiscoveryState
+      tags: [tracking]
+      summary: Current user's saved mood discovery state
+      responses:
+        "200":
+          description: Saved picks, personal mood discovery history, and the current write revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoodDiscoveryStateResponse"
+        "401": { description: Not authenticated }
+    put:
+      operationId: updateMyMoodDiscoveryState
+      tags: [tracking]
+      summary: Replace current user's mood discovery state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoodDiscoveryStateUpdate"
+      responses:
+        "200":
+          description: Updated state or the latest state when the supplied revision is stale
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoodDiscoveryStateWriteResponse"
+        "400": { description: Invalid mood discovery state }
+        "401": { description: Not authenticated }
   /titles:
     get:
       operationId: listTitles
@@ -1441,6 +1473,72 @@ components:
       properties:
         preferredRatingRegion:
           $ref: "#/components/schemas/RatingRegion"
+    MoodDiscoveryViewedState:
+      type: object
+      required: [lastViewedAt, watched, feedback]
+      properties:
+        lastViewedAt: { type: integer, minimum: 0 }
+        watched: { type: boolean }
+        rating: { type: number, minimum: 0, maximum: 5 }
+        feedback:
+          type: array
+          items: { type: string, maxLength: 80 }
+    MoodDiscoverySavedContext:
+      type: object
+      required: [preset, savedAt, filters]
+      properties:
+        preset: { type: ["string", "null"], maxLength: 100 }
+        savedAt: { type: integer, minimum: 0 }
+        filters:
+          type: object
+          additionalProperties: true
+    MoodDiscoveryState:
+      type: object
+      required: [saved, savedContext, dismissed, viewed, feedback]
+      properties:
+        saved:
+          type: array
+          maxItems: 2000
+          items: { type: string, maxLength: 120 }
+        savedContext:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/MoodDiscoverySavedContext"
+        dismissed:
+          type: array
+          maxItems: 2000
+          items: { type: string, maxLength: 120 }
+        viewed:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/MoodDiscoveryViewedState"
+        feedback:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string, maxLength: 80 }
+    MoodDiscoveryStateUpdate:
+      type: object
+      required: [expectedRevision, state]
+      additionalProperties: false
+      properties:
+        expectedRevision: { type: integer, minimum: 0 }
+        state:
+          $ref: "#/components/schemas/MoodDiscoveryState"
+    MoodDiscoveryStateResponse:
+      type: object
+      required: [state, revision]
+      properties:
+        state:
+          $ref: "#/components/schemas/MoodDiscoveryState"
+        revision: { type: integer, minimum: 0 }
+    MoodDiscoveryStateWriteResponse:
+      allOf:
+        - $ref: "#/components/schemas/MoodDiscoveryStateResponse"
+        - type: object
+          required: [accepted]
+          properties:
+            accepted: { type: boolean }
     Title:
       type: object
       required: [id, type, name, posterUrl, year, genres]

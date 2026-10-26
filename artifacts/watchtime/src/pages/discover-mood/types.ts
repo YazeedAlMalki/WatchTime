@@ -112,4 +112,8 @@ export interface StoreState {
   viewed: Record<string, Viewed>;
   lang: "en" | "ar";
   storageError: boolean;
+  cloudInitialized: boolean;
+  cloudSyncDirty: boolean;
+  cloudRevision: number;
+  cloudBaseSnapshot: string | null;
 }

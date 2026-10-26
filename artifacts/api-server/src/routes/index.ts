@@ -7,6 +7,7 @@ import adminRouter from "./admin";
 import importsRouter from "./imports";
 import devAuthRouter from "./dev-auth";
 import startupDiagnosticsRouter from "./startup-diagnostics";
+import moodDiscoveryRouter from "./mood-discovery";
 
 const router: IRouter = Router();
 
@@ -17,6 +18,7 @@ router.use(trackingRouter);
 router.use(safetyRouter);
 router.use(miscRouter);
 router.use(importsRouter);
+router.use(moodDiscoveryRouter);
 router.use("/admin", adminRouter);
 
 export default router;

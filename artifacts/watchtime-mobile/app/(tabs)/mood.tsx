@@ -20,6 +20,7 @@ import { MOVIES, MOVIE_BY_ID, PRESETS } from '@/lib/discover-mood/data';
 import { buildReasons, classify, countFailures } from '@/lib/discover-mood/engine';
 import { getT } from '@/lib/discover-mood/i18n';
 import { actions, useStore } from '@/lib/discover-mood/store';
+import { useMoodDiscoverySync } from '@/lib/discover-mood/use-sync';
 import {
   AGE_RANK,
   CONTENT_KEYS,
@@ -282,6 +283,7 @@ export default function MoodScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const state = useStore();
+  useMoodDiscoverySync(state);
   const { t, dir } = getT(state.lang);
   const rtl = dir === 'rtl';
   const [stage, setStage] = useState<Stage | null>(null);

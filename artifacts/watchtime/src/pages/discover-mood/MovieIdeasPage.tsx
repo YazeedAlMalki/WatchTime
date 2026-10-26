@@ -10,6 +10,7 @@ import { MOVIES, MOVIE_BY_ID } from "./data";
 import { classify, comfortList } from "./engine";
 import { useT } from "./i18n";
 import { actions, useStore } from "./store";
+import { useMoodDiscoverySync } from "./use-sync";
 import type { Movie } from "./types";
 
 const TABS = ["saved", "recent", "near", "comfort", "dismissed"] as const;
@@ -17,6 +18,7 @@ const TABS = ["saved", "recent", "near", "comfort", "dismissed"] as const;
 export default function MovieIdeasPage() {
   const { t } = useT();
   const s = useStore();
+  useMoodDiscoverySync(s);
   const params = new URLSearchParams(window.location.search);
   const requestedTab = params.get("tab") ?? "saved";
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]>(

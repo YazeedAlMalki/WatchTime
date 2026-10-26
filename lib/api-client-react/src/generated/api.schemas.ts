@@ -227,6 +227,70 @@ export interface UserPreferencesUpdate {
   preferredRatingRegion: RatingRegion;
 }
 
+export interface MoodDiscoveryViewedState {
+  /** @minimum 0 */
+  lastViewedAt: number;
+  watched: boolean;
+  /**
+     * @minimum 0
+     * @maximum 5
+     */
+  rating?: number;
+  /** @items.maxLength 80 */
+  feedback: string[];
+}
+
+export type MoodDiscoverySavedContextFilters = { [key: string]: unknown };
+
+export interface MoodDiscoverySavedContext {
+  /**
+     * @maxLength 100
+     * @nullable
+     */
+  preset: string | null;
+  /** @minimum 0 */
+  savedAt: number;
+  filters: MoodDiscoverySavedContextFilters;
+}
+
+export type MoodDiscoveryStateSavedContext = {[key: string]: MoodDiscoverySavedContext};
+
+export type MoodDiscoveryStateViewed = {[key: string]: MoodDiscoveryViewedState};
+
+export type MoodDiscoveryStateFeedback = {[key: string]: string[]};
+
+export interface MoodDiscoveryState {
+  /**
+     * @maxItems 2000
+     * @items.maxLength 120
+     */
+  saved: string[];
+  savedContext: MoodDiscoveryStateSavedContext;
+  /**
+     * @maxItems 2000
+     * @items.maxLength 120
+     */
+  dismissed: string[];
+  viewed: MoodDiscoveryStateViewed;
+  feedback: MoodDiscoveryStateFeedback;
+}
+
+export interface MoodDiscoveryStateUpdate {
+  /** @minimum 0 */
+  expectedRevision: number;
+  state: MoodDiscoveryState;
+}
+
+export interface MoodDiscoveryStateResponse {
+  state: MoodDiscoveryState;
+  /** @minimum 0 */
+  revision: number;
+}
+
+export type MoodDiscoveryStateWriteResponse = MoodDiscoveryStateResponse & {
+  accepted: boolean;
+};
+
 export type TitleType = typeof TitleType[keyof typeof TitleType];
 
 

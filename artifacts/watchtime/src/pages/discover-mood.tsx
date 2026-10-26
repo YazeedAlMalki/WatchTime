@@ -11,6 +11,7 @@ import { MOVIES, PRESETS } from "./discover-mood/data";
 import { buildReasons, classify, countFailures } from "./discover-mood/engine";
 import { useT } from "./discover-mood/i18n";
 import { actions, useStore } from "./discover-mood/store";
+import { useMoodDiscoverySync } from "./discover-mood/use-sync";
 import { CONTENT_KEYS, MOOD_KEYS, type ContentKey } from "./discover-mood/types";
 
 const PAGE = 8;
@@ -19,6 +20,7 @@ type Stage = "start" | "tune" | "results";
 export default function DiscoverMoodPage() {
   const { t } = useT();
   const state = useStore();
+  useMoodDiscoverySync(state);
   const [stage, setStage] = useState<Stage>(state.session.started ? "results" : "start");
   const [openId, setOpenId] = useState<string | null>(() => new URLSearchParams(window.location.search).get("movie"));
   const [limit, setLimit] = useState(PAGE);

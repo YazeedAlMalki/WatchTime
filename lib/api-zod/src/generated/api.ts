@@ -71,6 +71,151 @@ export const UpdateMeResponse = zod.object({
 
 
 /**
+ * @summary Current user's saved mood discovery state
+ */
+export const getMyMoodDiscoveryStateResponseStateSavedItemMax = 120;
+
+export const getMyMoodDiscoveryStateResponseStateSavedMax = 2000;
+
+export const getMyMoodDiscoveryStateResponseStateSavedContextPresetMax = 100;
+
+export const getMyMoodDiscoveryStateResponseStateSavedContextSavedAtMin = 0;
+
+export const getMyMoodDiscoveryStateResponseStateDismissedItemMax = 120;
+
+export const getMyMoodDiscoveryStateResponseStateDismissedMax = 2000;
+
+export const getMyMoodDiscoveryStateResponseStateViewedLastViewedAtMin = 0;
+
+export const getMyMoodDiscoveryStateResponseStateViewedRatingMin = 0;
+export const getMyMoodDiscoveryStateResponseStateViewedRatingMax = 5;
+
+export const getMyMoodDiscoveryStateResponseStateViewedFeedbackItemMax = 80;
+
+export const getMyMoodDiscoveryStateResponseStateFeedbackItemMax = 80;
+
+export const getMyMoodDiscoveryStateResponseRevisionMin = 0;
+
+
+
+export const GetMyMoodDiscoveryStateResponse = zod.object({
+  "state": zod.object({
+  "saved": zod.array(zod.string().max(getMyMoodDiscoveryStateResponseStateSavedItemMax)).max(getMyMoodDiscoveryStateResponseStateSavedMax),
+  "savedContext": zod.record(zod.string(), zod.object({
+  "preset": zod.string().max(getMyMoodDiscoveryStateResponseStateSavedContextPresetMax).nullable(),
+  "savedAt": zod.int().min(getMyMoodDiscoveryStateResponseStateSavedContextSavedAtMin),
+  "filters": zod.record(zod.string(), zod.unknown())
+})),
+  "dismissed": zod.array(zod.string().max(getMyMoodDiscoveryStateResponseStateDismissedItemMax)).max(getMyMoodDiscoveryStateResponseStateDismissedMax),
+  "viewed": zod.record(zod.string(), zod.object({
+  "lastViewedAt": zod.int().min(getMyMoodDiscoveryStateResponseStateViewedLastViewedAtMin),
+  "watched": zod.boolean(),
+  "rating": zod.number().min(getMyMoodDiscoveryStateResponseStateViewedRatingMin).max(getMyMoodDiscoveryStateResponseStateViewedRatingMax).optional(),
+  "feedback": zod.array(zod.string().max(getMyMoodDiscoveryStateResponseStateViewedFeedbackItemMax))
+})),
+  "feedback": zod.record(zod.string(), zod.array(zod.string().max(getMyMoodDiscoveryStateResponseStateFeedbackItemMax)))
+}),
+  "revision": zod.int().min(getMyMoodDiscoveryStateResponseRevisionMin)
+})
+
+
+/**
+ * @summary Replace current user's mood discovery state
+ */
+export const updateMyMoodDiscoveryStateBodyExpectedRevisionMin = 0;
+
+export const updateMyMoodDiscoveryStateBodyStateSavedItemMax = 120;
+
+export const updateMyMoodDiscoveryStateBodyStateSavedMax = 2000;
+
+export const updateMyMoodDiscoveryStateBodyStateSavedContextPresetMax = 100;
+
+export const updateMyMoodDiscoveryStateBodyStateSavedContextSavedAtMin = 0;
+
+export const updateMyMoodDiscoveryStateBodyStateDismissedItemMax = 120;
+
+export const updateMyMoodDiscoveryStateBodyStateDismissedMax = 2000;
+
+export const updateMyMoodDiscoveryStateBodyStateViewedLastViewedAtMin = 0;
+
+export const updateMyMoodDiscoveryStateBodyStateViewedRatingMin = 0;
+export const updateMyMoodDiscoveryStateBodyStateViewedRatingMax = 5;
+
+export const updateMyMoodDiscoveryStateBodyStateViewedFeedbackItemMax = 80;
+
+export const updateMyMoodDiscoveryStateBodyStateFeedbackItemMax = 80;
+
+
+
+export const UpdateMyMoodDiscoveryStateBody = zod.object({
+  "expectedRevision": zod.int().min(updateMyMoodDiscoveryStateBodyExpectedRevisionMin),
+  "state": zod.object({
+  "saved": zod.array(zod.string().max(updateMyMoodDiscoveryStateBodyStateSavedItemMax)).max(updateMyMoodDiscoveryStateBodyStateSavedMax),
+  "savedContext": zod.record(zod.string(), zod.object({
+  "preset": zod.string().max(updateMyMoodDiscoveryStateBodyStateSavedContextPresetMax).nullable(),
+  "savedAt": zod.int().min(updateMyMoodDiscoveryStateBodyStateSavedContextSavedAtMin),
+  "filters": zod.record(zod.string(), zod.unknown())
+})),
+  "dismissed": zod.array(zod.string().max(updateMyMoodDiscoveryStateBodyStateDismissedItemMax)).max(updateMyMoodDiscoveryStateBodyStateDismissedMax),
+  "viewed": zod.record(zod.string(), zod.object({
+  "lastViewedAt": zod.int().min(updateMyMoodDiscoveryStateBodyStateViewedLastViewedAtMin),
+  "watched": zod.boolean(),
+  "rating": zod.number().min(updateMyMoodDiscoveryStateBodyStateViewedRatingMin).max(updateMyMoodDiscoveryStateBodyStateViewedRatingMax).optional(),
+  "feedback": zod.array(zod.string().max(updateMyMoodDiscoveryStateBodyStateViewedFeedbackItemMax))
+})),
+  "feedback": zod.record(zod.string(), zod.array(zod.string().max(updateMyMoodDiscoveryStateBodyStateFeedbackItemMax)))
+})
+})
+
+export const updateMyMoodDiscoveryStateResponseOneStateSavedItemMax = 120;
+
+export const updateMyMoodDiscoveryStateResponseOneStateSavedMax = 2000;
+
+export const updateMyMoodDiscoveryStateResponseOneStateSavedContextPresetMax = 100;
+
+export const updateMyMoodDiscoveryStateResponseOneStateSavedContextSavedAtMin = 0;
+
+export const updateMyMoodDiscoveryStateResponseOneStateDismissedItemMax = 120;
+
+export const updateMyMoodDiscoveryStateResponseOneStateDismissedMax = 2000;
+
+export const updateMyMoodDiscoveryStateResponseOneStateViewedLastViewedAtMin = 0;
+
+export const updateMyMoodDiscoveryStateResponseOneStateViewedRatingMin = 0;
+export const updateMyMoodDiscoveryStateResponseOneStateViewedRatingMax = 5;
+
+export const updateMyMoodDiscoveryStateResponseOneStateViewedFeedbackItemMax = 80;
+
+export const updateMyMoodDiscoveryStateResponseOneStateFeedbackItemMax = 80;
+
+export const updateMyMoodDiscoveryStateResponseOneRevisionMin = 0;
+
+
+
+export const UpdateMyMoodDiscoveryStateResponse = zod.object({
+  "state": zod.object({
+  "saved": zod.array(zod.string().max(updateMyMoodDiscoveryStateResponseOneStateSavedItemMax)).max(updateMyMoodDiscoveryStateResponseOneStateSavedMax),
+  "savedContext": zod.record(zod.string(), zod.object({
+  "preset": zod.string().max(updateMyMoodDiscoveryStateResponseOneStateSavedContextPresetMax).nullable(),
+  "savedAt": zod.int().min(updateMyMoodDiscoveryStateResponseOneStateSavedContextSavedAtMin),
+  "filters": zod.record(zod.string(), zod.unknown())
+})),
+  "dismissed": zod.array(zod.string().max(updateMyMoodDiscoveryStateResponseOneStateDismissedItemMax)).max(updateMyMoodDiscoveryStateResponseOneStateDismissedMax),
+  "viewed": zod.record(zod.string(), zod.object({
+  "lastViewedAt": zod.int().min(updateMyMoodDiscoveryStateResponseOneStateViewedLastViewedAtMin),
+  "watched": zod.boolean(),
+  "rating": zod.number().min(updateMyMoodDiscoveryStateResponseOneStateViewedRatingMin).max(updateMyMoodDiscoveryStateResponseOneStateViewedRatingMax).optional(),
+  "feedback": zod.array(zod.string().max(updateMyMoodDiscoveryStateResponseOneStateViewedFeedbackItemMax))
+})),
+  "feedback": zod.record(zod.string(), zod.array(zod.string().max(updateMyMoodDiscoveryStateResponseOneStateFeedbackItemMax)))
+}),
+  "revision": zod.int().min(updateMyMoodDiscoveryStateResponseOneRevisionMin)
+}).and(zod.object({
+  "accepted": zod.boolean()
+}))
+
+
+/**
  * @summary Browse titles with filters
  */
 export const ListTitlesQueryParams = zod.object({

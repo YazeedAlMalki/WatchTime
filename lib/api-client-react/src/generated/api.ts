@@ -63,6 +63,9 @@ import type {
   ListAdminFeedbackParams,
   ListAdminReportsParams,
   ListTitlesParams,
+  MoodDiscoveryStateResponse,
+  MoodDiscoveryStateUpdate,
+  MoodDiscoveryStateWriteResponse,
   OkResult,
   PublicStats,
   RecentActivityItem,
@@ -478,6 +481,154 @@ export const useUpdateMe = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getUpdateMeMutationOptions(options));
+    }
+
+export const getGetMyMoodDiscoveryStateUrl = () => {
+
+
+
+
+  return `/api/me/mood-discovery`
+}
+
+/**
+ * @summary Current user's saved mood discovery state
+ */
+export const getMyMoodDiscoveryState = async ( options?: Parameters<typeof customFetch>[1]): Promise<MoodDiscoveryStateResponse> => {
+
+  return customFetch<MoodDiscoveryStateResponse>(getGetMyMoodDiscoveryStateUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMyMoodDiscoveryStateQueryKey = () => {
+    return [
+    `/api/me/mood-discovery`
+    ] as const;
+    }
+
+
+export const getGetMyMoodDiscoveryStateQueryOptions = <TData = Awaited<ReturnType<typeof getMyMoodDiscoveryState>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyMoodDiscoveryState>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMyMoodDiscoveryStateQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyMoodDiscoveryState>>> = ({ signal }) => getMyMoodDiscoveryState({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMyMoodDiscoveryState>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMyMoodDiscoveryStateQueryResult = NonNullable<Awaited<ReturnType<typeof getMyMoodDiscoveryState>>>
+export type GetMyMoodDiscoveryStateQueryError = ErrorType<void>
+
+
+/**
+ * @summary Current user's saved mood discovery state
+ */
+
+export function useGetMyMoodDiscoveryState<TData = Awaited<ReturnType<typeof getMyMoodDiscoveryState>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyMoodDiscoveryState>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMyMoodDiscoveryStateQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateMyMoodDiscoveryStateUrl = () => {
+
+
+
+
+  return `/api/me/mood-discovery`
+}
+
+/**
+ * @summary Replace current user's mood discovery state
+ */
+export const updateMyMoodDiscoveryState = async (moodDiscoveryStateUpdate: MoodDiscoveryStateUpdate, options?: Parameters<typeof customFetch>[1]): Promise<MoodDiscoveryStateWriteResponse> => {
+
+  return customFetch<MoodDiscoveryStateWriteResponse>(getUpdateMyMoodDiscoveryStateUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(moodDiscoveryStateUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateMyMoodDiscoveryStateMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMyMoodDiscoveryState>>, TError,{data: BodyType<MoodDiscoveryStateUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateMyMoodDiscoveryState>>, TError,{data: BodyType<MoodDiscoveryStateUpdate>}, TContext> => {
+
+const mutationKey = ['updateMyMoodDiscoveryState'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateMyMoodDiscoveryState>>, {data: BodyType<MoodDiscoveryStateUpdate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateMyMoodDiscoveryState(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateMyMoodDiscoveryStateMutationResult = NonNullable<Awaited<ReturnType<typeof updateMyMoodDiscoveryState>>>
+    export type UpdateMyMoodDiscoveryStateMutationBody = BodyType<MoodDiscoveryStateUpdate>
+    export type UpdateMyMoodDiscoveryStateMutationError = ErrorType<void>
+
+    /**
+ * @summary Replace current user's mood discovery state
+ */
+export const useUpdateMyMoodDiscoveryState = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMyMoodDiscoveryState>>, TError,{data: BodyType<MoodDiscoveryStateUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateMyMoodDiscoveryState>>,
+        TError,
+        {data: BodyType<MoodDiscoveryStateUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateMyMoodDiscoveryStateMutationOptions(options));
     }
 
 export const getListTitlesUrl = (params?: ListTitlesParams,) => {

@@ -113,4 +113,8 @@ export interface StoreState {
   lang: "en" | "ar";
   storageError: boolean;
   hydrated: boolean;
+  cloudInitialized: boolean;
+  cloudSyncDirty: boolean;
+  cloudRevision: number;
+  cloudBaseSnapshot: string | null;
 }
