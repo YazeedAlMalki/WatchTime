@@ -438,6 +438,36 @@ describe("catalog refresh startup failure", () => {
 
 
 describe("catalog refresh recovery", () => {
+  it("propagates an initial catalog lock query rejection without starting a transaction and releases its client", async () => {
+    const recoveryClient = await pool.connect();
+    // Keep the session reserved until cleanup even if recovery releases it.
+    const releaseSpy = vi.spyOn(recoveryClient, "release").mockImplementation(() => {});
+    const connectSpy = vi.spyOn(pool, "connect").mockImplementationOnce(() => Promise.resolve(recoveryClient));
+    const queryError = new Error("catalog advisory-lock query rejected");
+    const querySpy = vi.spyOn(recoveryClient, "query").mockRejectedValueOnce(queryError);
+    const transactionSpy = vi.spyOn(db, "transaction");
+
+    try {
+      await expect(recoverInterruptedRuns()).rejects.toBe(queryError);
+      expect(querySpy).toHaveBeenNthCalledWith(
+        1,
+        "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+      );
+      expect(transactionSpy).not.toHaveBeenCalled();
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      transactionSpy.mockRestore();
+      querySpy.mockRestore();
+      connectSpy.mockRestore();
+      releaseSpy.mockRestore();
+      try {
+        await recoveryClient.query("select pg_advisory_unlock_all()");
+      } finally {
+        recoveryClient.release();
+      }
+    }
+  });
+
   it("propagates a rejected recovery transaction and releases its catalog lock and client", async () => {
     // Reserve both sessions up front: a lock is reentrant on its owning session,
     // so probing with a client returned by recovery could hide a leaked lock.
