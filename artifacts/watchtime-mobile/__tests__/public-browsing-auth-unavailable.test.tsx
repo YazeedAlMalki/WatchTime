@@ -246,6 +246,38 @@ describe('public browsing while authentication is unavailable', () => {
     expect(mockRouter.replace).not.toHaveBeenCalled();
   });
 
+  it('keeps title retry available after another public request fails while sign-in is unavailable', async () => {
+    mockRoute.current = { id: '771' };
+    mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
+
+    const detail = await render(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
+
+    mockTitleRefetch.mockImplementationOnce(async () => {
+      mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
+    });
+    await fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
+    await detail.rerender(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(mockTitleFetch).toHaveBeenCalledWith(771);
+    expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+
   it('opens a trending title publicly without sign-in or personal-data requests', async () => {
     const home = await render(
       <AppAuthUnavailableProvider>
