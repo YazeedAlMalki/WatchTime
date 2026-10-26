@@ -1518,9 +1518,15 @@ describe("catalog refresh history cleanup failure", () => {
         await vi.waitFor(() => expect(deleteSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
         const [beforeCleanup] = await db.select().from(catalogSyncRunsTable)
           .where(eq(catalogSyncRunsTable.id, runId));
-        expect(beforeCleanup.status).toBe(status);
-        expect(beforeCleanup.error).toBe(expectedError);
-        expect(beforeCleanup.finishedAt).toBeInstanceOf(Date);
+        expect(beforeCleanup).toMatchObject({
+          status,
+          error: expectedError,
+          processedItems: 0,
+          succeededItems: 0,
+          failedItems: 0,
+          episodesUpdated: 0,
+          finishedAt: expect.any(Date),
+        });
         if (status === "failed") {
           expect(errorSpy).toHaveBeenCalledWith(
             { err: syncError, runId }, "catalog refresh failed",
@@ -1534,8 +1540,7 @@ describe("catalog refresh history cleanup failure", () => {
         await new Promise<void>((resolve) => setImmediate(resolve));
         const [afterCleanup] = await db.select().from(catalogSyncRunsTable)
           .where(eq(catalogSyncRunsTable.id, runId));
-        expect(afterCleanup.status).toBe(status);
-        expect(afterCleanup.error).toBe(expectedError);
+        expect(afterCleanup).toEqual(beforeCleanup);
         expect(unhandledRejections).toEqual([]);
       } finally {
         process.off("unhandledRejection", onUnhandledRejection);
