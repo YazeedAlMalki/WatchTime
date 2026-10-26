@@ -1007,6 +1007,10 @@ describe("real catalog sync", () => {
   it("keeps exactly one weekly successor when enqueue succeeds but successor recovery fails", async () => {
     vi.restoreAllMocks();
     const originalItems = [...sourceItems];
+    const fetchMock = vi.fn(() => {
+      throw new Error("Provider requests must not run while testing recovery scheduling");
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const [run] = await db.insert(catalogSyncRunsTable).values({
       trigger: "scheduled",
       status: "queued",
@@ -1063,8 +1067,10 @@ describe("real catalog sync", () => {
         { err: recoveryFailure }, "unable to recover interrupted catalog refreshes",
       );
       expect(errorSpy).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
       const timers = refreshTimers();
       expect(timers.map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS]);
+      expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === retryDelay)).toBe(false);
       const pending = timers.filter(({ timer }) =>
         !clearTimeoutSpy.mock.calls.some(([cleared]) => cleared === timer));
       expect(pending).toEqual([timers[1]]);
