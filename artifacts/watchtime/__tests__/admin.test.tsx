@@ -1631,6 +1631,153 @@ describe("admin alternate-title review", () => {
     ).toBeNull();
   });
 
+  it.each([
+    {
+      collision: true,
+      collisionTitleCount: 3,
+      collisionStatus: "3 titles share this alias",
+    },
+    {
+      collision: false,
+      collisionTitleCount: 1,
+      collisionStatus: "Unique",
+    },
+  ])(
+    "marks conflict collision details stale after a failed catalog refresh and clears them after recovery ($collisionStatus)",
+    async ({ collision, collisionTitleCount, collisionStatus }) => {
+    const currentCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer shared correction",
+      collision,
+      collisionTitleCount,
+      updatedAt: "2026-09-18T12:30:00.000Z",
+    };
+    setRefreshFailures(["catalog"]);
+    mocks.updateMutation.mutate.mockImplementation(
+      async (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        await options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: currentCorrection,
+          },
+        });
+      },
+    );
+    render();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "An unsaved draft",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    const findConflictNotice = () =>
+      Array.from(container.querySelectorAll<HTMLElement>('[role="alert"]')).find(
+        (alert) =>
+          alert.textContent?.includes("A newer correction is already saved"),
+      );
+    expect(findConflictNotice()?.textContent).toContain(
+      `${collisionStatus} · may be stale`,
+    );
+
+    mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures([]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+
+    expect(findConflictNotice()?.textContent).toContain(
+      collisionStatus,
+    );
+    expect(findConflictNotice()?.textContent).not.toContain("may be stale");
+    },
+  );
+
+  it("marks conflict collision details stale when catalog refresh times out and clears them when it succeeds", async () => {
+    const currentCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer shared correction",
+      collision: true,
+      collisionTitleCount: 3,
+      updatedAt: "2026-09-18T12:30:00.000Z",
+    };
+    let resolveCatalogRefresh!: () => void;
+    const catalogRefresh = new Promise<void>((resolve) => {
+      resolveCatalogRefresh = resolve;
+    });
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) =>
+        queryKey[0] === "/api/admin/content"
+          ? catalogRefresh
+          : Promise.resolve(),
+    );
+    mocks.updateMutation.mutate.mockImplementation(
+      async (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        await options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: currentCorrection,
+          },
+        });
+      },
+    );
+    render();
+    vi.useFakeTimers();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "An unsaved draft",
+      );
+      button(container, "Save").click();
+    });
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    const findConflictNotice = () =>
+      Array.from(container.querySelectorAll<HTMLElement>('[role="alert"]')).find(
+        (alert) =>
+          alert.textContent?.includes("A newer correction is already saved"),
+      );
+    expect(findConflictNotice()?.textContent).not.toContain("may be stale");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(findConflictNotice()?.textContent).toContain(
+      "3 titles share this alias · may be stale",
+    );
+
+    await act(async () => {
+      resolveCatalogRefresh();
+      await catalogRefresh;
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+    expect(findConflictNotice()?.textContent).toContain(
+      "3 titles share this alias",
+    );
+    expect(findConflictNotice()?.textContent).not.toContain("may be stale");
+  });
+
   it("narrows simultaneous failures to only the request still failing", async () => {
     await saveAliasToTriggerRefresh(["aliases", "catalog"]);
     expectRefreshCalls(["aliases", "catalog"]);

@@ -3031,6 +3031,7 @@ export function AliasReview({
                     {conflictAlias.collision
                       ? `${conflictAlias.collisionTitleCount} titles share this alias`
                       : "Unique"}
+                    {isCollisionResultsStale && " · may be stale"}
                   </dd>
                 </div>
                 <div>
