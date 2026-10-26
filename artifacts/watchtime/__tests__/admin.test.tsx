@@ -1539,6 +1539,64 @@ describe("admin alternate-title review", () => {
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
   });
 
+  it("reports only collision results as stale when their refresh times out", async () => {
+    let resolveCollisionRefresh!: () => void;
+    const collisionRefresh = new Promise<void>((resolve) => {
+      resolveCollisionRefresh = resolve;
+    });
+    mocks.lookupAdminContentAliasCollisions.mockReturnValue(collisionRefresh);
+    render();
+    vi.useFakeTimers();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
+    expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenCalledWith({
+      aliases: ["Updated Local Title"],
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(container.textContent).toContain(
+      "Collision results may be stale; the alternate-title list refreshed successfully.",
+    );
+    expect(container.textContent).not.toContain(
+      "The alternate-title list and collision results may be stale.",
+    );
+
+    const savePromise = mocks.updateMutation.mutate.mock.results.at(-1)
+      ?.value as Promise<void> | undefined;
+    if (!savePromise) throw new Error("The alternate-title save did not start");
+    await act(async () => {
+      resolveCollisionRefresh();
+      await savePromise;
+    });
+
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).not.toContain(
+      "Collision results may be stale; the alternate-title list refreshed successfully.",
+    );
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+  });
+
   it("retries only the catalog request and updates its failure state", async () => {
     await saveAliasToTriggerRefresh(["catalog"]);
     expectRefreshCalls(["aliases", "catalog"]);

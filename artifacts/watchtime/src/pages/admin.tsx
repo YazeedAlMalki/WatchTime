@@ -2538,6 +2538,7 @@ export function AliasReview({
     aliasesForCollisionLookup: string[] = collisionLookupAliases,
   ): Promise<ReviewRefreshRequest[] | null> => {
     const attempt = ++aliasRefreshAttempt.current;
+    const pendingRequests = new Set(requests);
     setIsAliasRefreshTimedOut(false);
     setIsRefreshingAliasViews(true);
     if (requests.includes("catalog") || requests.includes("collisions")) {
@@ -2545,35 +2546,42 @@ export function AliasReview({
     }
     const recoveryTimer = window.setTimeout(() => {
       if (aliasRefreshAttempt.current !== attempt) return;
+      const timedOutRequests = Array.from(pendingRequests);
+      if (timedOutRequests.length === 0) return;
       setIsAliasRefreshTimedOut(true);
-      setRefreshError(requests);
-      if (requests.includes("catalog") || requests.includes("collisions")) {
-        setIsCollisionResultsStale(true);
-      }
+      setRefreshError(timedOutRequests);
+      setIsCollisionResultsStale(
+        timedOutRequests.includes("catalog") ||
+          timedOutRequests.includes("collisions"),
+      );
       setIsRefreshingAliasViews(false);
     }, ALIAS_REFRESH_RECOVERY_TIMEOUT_MS);
     try {
       const results = await Promise.allSettled(
-        requests.map((request) =>
-          Promise.resolve().then(async () => {
-            if (request === "collisions") {
-              return aliasesForCollisionLookup.length === 0
-                ? []
-                : await lookupAdminContentAliasCollisions({
-                    aliases: aliasesForCollisionLookup,
-                  });
-            }
-            return await qc.invalidateQueries(
-              {
-                queryKey:
-                  request === "aliases"
-                    ? getListAdminContentAliasesQueryKey()
-                    : getSearchAdminContentQueryKey(),
-              },
-              { throwOnError: true },
-            );
-          }),
-        ),
+        requests.map(async (request) => {
+          try {
+            return await Promise.resolve().then(async () => {
+              if (request === "collisions") {
+                return aliasesForCollisionLookup.length === 0
+                  ? []
+                  : await lookupAdminContentAliasCollisions({
+                      aliases: aliasesForCollisionLookup,
+                    });
+              }
+              return await qc.invalidateQueries(
+                {
+                  queryKey:
+                    request === "aliases"
+                      ? getListAdminContentAliasesQueryKey()
+                      : getSearchAdminContentQueryKey(),
+                },
+                { throwOnError: true },
+              );
+            });
+          } finally {
+            pendingRequests.delete(request);
+          }
+        }),
       );
       const failedRequests = requests.filter(
         (_request, index) => results[index].status === "rejected",
