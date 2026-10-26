@@ -616,6 +616,77 @@ describe("private, idempotent watch-history imports", () => {
     }
   });
 
+  it("rejects an unoffered real show without resolving or importing an ambiguous episode", async () => {
+    const fixtureIds = (await db.insert(titlesTable).values([
+      { name: "__import_unoffered_shared_show__", type: "tv", year: 2020 },
+      { name: "__import_unoffered_shared_show__", type: "tv", year: 2020 },
+      { name: "__import_unoffered_other_show__", type: "tv", year: 2020 },
+    ]).returning({ id: titlesTable.id })).map((row) => row.id);
+    const [firstId, secondId, unofferedId] = fixtureIds;
+    let importId: number | undefined;
+    try {
+      // The unoffered show exists and has the exact episode too: only
+      // candidate validation should prevent selecting it.
+      await db.insert(episodesTable).values(fixtureIds.map((titleId) => ({
+        titleId, seasonNumber: 2, episodeNumber: 3, name: "Fixture episode",
+      })));
+      const created = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
+        source: "generic",
+        fileName: "unoffered-episode.csv",
+        content: "kind,title,type,year,season,episode\nwatched_episode,__import_unoffered_shared_show__,tv,2020,2,3",
+      });
+      expect(created.status).toBe(201);
+      importId = created.body.id;
+      expect(created.body.items).toHaveLength(1);
+      const item = created.body.items[0];
+      expect(item).toMatchObject({
+        kind: "watched_episode",
+        classification: "ambiguous",
+        titleId: null,
+        episodeId: null,
+        selected: false,
+        errorCode: "multiple_titles",
+      });
+      expect(item.candidates.map((candidate: { titleId: number }) => candidate.titleId).sort((a: number, b: number) => a - b))
+        .toEqual([firstId, secondId].sort((a, b) => a - b));
+      const [storedBefore] = await db.select().from(importItemsTable).where(eq(importItemsTable.id, item.id));
+
+      const rejected = await supertest(app)
+        .patch(`/api/imports/${importId}/items/${item.id}`)
+        .set("x-test-user", USER_A)
+        .send({ titleId: unofferedId });
+      expect(rejected.status).toBe(400);
+      expect(rejected.body).toEqual({ error: "titleId is not an offered candidate" });
+      const [storedAfter] = await db.select().from(importItemsTable).where(eq(importItemsTable.id, item.id));
+      expect(storedAfter).toEqual(storedBefore);
+      const preview = await supertest(app).get(`/api/imports/${importId}`).set("x-test-user", USER_A);
+      expect(preview.status).toBe(200);
+      expect(preview.body.status).toBe("ready");
+      expect(preview.body.items).toEqual([item]);
+      expect(preview.body.summary).toEqual(created.body.summary);
+
+      const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
+      expect(confirmed.status).toBe(200);
+      expect(confirmed.body.status).toBe("confirmed");
+      expect(confirmed.body.summary).toMatchObject({ selected: 0, applied: 0, skipped: 1, ambiguous: 1 });
+      expect(confirmed.body.items).toEqual([item]);
+      expect(await db.select().from(watchedEpisodesTable).where(and(
+        eq(watchedEpisodesTable.userId, USER_A),
+        inArray(watchedEpisodesTable.titleId, fixtureIds),
+      ))).toEqual([]);
+      expect(await db.select().from(watchedTitlesTable).where(and(
+        eq(watchedTitlesTable.userId, USER_A),
+        inArray(watchedTitlesTable.titleId, fixtureIds),
+      ))).toEqual([]);
+    } finally {
+      if (importId !== undefined) await db.delete(importsTable).where(eq(importsTable.id, importId));
+      await db.delete(watchedEpisodesTable).where(and(eq(watchedEpisodesTable.userId, USER_A), inArray(watchedEpisodesTable.titleId, fixtureIds)));
+      await db.delete(watchedTitlesTable).where(and(eq(watchedTitlesTable.userId, USER_A), inArray(watchedTitlesTable.titleId, fixtureIds)));
+      await db.delete(episodesTable).where(inArray(episodesTable.titleId, fixtureIds));
+      await db.delete(titlesTable).where(inArray(titlesTable.id, fixtureIds));
+    }
+  });
+
   it("keeps a refreshed shared regional alias ambiguous when only one show has the imported episode", async () => {
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
