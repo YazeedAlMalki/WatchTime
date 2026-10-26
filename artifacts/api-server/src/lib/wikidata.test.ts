@@ -1606,6 +1606,134 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
+  it("keeps a newer empty-classification mapping when an older lookup later reports no match", async () => {
+    const previousHealthRows = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    await db.delete(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_out_of_order_missing_mapping_test__",
+      year: 2020,
+      imdbId: "tt1234567",
+      popularity: 0,
+    }).returning();
+    await db.insert(providerMappingsTable).values({
+      titleId: title.id,
+      provider: WIKIDATA_PROVIDER,
+      externalId: "Q40",
+      status: "mapped",
+      lastRefreshedAt: new Date("2020-01-01T00:00:00.000Z"),
+    });
+    const [originalRecord] = await db.insert(safetyRecordsTable).values({
+      titleId: title.id,
+      sourceName: WIKIDATA_PROVIDER,
+      tier: 2,
+      isCommunity: false,
+      url: "https://www.wikidata.org/wiki/Q40",
+      status: "available",
+      items: [{
+        category: "MPAA",
+        label: "PG",
+        score: null,
+        maxScore: null,
+        description: "US rating · Wikidata property P1657",
+      }],
+      updatedAt: new Date("2020-01-01T00:00:00.000Z"),
+    }).returning();
+
+    const olderStartedAt = new Date("2026-10-05T10:00:00.000Z");
+    const newerStartedAt = new Date("2026-10-05T10:00:01.000Z");
+    const newerEmptyItem: WikidataItem = {
+      ...matchedItem,
+      itemId: "Q55",
+      itemUrl: "https://www.wikidata.org/wiki/Q55",
+      classifications: [],
+    };
+    let signalOlderQueryStarted!: () => void;
+    const olderQueryStarted = new Promise<void>((resolve) => {
+      signalOlderQueryStarted = resolve;
+    });
+    let rejectOlderQuery!: (error: Error) => void;
+    const olderQuery = new Promise<WikidataItem>((_resolve, reject) => {
+      rejectOlderQuery = reject;
+    });
+    let olderRefresh: ReturnType<typeof refreshWikidataTitle> | undefined;
+    let olderRefreshCompleted = false;
+
+    try {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(olderStartedAt);
+      olderRefresh = refreshWikidataTitle(title.id, {
+        queryByImdbId: async () => {
+          signalOlderQueryStarted();
+          return olderQuery;
+        },
+      });
+      await olderQueryStarted;
+
+      vi.setSystemTime(newerStartedAt);
+      await expect(refreshWikidataTitle(title.id, {
+        queryByImdbId: async () => newerEmptyItem,
+      })).resolves.toMatchObject({
+        ok: true,
+        externalId: "Q55",
+        classifications: 0,
+      });
+
+      const [mappingAfterNewerRefresh] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, title.id),
+        eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
+      ));
+      expect(mappingAfterNewerRefresh).toMatchObject({
+        externalId: "Q55",
+        status: "mapped",
+        lastRefreshedAt: newerStartedAt,
+      });
+      const [recordAfterNewerRefresh] = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.id, originalRecord.id));
+      expect(recordAfterNewerRefresh).toEqual(originalRecord);
+
+      rejectOlderQuery(new WikidataError("No Wikidata item matched IMDb ID tt1234567", "missing_mapping"));
+      await expect(olderRefresh).resolves.toMatchObject({
+        ok: false,
+        status: "missing",
+      });
+      olderRefreshCompleted = true;
+
+      const [mappingAfterOlderRefresh] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, title.id),
+        eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
+      ));
+      expect(mappingAfterOlderRefresh).toEqual(mappingAfterNewerRefresh);
+      const [recordAfterOlderRefresh] = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.id, originalRecord.id));
+      expect(recordAfterOlderRefresh).toEqual(originalRecord);
+      const [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(health).toMatchObject({
+        status: "healthy",
+        lastSyncAt: newerStartedAt,
+        lastSuccessAt: newerStartedAt,
+        lastError: null,
+        refreshAttempts: 2,
+        successfulRefreshes: 1,
+      });
+    } finally {
+      if (olderRefresh && !olderRefreshCompleted) {
+        rejectOlderQuery(new WikidataError("Cleaning up incomplete missing-mapping race test", "missing_mapping"));
+        await olderRefresh.catch(() => undefined);
+      }
+      vi.useRealTimers();
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousHealthRows.length > 0) {
+        await db.insert(integrationHealthTable).values(previousHealthRows);
+      }
+    }
+  });
+
   it("counts a verified match without classifications as a healthy mapped refresh", async () => {
     const previousHealth = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
