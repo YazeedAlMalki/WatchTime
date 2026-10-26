@@ -1506,7 +1506,7 @@ describe("catalog refresh recovery", () => {
     }
   });
 
-  it("leaves stale queued work alone when another worker owns the catalog lock", async () => {
+  it("releases its client without starting recovery or changing stale queued work when another worker owns the catalog lock", async () => {
     const [run] = await db.insert(catalogSyncRunsTable).values({
       trigger: "manual", status: "queued",
       createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
@@ -1515,12 +1515,51 @@ describe("catalog refresh recovery", () => {
     const client = await pool.connect();
     try {
       await client.query("select pg_advisory_lock(hashtext('watchtime:catalog-sync'))");
-      await recoverInterruptedRuns();
+      const recoveryClient = await pool.connect();
+      // Keep this distinct session checked out for the ownership probe and
+      // deterministic cleanup, while still observing recovery's release call.
+      const releaseSpy = vi.spyOn(recoveryClient, "release").mockImplementation(() => {});
+      const querySpy = vi.spyOn(recoveryClient, "query");
+      const connectSpy = vi.spyOn(pool, "connect").mockImplementationOnce(() => Promise.resolve(recoveryClient));
+      const transactionSpy = vi.spyOn(db, "transaction");
+      try {
+        await expect(recoverInterruptedRuns()).resolves.toBeUndefined();
+        expect(connectSpy).toHaveBeenCalledTimes(1);
+        expect(querySpy).toHaveBeenNthCalledWith(1,
+          "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+        );
+        await expect(querySpy.mock.results[0].value).resolves.toMatchObject({ rows: [{ locked: false }] });
+        expect(transactionSpy).not.toHaveBeenCalled();
+        expect(releaseSpy).toHaveBeenCalledTimes(1);
+        // A distinct session must still be excluded after recovery's cleanup;
+        // probing on the owner would succeed reentrantly and mask a lost lock.
+        const lockProbe = await recoveryClient.query<{ locked: boolean }>(
+          "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+        );
+        expect(lockProbe.rows[0].locked).toBe(false);
+        const ownerUnlock = await client.query<{ unlocked: boolean }>(
+          "select pg_advisory_unlock(hashtext('watchtime:catalog-sync')) as unlocked",
+        );
+        expect(ownerUnlock.rows[0].unlocked).toBe(true);
+      } finally {
+        transactionSpy.mockRestore();
+        connectSpy.mockRestore();
+        querySpy.mockRestore();
+        releaseSpy.mockRestore();
+        try {
+          await recoveryClient.query("select pg_advisory_unlock_all()");
+        } finally {
+          recoveryClient.release();
+        }
+      }
       const [unchanged] = await db.select().from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, run.id));
       expect(unchanged).toEqual(run);
     } finally {
-      await client.query("select pg_advisory_unlock(hashtext('watchtime:catalog-sync'))");
-      client.release();
+      try {
+        await client.query("select pg_advisory_unlock_all()");
+      } finally {
+        client.release();
+      }
     }
   });
 
