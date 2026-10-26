@@ -1492,6 +1492,53 @@ describe("admin alternate-title review", () => {
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
   });
 
+  it("replaces the stale warning when the original timed-out refresh fails", async () => {
+    await saveAliasToTriggerRefresh(["aliases"]);
+    mocks.queryClient.invalidateQueries.mockClear();
+
+    let rejectPendingRefresh!: (error: Error) => void;
+    const pendingRefresh = new Promise<void>((_resolve, reject) => {
+      rejectPendingRefresh = reject;
+    });
+    mocks.queryClient.invalidateQueries.mockReturnValue(pendingRefresh);
+
+    vi.useFakeTimers();
+    act(() => button(container, "Retry refresh").click());
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(container.textContent).toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).toContain(
+      "Its results are not being treated as current",
+    );
+
+    await act(async () => {
+      rejectPendingRefresh(new Error("refresh unavailable"));
+      await pendingRefresh.catch(() => undefined);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain(
+      "Failed refresh request: alternate-title list (alias records).",
+    );
+    expect(button(container, "Retry refresh").disabled).toBe(false);
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+  });
+
   it("retries only the catalog request and updates its failure state", async () => {
     await saveAliasToTriggerRefresh(["catalog"]);
     expectRefreshCalls(["aliases", "catalog"]);
