@@ -941,6 +941,170 @@ describe("catalog refresh recovery", () => {
     }
   });
 
+  it("records its own provider failure when the same waiting startup resumes after recovery rolls back", async () => {
+    // Independent process-local ownership, but the exact same database instance
+    // so the transaction spy can hold recovery's real, uncommitted writes.
+    vi.resetModules();
+    vi.doMock("@workspace/db", () => databaseModule);
+    const { recoverInterruptedRuns: recoverFromOtherProcess } = await import("./catalog-refresh");
+    let finishStartup!: () => void;
+    const startupGate = new Promise<void>((resolve) => { finishStartup = resolve; });
+    let rollbackRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => { rollbackRecovery = resolve; });
+    let signalRecoveryWritten!: (run: typeof catalogSyncRunsTable.$inferSelect) => void;
+    const recoveryWritten = new Promise<typeof catalogSyncRunsTable.$inferSelect>((resolve) => {
+      signalRecoveryWritten = resolve;
+    });
+    let failSync!: () => void;
+    const syncGate = new Promise<void>((resolve) => { failSync = resolve; });
+    let signalCleanup!: () => void;
+    const cleanupReached = new Promise<void>((resolve) => { signalCleanup = resolve; });
+    const recoveryError = new Error("unable to commit recovery before provider failure");
+    const providerError = new Error("TVMaze unavailable after same-run startup resumed");
+    const items = sourceItems.slice(0, 2);
+    expect(items).toHaveLength(2);
+    const transaction = db.transaction.bind(db);
+    let runId: number | undefined;
+    const transactionSpy = vi.spyOn(db, "transaction")
+      .mockImplementationOnce(async (callback, config) => {
+        await startupGate;
+        return transaction(callback, config);
+      })
+      .mockImplementationOnce((callback, config) =>
+        transaction(async (tx) => {
+          await callback(tx);
+          const [writtenRun] = await tx.select().from(catalogSyncRunsTable)
+            .where(eq(catalogSyncRunsTable.id, runId!));
+          signalRecoveryWritten(writtenRun);
+          await recoveryGate;
+          throw recoveryError;
+        }, config),
+      );
+    // Pruning is entered only after executeRun releases local ownership.
+    const cleanupSpy = vi.spyOn(db, "delete").mockImplementationOnce(() => {
+      signalCleanup();
+      return {
+        where: () => ({ returning: async () => [] }),
+      } as unknown as ReturnType<typeof db.delete>;
+    });
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    const lockProbe = await pool.connect();
+    runCatalogSyncMock.mockImplementation(async () => {
+      await syncGate;
+      throw providerError;
+    });
+    let recoveryOutcome: Promise<unknown> | undefined;
+    try {
+      runId = await startCatalogRefresh("manual", items);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(transactionSpy).toHaveBeenCalledTimes(1));
+      await db.update(catalogSyncRunsTable).set({
+        createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
+      }).where(eq(catalogSyncRunsTable.id, runId));
+      const [queuedRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      const queuedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+
+      // Handle recovery's deliberate rejection before allowing it to roll back.
+      recoveryOutcome = recoverFromOtherProcess().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const uncommittedRun = await recoveryWritten;
+      expect(uncommittedRun).toMatchObject({
+        status: "failed", startedAt: null,
+        error: "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles",
+      });
+      expect(uncommittedRun.finishedAt).toBeInstanceOf(Date);
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId))).toEqual([queuedRun]);
+
+      finishStartup();
+      // Observe a real blocked lease, not just a worker scheduled to start later.
+      await vi.waitFor(async () => {
+        const waiting = await lockProbe.query(
+          `select 1 from pg_locks
+           where locktype = 'advisory'
+             and database = (select oid from pg_database where datname = current_database())
+             and classid = hashtext('watchtime:catalog-refresh-worker')::oid
+             and objid = $1::oid and objsubid = 2 and not granted`,
+          [runId],
+        );
+        expect(waiting.rows).toHaveLength(1);
+      });
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+      expect(cleanupSpy).not.toHaveBeenCalled();
+
+      // Distinguish this worker's eventual completion from discarded recovery
+      // diagnostics even if the database and provider mock are very fast.
+      await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime()));
+      rollbackRecovery();
+      await expect(recoveryOutcome).resolves.toBe(recoveryError);
+      await vi.waitFor(() => expect(runCatalogSyncMock).toHaveBeenCalledTimes(1));
+      const [runningRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(runningRun).toMatchObject({ status: "running", error: null, finishedAt: null });
+      expect(runningRun.startedAt).toBeInstanceOf(Date);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id)).toEqual(queuedItems);
+      expect(cleanupSpy).not.toHaveBeenCalled();
+
+      const providerFailureAt = Date.now();
+      failSync();
+      await cleanupReached;
+      const [failedRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(failedRun).toMatchObject({
+        status: "failed", error: providerError.message, startedAt: runningRun.startedAt,
+      });
+      expect(failedRun.finishedAt).toBeInstanceOf(Date);
+      expect(failedRun.finishedAt!.getTime()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime());
+      expect(failedRun.finishedAt!.getTime()).toBeGreaterThanOrEqual(providerFailureAt);
+      const failedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(failedItems).toHaveLength(items.length);
+      for (const [index, item] of failedItems.entries()) {
+        expect(item).toMatchObject({
+          id: queuedItems[index].id, status: "failed", error: providerError.message,
+          startedAt: null, finishedAt: failedRun.finishedAt,
+        });
+      }
+      expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+        { err: providerError, runId }, "catalog refresh failed",
+      );
+      expect(runCatalogSyncMock).toHaveBeenCalledExactlyOnceWith(
+        { dryRun: false, allowPartial: true }, items, expect.any(Function), false,
+      );
+      expect(cleanupSpy).toHaveBeenCalledExactlyOnceWith(catalogSyncRunsTable);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      finishStartup();
+      rollbackRecovery();
+      failSync();
+      try {
+        await recoveryOutcome;
+        if (runId !== undefined) {
+          await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      } finally {
+        process.off("unhandledRejection", onUnhandledRejection);
+        transactionSpy.mockRestore();
+        cleanupSpy.mockRestore();
+        errorSpy.mockRestore();
+        lockProbe.release();
+        runCatalogSyncMock.mockReset();
+        vi.doUnmock("@workspace/db");
+        vi.resetModules();
+      }
+    }
+  });
+
   it("waits for in-progress recovery to commit before a delayed startup resumes", async () => {
     // Model another API process: share the real database, but load a separate
     // refresh module so recovery cannot see the delayed worker's local set.
