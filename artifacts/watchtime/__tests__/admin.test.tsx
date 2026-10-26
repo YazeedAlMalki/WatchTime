@@ -1756,7 +1756,9 @@ describe("admin alternate-title review", () => {
         (alert) =>
           alert.textContent?.includes("A newer correction is already saved"),
       );
-    expect(findConflictNotice()?.textContent).not.toContain("may be stale");
+    expect(findConflictNotice()?.textContent).toContain(
+      "3 titles share this alias · may be stale",
+    );
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000);

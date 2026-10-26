@@ -366,6 +366,98 @@ it.each([
 });
 
 it.each([
+  { action: 'mark', initiallyWatched: false },
+  { action: 'unmark', initiallyWatched: true },
+])('preserves cached account history after a failed $action and refreshes it after retry', async ({ initiallyWatched }) => {
+  mockTitleIsMovie = false;
+  mockMovieWatched = false;
+  mockWatched = initiallyWatched;
+  jest.clearAllMocks();
+  const request = initiallyWatched ? mockUnmarkRequest : mockMarkRequest;
+  const otherRequest = initiallyWatched ? mockMarkRequest : mockUnmarkRequest;
+  request.mockRejectedValueOnce(new Error('Offline')).mockResolvedValueOnce({ ok: true });
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
+  // A nonempty baseline also catches accidental clearing when marking an
+  // unwatched episode fails, not just an optimistic insertion/removal.
+  const cachedActivity = initiallyWatched ? mockActivity() : [{
+    titleId: 99, titleName: 'Previously Watched Movie', posterUrl: null,
+    kind: 'movie', episodeLabel: null, watchedAt: '2026-10-17T00:00:00.000Z',
+  }];
+  client.setQueryData(activityKey, cachedActivity);
+  const oldActivity = client.getQueryData(activityKey);
+  const oldActivityState = client.getQueryState(activityKey);
+  const invalidate = jest.spyOn(client, 'invalidateQueries');
+  const detail = await render(
+    <QueryClientProvider client={client}><TitleDetailScreen /></QueryClientProvider>,
+  );
+  await waitFor(() => expect(detail.getByTestId('season-1')).toBeTruthy());
+  await fireEvent.press(detail.getByTestId('season-1'));
+  await waitFor(() => expect(detail.getByTestId('episode-check-101')).toBeEnabled());
+  await fireEvent.press(detail.getByTestId('episode-check-101'));
+  await waitFor(() => {
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(client.getMutationCache().getAll()).toHaveLength(1);
+    expect(client.getMutationCache().getAll()[0].state.status).toBe('error');
+    expect(detail.getByTestId('episode-check-101')).toBeEnabled();
+  });
+  const expectedRequest = initiallyWatched ? { episodeId: 101 } : { episodeId: 101, data: {} };
+  expect(request).toHaveBeenLastCalledWith(expectedRequest);
+  expect(otherRequest).not.toHaveBeenCalled();
+  expect(mockWatched).toBe(initiallyWatched);
+  expect(client.getQueryData(activityKey)).toBe(oldActivity);
+  expect(client.getQueryData(activityKey)).toEqual(cachedActivity);
+  expect(client.getQueryState(activityKey)).toEqual(oldActivityState);
+  expect(client.getQueryState(activityKey)?.isInvalidated).toBe(false);
+  expect(invalidate).not.toHaveBeenCalled();
+  expect(mockActivityFetch).not.toHaveBeenCalled();
+  expect(detail.getByText(`${Number(initiallyWatched)}/2 watched`)).toBeTruthy();
+
+  // Retry through the same episode control, with the real mutation lifecycle.
+  await fireEvent.press(detail.getByTestId('episode-check-101'));
+  await waitFor(() => {
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(mockWatched).toBe(!initiallyWatched);
+    expect(client.getQueryState(activityKey)?.isInvalidated).toBe(true);
+    expect(detail.getByText(`${Number(!initiallyWatched)}/2 watched`)).toBeTruthy();
+  });
+  expect(request).toHaveBeenLastCalledWith(expectedRequest);
+  expect(otherRequest).not.toHaveBeenCalled();
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: getGetMyRecentActivityQueryKey() });
+  expect(mockActivityFetch).not.toHaveBeenCalled();
+  expect(client.getQueryData(activityKey)).toBe(oldActivity);
+  await act(async () => detail.unmount());
+
+  const shows = await render(
+    <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
+  );
+  await waitFor(() => {
+    expect(mockActivityFetch).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(activityKey)).toEqual(mockActivity());
+    expect(client.getQueryState(activityKey)?.isInvalidated).toBe(false);
+  });
+  await fireEvent.press(shows.getByTestId('tab-history'));
+  await waitFor(() => {
+    if (initiallyWatched) {
+      expect(shows.queryByTestId('history-item-42')).toBeNull();
+      expect(shows.getByText('No recent activity')).toBeTruthy();
+    } else {
+      expect(shows.getByTestId('history-item-42')).toBeTruthy();
+      expect(shows.getByText('S1E1 — Pilot')).toBeTruthy();
+    }
+  });
+  await act(async () => shows.unmount());
+  invalidate.mockRestore();
+  client.clear();
+});
+
+it.each([
   { action: 'marking', initiallyWatched: false },
   { action: 'unmarking', initiallyWatched: true },
 ])('refreshes the account-scoped Movies and History caches after $action a movie', async ({ initiallyWatched }) => {
