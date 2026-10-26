@@ -33,6 +33,11 @@ const mockTitleQueryState: {
 } = {
   current: { data: mockPublicTitle, isLoading: false, isError: false },
 };
+const mockSimilarQueryState: {
+  current: { data: { id: number; name: string }[] | undefined; isError: boolean };
+} = {
+  current: { data: [], isError: false },
+};
 const mockTitleSafetyQueryState: {
   current: { data: unknown; isLoading: boolean; isError: boolean };
 } = {
@@ -90,7 +95,7 @@ jest.mock('@workspace/api-client-react', () => ({
     return { ...mockTitleQueryState.current, refetch: mockTitleRefetch };
   },
   getGetTitleQueryKey: (id: number) => [`/api/titles/${id}`],
-  useGetSimilarTitles: () => ({ data: [] }),
+  useGetSimilarTitles: () => mockSimilarQueryState.current,
   useGetTitleSafety: (params: unknown) => {
     mockTitleSafetyFetch(params);
     return {
@@ -198,6 +203,7 @@ describe('public browsing while authentication is unavailable', () => {
       isLoading: false,
       isError: false,
     };
+    mockSimilarQueryState.current = { data: [], isError: false };
     mockRoute.current = { id: '771' };
   });
 
@@ -330,6 +336,32 @@ describe('public browsing while authentication is unavailable', () => {
 
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
     expect(mockTitleSafetyFetch).toHaveBeenCalledWith({ titleId: 771 });
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+
+  it('keeps shared title details visible when similar-title lookup fails', async () => {
+    mockTitleQueryState.current = {
+      data: mockPublicTitle,
+      isLoading: false,
+      isError: false,
+    };
+    mockSimilarQueryState.current = { data: undefined, isError: true };
+
+    const detail = await render(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(
+      detail.getByText('A public synopsis remains available while sign-in is down.'),
+    ).toBeTruthy();
+    expect(detail.queryByText("Couldn't load this title")).toBeNull();
+    expect(mockTitleFetch).toHaveBeenCalledWith(771);
+    expect(mockTitleRefetch).not.toHaveBeenCalled();
     expect(mockPrivateQueryCalls).toEqual([]);
     expect(mockRouter.push).not.toHaveBeenCalled();
     expect(mockRouter.replace).not.toHaveBeenCalled();
