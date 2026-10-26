@@ -69,6 +69,68 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
     return { path: `/api/admin/catalog-refreshes/${sourceRunId}/retry`, sourceRunId };
   }
 
+  it("rolls back the run without auditing or starting work when queued items cannot be inserted", async () => {
+    const { path, sourceRunId } = await prepareRequest();
+    const sourceRunsBefore = sourceRunId === undefined ? [] : await db.select()
+      .from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, sourceRunId));
+    const sourceItemsBefore = sourceRunId === undefined ? [] : await db.select()
+      .from(catalogSyncItemsTable).where(eq(catalogSyncItemsTable.runId, sourceRunId));
+    let queuedRunId: number | undefined;
+    let itemInsertAttempts = 0;
+    const realTransaction = db.transaction.bind(db);
+    const transactionSpy = vi.spyOn(db, "transaction");
+    transactionSpy.mockImplementationOnce(
+      (fn: Parameters<typeof db.transaction>[0]) => realTransaction((tx) => {
+        const wrapped = new Proxy(tx, {
+          get(target, prop) {
+            if (prop === "insert") {
+              return (table: Parameters<typeof tx.insert>[0]) => {
+                if (getTableName(table) === getTableName(catalogSyncItemsTable)) {
+                  return {
+                    values: async (items: Array<{ runId: number }>) => {
+                      itemInsertAttempts += 1;
+                      expect(items).toHaveLength(1);
+                      queuedRunId = items[0].runId;
+                      createdRunIds.push(queuedRunId);
+                      throw new Error("simulated catalog queue insert failure");
+                    },
+                  };
+                }
+                return target.insert(table);
+              };
+            }
+            const value = Reflect.get(target, prop);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return fn(wrapped);
+      }) as ReturnType<typeof db.transaction>,
+    );
+
+    await request(app).post(path).expect(500);
+    expect(transactionSpy).toHaveBeenCalledOnce();
+    expect(itemInsertAttempts).toBe(1);
+    expect(queuedRunId).toBeDefined();
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, queuedRunId!))).toEqual([]);
+    expect(await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, queuedRunId!))).toEqual([]);
+    expect(await db.select().from(adminAuditLogTable)
+      .where(eq(adminAuditLogTable.adminId, adminId))).toEqual([]);
+    expect(await db.select().from(adminAuditLogTable).where(and(
+      eq(adminAuditLogTable.entityType, "catalog_sync"),
+      eq(adminAuditLogTable.entityId, queuedRunId!),
+    ))).toEqual([]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runCatalogSync).not.toHaveBeenCalled();
+    if (sourceRunId !== undefined) {
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, sourceRunId))).toEqual(sourceRunsBefore);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, sourceRunId))).toEqual(sourceItemsBefore);
+    }
+  });
+
   it("rolls back the run and items without starting work when the audit insert fails", async () => {
     const { path, sourceRunId } = await prepareRequest();
     const realTransaction = db.transaction.bind(db);
