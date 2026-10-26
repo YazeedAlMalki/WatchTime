@@ -143,6 +143,7 @@ export * from './safetyReportStatus';
 export * from './safetySource';
 export * from './safetySourceItem';
 export * from './safetySourceStatus';
+export * from './searchAdminContentMappingStatus';
 export * from './searchAdminContentParams';
 export * from './seasonDetail';
 export * from './seasonSummary';

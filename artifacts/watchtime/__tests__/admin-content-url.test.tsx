@@ -169,6 +169,45 @@ describe("admin content URL", () => {
       .not.toContain("malformedRefreshTimestampAllRegions");
   });
 
+  it("preserves mapping filters while paging and resets the offset when a mapping filter changes", () => {
+    const filteredUrl = adminContentUrl(
+      "?tab=content&mappingProvider=TMDB&mappingStatus=missing",
+      "content",
+      "US",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      50,
+    );
+    expect(readAdminContentUrl(new URL(filteredUrl, "https://example.test").search)).toMatchObject({
+      mappingProvider: "TMDB",
+      mappingStatus: "missing",
+      contentOffset: 50,
+    });
+
+    const changedUrl = adminContentUrl(
+      new URL(filteredUrl, "https://example.test").search,
+      "content",
+      "US",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "Wikidata",
+    );
+    expect(readAdminContentUrl(new URL(changedUrl, "https://example.test").search)).toMatchObject({
+      mappingProvider: "Wikidata",
+      mappingStatus: "missing",
+      contentOffset: 0,
+    });
+  });
+
   it("shares the current malformed-timestamp page and resets it when filters change", () => {
     const pageTwo = adminContentUrl(
       "?tab=content&region=GB&q=Alien&malformedRefreshTimestamp=true",

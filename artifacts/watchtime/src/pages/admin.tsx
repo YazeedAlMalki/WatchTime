@@ -52,6 +52,7 @@ import {
   readAdminContentUrl,
   type AdminTab,
   type AliasOwnershipFilter,
+  type MappingStatusFilter,
 } from "./admin-content-url";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -112,6 +113,8 @@ export default function AdminPage() {
     malformedRefreshTimestamp,
     malformedRefreshTimestampProvider,
     malformedRefreshTimestampAllRegions,
+    mappingProvider,
+    mappingStatus,
     contentOffset,
     aliasId,
     aliasPage,
@@ -140,6 +143,18 @@ export default function AdminPage() {
   };
   const selectContentPage = (offset: number) => {
     setLocation(adminContentUrl(search, "content", region, undefined, undefined, undefined, undefined, offset));
+  };
+  const selectContentMappingProvider = (nextProvider: string) => {
+    setLocation(adminContentUrl(
+      search, "content", region, undefined, undefined, undefined, undefined,
+      0, undefined, undefined, undefined, undefined, nextProvider, mappingStatus,
+    ));
+  };
+  const selectContentMappingStatus = (nextStatus: MappingStatusFilter) => {
+    setLocation(adminContentUrl(
+      search, "content", region, undefined, undefined, undefined, undefined,
+      0, undefined, undefined, undefined, undefined, mappingProvider, nextStatus,
+    ));
   };
   const selectAliasPage = (page: number, cursor: string | null) => {
     setLocation(adminContentUrl(
@@ -404,6 +419,10 @@ export default function AdminPage() {
             malformedRefreshTimestamp={malformedRefreshTimestamp}
             malformedRefreshTimestampProvider={malformedRefreshTimestampProvider}
             malformedRefreshTimestampAllRegions={malformedRefreshTimestampAllRegions}
+            mappingProvider={mappingProvider}
+            mappingStatus={mappingStatus}
+            onMappingProviderChange={selectContentMappingProvider}
+            onMappingStatusChange={selectContentMappingStatus}
             onMalformedRefreshTimestampChange={selectMalformedRefreshTimestamp}
             onMalformedRefreshTimestampAllRegionsChange={selectMalformedRefreshTimestampAllRegions}
             contentOffset={contentOffset}
@@ -421,6 +440,8 @@ export default function AdminPage() {
               undefined,
               undefined,
               malformedRefreshTimestampAllRegions,
+              mappingProvider,
+              mappingStatus,
             )}
             aliasId={aliasId}
             aliasPage={aliasPage}
@@ -1247,6 +1268,10 @@ function ContentTab({
   malformedRefreshTimestamp,
   malformedRefreshTimestampProvider,
   malformedRefreshTimestampAllRegions,
+  mappingProvider,
+  mappingStatus,
+  onMappingProviderChange,
+  onMappingStatusChange,
   onMalformedRefreshTimestampChange,
   onMalformedRefreshTimestampAllRegionsChange,
   contentOffset,
@@ -1266,6 +1291,10 @@ function ContentTab({
   malformedRefreshTimestamp: boolean;
   malformedRefreshTimestampProvider: string;
   malformedRefreshTimestampAllRegions: boolean;
+  mappingProvider: string;
+  mappingStatus: MappingStatusFilter;
+  onMappingProviderChange: (provider: string) => void;
+  onMappingStatusChange: (status: MappingStatusFilter) => void;
   onMalformedRefreshTimestampChange: (enabled: boolean) => void;
   onMalformedRefreshTimestampAllRegionsChange: (enabled: boolean) => void;
   contentOffset: number;
@@ -1295,6 +1324,8 @@ function ContentTab({
   const [debouncedQ, setDebouncedQ] = useState(q);
   const contentPageSize = 50;
   const aliasPageSize = 50;
+  const hasContentFilters =
+    malformedRefreshTimestamp || Boolean(mappingProvider) || mappingStatus !== "all";
   const [batchProvider, setBatchProvider] = useState<
     "does_the_dog_die" | "wikidata"
   >("does_the_dog_die");
@@ -1324,11 +1355,13 @@ function ContentTab({
       ...(malformedRefreshTimestampAllRegions
         ? { malformedRefreshTimestampAllRegions: true }
         : {}),
-      ...(malformedRefreshTimestamp ? { offset: contentOffset } : {}),
+      ...(mappingProvider ? { mappingProvider } : {}),
+      ...(mappingStatus !== "all" ? { mappingStatus } : {}),
+      ...(hasContentFilters ? { offset: contentOffset } : {}),
     },
   );
   const visibleContent = content?.slice(0, contentPageSize) ?? [];
-  const hasNextContentPage = malformedRefreshTimestamp &&
+  const hasNextContentPage = hasContentFilters &&
     (content?.length ?? 0) > contentPageSize;
   const {
     data: aliasesPage,
@@ -1915,6 +1948,48 @@ function ContentTab({
           onChange={(e) => onSearchChange(e.target.value)}
         />
       </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="admin-mapping-provider" className="text-sm font-medium text-foreground">
+            Mapping provider
+          </label>
+          <Input
+            id="admin-mapping-provider"
+            list="admin-mapping-providers"
+            className="w-56 rounded-xl"
+            placeholder="All providers"
+            value={mappingProvider}
+            onChange={(event) => onMappingProviderChange(event.target.value)}
+          />
+          <datalist id="admin-mapping-providers">
+            <option value="TMDB" />
+            <option value="Common Sense Media" />
+            <option value="Does the Dog Die?" />
+            <option value="Wikidata" />
+            <option value="TVMaze" />
+            <option value="Wikipedia" />
+          </datalist>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="admin-mapping-status" className="text-sm font-medium text-foreground">
+            Mapping status
+          </label>
+          <Select
+            value={mappingStatus}
+            onValueChange={(value) => onMappingStatusChange(value as MappingStatusFilter)}
+          >
+            <SelectTrigger id="admin-mapping-status" className="w-44 rounded-xl">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="mapped">Mapped</SelectItem>
+              <SelectItem value="missing">Missing</SelectItem>
+              <SelectItem value="error">Error</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <label
           htmlFor="admin-rating-region"
@@ -2010,7 +2085,7 @@ function ContentTab({
         <EmptyState
           icon={Database}
           title="No titles found"
-          desc="Try a different search term."
+          desc="Try a different search term or adjust the filters."
         />
       ) : (
         <div className="flex flex-col gap-3">
@@ -2116,10 +2191,10 @@ function ContentTab({
           ))}
         </div>
       )}
-      {malformedRefreshTimestamp && (
+      {hasContentFilters && (
         <div
           className="mt-4 flex items-center justify-center gap-3"
-          aria-label="Malformed timestamp results pagination"
+          aria-label="Filtered content results pagination"
         >
           <Button
             type="button"
@@ -2459,6 +2534,9 @@ export function AliasReview({
     const attempt = ++aliasRefreshAttempt.current;
     setIsAliasRefreshTimedOut(false);
     setIsRefreshingAliasViews(true);
+    if (requests.includes("catalog") || requests.includes("collisions")) {
+      setIsCollisionResultsStale(true);
+    }
     const recoveryTimer = window.setTimeout(() => {
       if (aliasRefreshAttempt.current !== attempt) return;
       setIsAliasRefreshTimedOut(true);

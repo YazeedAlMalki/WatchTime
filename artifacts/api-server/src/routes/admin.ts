@@ -20,7 +20,7 @@ import {
   safetySyncRunsTable,
   type SafetySyncRunResult,
 } from "@workspace/db";
-import { and, asc, eq, sql, desc, gte, gt, lt, lte, ilike, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, sql, desc, gte, gt, lt, lte, ilike, inArray, isNull, or, exists } from "drizzle-orm";
 import {
   DeleteAdminContentAliasBody,
   UpdateAdminContributionBody,
@@ -537,6 +537,9 @@ router.get("/content", async (req, res) => {
   if (req.query.q !== undefined && typeof req.query.q !== "string") {
     return res.status(400).json({ error: "Invalid content search query" });
   }
+  if (req.query.mappingProvider !== undefined && typeof req.query.mappingProvider !== "string") {
+    return res.status(400).json({ error: "Invalid mapping provider filter" });
+  }
   const regionParam = req.query.region;
   const malformedRefreshTimestampParam = req.query.malformedRefreshTimestamp;
   const malformedRefreshTimestampAllRegionsParam =
@@ -560,7 +563,7 @@ router.get("/content", async (req, res) => {
   if (rawOffset !== undefined &&
     (typeof rawOffset !== "string" || !/^(0|[1-9]\d*)$/.test(rawOffset) ||
       !Number.isSafeInteger(Number(rawOffset)))) {
-    return res.status(400).json({ error: "Invalid timestamp review offset" });
+    return res.status(400).json({ error: "Invalid content offset" });
   }
   const offset = rawOffset === undefined ? 0 : Number(rawOffset);
   const parsedParams = SearchAdminContentQueryParams.safeParse(req.query);
@@ -580,14 +583,27 @@ router.get("/content", async (req, res) => {
     typeof malformedRefreshTimestampProviderParam === "string"
       ? malformedRefreshTimestampProviderParam.trim()
       : "";
+  const mappingProvider = parsedParams.data.mappingProvider?.trim() || undefined;
+  const mappingStatus = parsedParams.data.mappingStatus;
+  const hasMappingFilter = Boolean(mappingProvider || mappingStatus);
   if (malformedRefreshTimestampAllRegions && !malformedRefreshTimestampProvider) {
     return res.status(400).json({ error: "A provider is required for all-regions timestamp review" });
   }
+  const matchingProviderMapping = hasMappingFilter
+    ? exists(db.select({ id: providerMappingsTable.id })
+      .from(providerMappingsTable)
+      .where(and(
+        eq(providerMappingsTable.titleId, titlesTable.id),
+        mappingProvider ? eq(providerMappingsTable.provider, mappingProvider) : undefined,
+        mappingStatus ? eq(providerMappingsTable.status, mappingStatus) : undefined,
+      )))
+    : undefined;
   const makeTitleQuery = () => db
     .select()
     .from(titlesTable)
     .where(and(
       q ? ilike(titlesTable.name, `%${q}%`) : undefined,
+      matchingProviderMapping,
     ))
     .orderBy(desc(titlesTable.popularity), asc(titlesTable.id));
   const buildContent = async (
@@ -682,9 +698,19 @@ router.get("/content", async (req, res) => {
   };
 
   if (!malformedRefreshTimestamp) {
-    const titles = await makeTitleQuery().limit(CONTENT_REVIEW_PAGE_SIZE);
+    const titles = await makeTitleQuery()
+      .limit(CONTENT_REVIEW_PAGE_SIZE + (hasMappingFilter ? 1 : 0))
+      .offset(offset);
     return res.json(await buildContent(titles));
   }
+  const mappingFilterSql = hasMappingFilter
+    ? sql`AND EXISTS (
+        SELECT 1 FROM provider_mappings AS mapping
+        WHERE mapping.title_id = title.id
+        ${mappingProvider ? sql`AND mapping.provider = ${mappingProvider}` : sql``}
+        ${mappingStatus ? sql`AND mapping.status = ${mappingStatus}` : sql``}
+      )`
+    : sql``;
   const regions = malformedRefreshTimestampAllRegions
     ? RATING_REGIONS
     : [RATING_REGIONS_BY_CODE[region]];
@@ -729,6 +755,7 @@ router.get("/content", async (req, res) => {
         AND rating.source_name = ${malformedRefreshTimestampProvider || "Wikidata"}
         AND item.value->>'category' = regions.system
         AND (${q} = '' OR title.name ILIKE ${`%${q}%`})
+        ${mappingFilterSql}
     )
     SELECT title.id, selected.region
     FROM titles AS title

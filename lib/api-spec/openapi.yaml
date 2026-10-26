@@ -998,9 +998,19 @@ paths:
           in: query
           description: When enabled with malformedRefreshTimestamp and a provider, review matching malformed selected ratings across every rating region
           schema: { type: boolean, default: false }
+        - name: mappingProvider
+          in: query
+          description: Return titles with a provider mapping from this provider
+          schema: { type: string }
+        - name: mappingStatus
+          in: query
+          description: Return titles with a provider mapping in this status
+          schema:
+            type: string
+            enum: [mapped, missing, error]
         - name: offset
           in: query
-          description: Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
+          description: Zero-based offset into matching titles when a content filter is enabled
           schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":

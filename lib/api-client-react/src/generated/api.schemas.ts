@@ -1373,11 +1373,28 @@ malformedRefreshTimestampProvider?: string;
  */
 malformedRefreshTimestampAllRegions?: boolean;
 /**
- * Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
+ * Return titles with a provider mapping from this provider
+ */
+mappingProvider?: string;
+/**
+ * Return titles with a provider mapping in this status
+ */
+mappingStatus?: SearchAdminContentMappingStatus;
+/**
+ * Zero-based offset into matching titles when a content filter is enabled
  * @minimum 0
  */
 offset?: number;
 };
+
+export type SearchAdminContentMappingStatus = typeof SearchAdminContentMappingStatus[keyof typeof SearchAdminContentMappingStatus];
+
+
+export const SearchAdminContentMappingStatus = {
+  mapped: 'mapped',
+  missing: 'missing',
+  error: 'error',
+} as const;
 
 export type ListAdminContentAliasesParams = {
 q?: string;

@@ -90,6 +90,96 @@ describe("admin Content review timestamp filter", () => {
     expect(timestampFilteredResponse.body[0].mappings).toMatchObject(expectedMappings);
   });
 
+  it("filters titles by mapping provider and status without changing the selected safety rating", async () => {
+    const fixturePrefix = "mapping-status-filter-fixture";
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-mapped`, type: "movie", popularity: 4 },
+      { name: `${fixturePrefix}-missing`, type: "movie", popularity: 3 },
+      { name: `${fixturePrefix}-error`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-other-provider`, type: "movie", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    await db.insert(providerMappingsTable).values([
+      { titleId: titles[0].id, provider: "Mapping Filter Fixture", externalId: "mapped-id", status: "mapped" },
+      { titleId: titles[1].id, provider: "Mapping Filter Fixture", externalId: null, status: "missing" },
+      { titleId: titles[2].id, provider: "Mapping Filter Fixture", externalId: null, status: "error" },
+      { titleId: titles[3].id, provider: "Another Mapping Provider", externalId: null, status: "missing" },
+    ]);
+    await db.insert(safetyRecordsTable).values({
+      titleId: titles[1].id,
+      sourceName: "Wikidata",
+      status: "available",
+      isCommunity: false,
+      url: "https://www.wikidata.org/wiki/Qmapping-filter-fixture",
+      updatedAt: new Date("2026-10-20T00:00:00.000Z"),
+      items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
+    });
+
+    const baseline = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}`)
+      .expect(200);
+    const providerFiltered = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&mappingProvider=Mapping+Filter+Fixture`)
+      .expect(200);
+    expect(providerFiltered.body.map((item: any) => item.name)).toEqual([
+      `${fixturePrefix}-mapped`,
+      `${fixturePrefix}-missing`,
+      `${fixturePrefix}-error`,
+    ]);
+
+    const missingFiltered = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&mappingProvider=Mapping+Filter+Fixture&mappingStatus=missing`)
+      .expect(200);
+    expect(missingFiltered.body.map((item: any) => item.name)).toEqual([`${fixturePrefix}-missing`]);
+    expect(missingFiltered.body[0].selectedRating).toEqual(
+      baseline.body.find((item: any) => item.id === titles[1].id).selectedRating,
+    );
+
+    const allMissing = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&mappingStatus=missing`)
+      .expect(200);
+    expect(allMissing.body.map((item: any) => item.name)).toEqual([
+      `${fixturePrefix}-missing`,
+      `${fixturePrefix}-other-provider`,
+    ]);
+    const errorFiltered = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&mappingProvider=Mapping+Filter+Fixture&mappingStatus=error&offset=1`)
+      .expect(200);
+    expect(errorFiltered.body).toEqual([]);
+  });
+
+  it("keeps provider and status filters applied across content pages", async () => {
+    const fixturePrefix = "mapping-filter-page-fixture";
+    const titles = await db.insert(titlesTable).values(
+      Array.from({ length: 51 }, (_, index) => ({
+        name: `${fixturePrefix}-${String(index).padStart(3, "0")}`,
+        type: "movie" as const,
+        popularity: 100 - index,
+      })),
+    ).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+    await db.insert(providerMappingsTable).values(
+      titles.map(({ id }) => ({
+        titleId: id,
+        provider: "Page Fixture Provider",
+        externalId: null,
+        status: "missing",
+      })),
+    );
+
+    const firstPage = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&mappingProvider=Page+Fixture+Provider&mappingStatus=missing`)
+      .expect(200);
+    expect(firstPage.body).toHaveLength(51);
+    expect(firstPage.body[0].name).toBe(`${fixturePrefix}-000`);
+    expect(firstPage.body[49].name).toBe(`${fixturePrefix}-049`);
+
+    const secondPage = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&mappingProvider=Page+Fixture+Provider&mappingStatus=missing&offset=50`)
+      .expect(200);
+    expect(secondPage.body.map((item: any) => item.name)).toEqual([`${fixturePrefix}-050`]);
+  });
   it("stops returning a title and region after its malformed timestamp is repaired", async () => {
     const fixturePrefix = "timestamp-filter-fixture-20260929";
     const titles = await db.insert(titlesTable).values([
@@ -491,6 +581,8 @@ describe("admin Content review timestamp filter", () => {
   it("rejects invalid filter query values", async () => {
     await request(app).get("/api/admin/content?malformedRefreshTimestamp=sometimes").expect(400);
     await request(app).get("/api/admin/content?malformedRefreshTimestamp=true&offset=-1").expect(400);
+    await request(app).get("/api/admin/content?mappingStatus=unknown").expect(400);
+    await request(app).get("/api/admin/content?mappingProvider=one&mappingProvider=two").expect(400);
     await request(app)
       .get("/api/admin/content?malformedRefreshTimestamp=true&malformedRefreshTimestampAllRegions=true")
       .expect(400);

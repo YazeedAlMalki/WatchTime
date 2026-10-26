@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { RatingRegion } from './ratingRegion';
+import type { SearchAdminContentMappingStatus } from './searchAdminContentMappingStatus';
 
 export type SearchAdminContentParams = {
 q?: string;
@@ -26,7 +27,15 @@ malformedRefreshTimestampProvider?: string;
  */
 malformedRefreshTimestampAllRegions?: boolean;
 /**
- * Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled
+ * Return titles with a provider mapping from this provider
+ */
+mappingProvider?: string;
+/**
+ * Return titles with a provider mapping in this status
+ */
+mappingStatus?: SearchAdminContentMappingStatus;
+/**
+ * Zero-based offset into matching titles when a content filter is enabled
  * @minimum 0
  */
 offset?: number;

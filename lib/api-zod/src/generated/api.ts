@@ -1352,7 +1352,9 @@ export const SearchAdminContentQueryParams = zod.object({
   "malformedRefreshTimestamp": zod.coerce.boolean().default(searchAdminContentQueryMalformedRefreshTimestampDefault).describe('Return only titles whose selected regional rating has a malformed refresh timestamp'),
   "malformedRefreshTimestampProvider": zod.coerce.string().optional().describe('When malformed refresh timestamp filtering is enabled, restrict results to selected ratings from this provider'),
   "malformedRefreshTimestampAllRegions": zod.coerce.boolean().default(searchAdminContentQueryMalformedRefreshTimestampAllRegionsDefault).describe('When enabled with malformedRefreshTimestamp and a provider, review matching malformed selected ratings across every rating region'),
-  "offset": zod.coerce.number().int().min(searchAdminContentQueryOffsetMin).default(searchAdminContentQueryOffsetDefault).describe('Zero-based offset into matching titles when the malformed refresh timestamp filter is enabled')
+  "mappingProvider": zod.coerce.string().optional().describe('Return titles with a provider mapping from this provider'),
+  "mappingStatus": zod.enum(['mapped', 'missing', 'error']).optional().describe('Return titles with a provider mapping in this status'),
+  "offset": zod.coerce.number().int().min(searchAdminContentQueryOffsetMin).default(searchAdminContentQueryOffsetDefault).describe('Zero-based offset into matching titles when a content filter is enabled')
 })
 
 export const SearchAdminContentResponseItem = zod.object({

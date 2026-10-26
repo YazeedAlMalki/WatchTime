@@ -2,6 +2,7 @@ import { RATING_REGIONS, type RatingRegion } from "@workspace/rating-regions";
 import type { ListAdminContentAliasesOwnership } from "@workspace/api-client-react";
 
 export type AliasOwnershipFilter = ListAdminContentAliasesOwnership | "all";
+export type MappingStatusFilter = "mapped" | "missing" | "error" | "all";
 
 export const ADMIN_TABS = [
   "dashboard",
@@ -24,6 +25,8 @@ export function readAdminContentUrl(search: string): {
   malformedRefreshTimestamp: boolean;
   malformedRefreshTimestampProvider: string;
   malformedRefreshTimestampAllRegions: boolean;
+  mappingProvider: string;
+  mappingStatus: MappingStatusFilter;
   contentOffset: number;
   aliasId: number | null;
   aliasPage: number;
@@ -35,7 +38,7 @@ export function readAdminContentUrl(search: string): {
     RATING_REGIONS.find(({ code }) => code === rawRegion)?.code ?? "US";
   const rawTab = params.get("tab");
   const tab = ADMIN_TABS.find((value) => value === rawTab)
-    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("malformedRefreshTimestamp") || params.has("malformedRefreshTimestampAllRegions") || params.has("offset") || params.has("aliasId") ? "content" : "dashboard");
+    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("malformedRefreshTimestamp") || params.has("malformedRefreshTimestampAllRegions") || params.has("mappingProvider") || params.has("mappingStatus") || params.has("offset") || params.has("aliasId") ? "content" : "dashboard");
   const rawOwnership = params.get("ownership");
   const ownership = tab === "content" && (rawOwnership === "provider" || rawOwnership === "editorial")
     ? rawOwnership
@@ -75,6 +78,14 @@ export function readAdminContentUrl(search: string): {
       : "";
   const malformedRefreshTimestampAllRegions =
     malformedRefreshTimestamp && params.get("malformedRefreshTimestampAllRegions") === "true";
+  const mappingProvider = tab === "content" ? params.get("mappingProvider")?.trim() ?? "" : "";
+  const rawMappingStatus = tab === "content" ? params.get("mappingStatus") : null;
+  const mappingStatus: MappingStatusFilter =
+    rawMappingStatus === "mapped" || rawMappingStatus === "missing" || rawMappingStatus === "error"
+      ? rawMappingStatus
+      : "all";
+  const contentFiltered =
+    malformedRefreshTimestamp || Boolean(mappingProvider) || mappingStatus !== "all";
   const rawOffset = params.get("offset");
   const parsedOffset = rawOffset !== null && /^(0|[1-9]\d*)$/.test(rawOffset) &&
       Number.isSafeInteger(Number(rawOffset))
@@ -88,7 +99,9 @@ export function readAdminContentUrl(search: string): {
     malformedRefreshTimestamp,
     malformedRefreshTimestampProvider,
     malformedRefreshTimestampAllRegions,
-    contentOffset: malformedRefreshTimestamp ? parsedOffset : 0,
+    mappingProvider,
+    mappingStatus,
+    contentOffset: contentFiltered ? parsedOffset : 0,
     aliasId: tab === "content" ? aliasId : null,
     aliasPage: tab === "content" && aliasCursor && parsedAliasPage !== null
       ? parsedAliasPage
@@ -109,6 +122,8 @@ export function adminContentUrl(
   aliasPage?: number,
   aliasCursor?: string | null,
   malformedRefreshTimestampAllRegions?: boolean,
+  mappingProvider?: string,
+  mappingStatus?: MappingStatusFilter,
 ): string {
   const params = new URLSearchParams(search);
   const current = readAdminContentUrl(search);
@@ -162,12 +177,29 @@ export function adminContentUrl(
       : false;
     if (selectedAllRegions) params.set("malformedRefreshTimestampAllRegions", "true");
     else params.delete("malformedRefreshTimestampAllRegions");
+    const selectedMappingProvider = mappingProvider ?? current.mappingProvider;
+    if (selectedMappingProvider) params.set("mappingProvider", selectedMappingProvider);
+    else params.delete("mappingProvider");
+    const selectedMappingStatus = mappingStatus ?? current.mappingStatus;
+    if (selectedMappingStatus !== "all") params.set("mappingStatus", selectedMappingStatus);
+    else params.delete("mappingStatus");
+    const contentHasFilter =
+      selectedMalformedRefreshTimestamp ||
+      Boolean(selectedMappingProvider) ||
+      selectedMappingStatus !== "all";
+    if (contentHasFilter && selectedContentOffset > 0) {
+      params.set("offset", String(selectedContentOffset));
+    } else {
+      params.delete("offset");
+    }
   } else {
     params.delete("q");
     params.delete("ownership");
     params.delete("malformedRefreshTimestamp");
     params.delete("malformedRefreshTimestampProvider");
     params.delete("malformedRefreshTimestampAllRegions");
+    params.delete("mappingProvider");
+    params.delete("mappingStatus");
     params.delete("offset");
     params.delete("aliasCursor");
     params.delete("aliasPage");
