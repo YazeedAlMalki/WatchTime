@@ -6,9 +6,11 @@ import {
   catalogSyncItemsTable,
   catalogSyncRunsTable,
   db,
+  pool,
   usersTable,
 } from "@workspace/db";
 import { and, eq, getTableName, inArray } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 
 const adminId = "test-catalog-refresh-audit";
 const missingAdminId = `test-catalog-refresh-audit-missing-${randomUUID()}`;
@@ -211,6 +213,118 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
         .where(eq(catalogSyncRunsTable.id, sourceRunId))).toEqual(sourceRunsBefore);
       expect(await db.select().from(catalogSyncItemsTable)
         .where(eq(catalogSyncItemsTable.runId, sourceRunId))).toEqual(sourceItemsBefore);
+    }
+  });
+
+  it("keeps the request and worker waiting while the audit write is held", async () => {
+    const { path, sourceRunId } = await prepareRequest();
+    const action = trigger === "retry" ? "retry_catalog_refresh" : "start_catalog_refresh";
+    // Reserve a distinct connection before the request opens its transaction.
+    const observerClient = await pool.connect();
+    const observer = drizzle(observerClient);
+    let releaseAudit!: () => void;
+    const auditGate = new Promise<void>((resolve) => { releaseAudit = resolve; });
+    let auditHeld = false;
+    let queuedRunId: number | undefined;
+    let requestSettled = false;
+    let rowsSeenAtExecution: unknown;
+    const realTransaction = db.transaction.bind(db);
+    const transactionSpy = vi.spyOn(db, "transaction");
+    transactionSpy.mockImplementationOnce(
+      (fn: Parameters<typeof db.transaction>[0]) => realTransaction((tx) => {
+        const wrapped = new Proxy(tx, {
+          get(target, prop) {
+            if (prop === "insert") {
+              return (table: Parameters<typeof tx.insert>[0]) => {
+                if (getTableName(table) === getTableName(adminAuditLogTable)) {
+                  return { values: async (audit: typeof adminAuditLogTable.$inferInsert) => {
+                    expect(audit).toMatchObject({
+                      adminId, action, entityType: "catalog_sync",
+                      ...(sourceRunId === undefined ? {} : { details: { sourceRunId } }),
+                    });
+                    queuedRunId = audit.entityId!;
+                    createdRunIds.push(queuedRunId);
+                    // Prove the queue exists inside the still-uncommitted transaction.
+                    expect(await tx.select().from(catalogSyncRunsTable)
+                      .where(eq(catalogSyncRunsTable.id, queuedRunId))).toEqual([
+                      expect.objectContaining({ status: "queued", trigger, totalItems: 1 }),
+                    ]);
+                    expect(await tx.select().from(catalogSyncItemsTable)
+                      .where(eq(catalogSyncItemsTable.runId, queuedRunId))).toEqual([
+                      expect.objectContaining({ itemKey: "catalog-refresh-audit-item", status: "queued" }),
+                    ]);
+                    auditHeld = true;
+                    await auditGate;
+                    await target.insert(adminAuditLogTable).values(audit);
+                  } };
+                }
+                return target.insert(table);
+              };
+            }
+            const value = Reflect.get(target, prop);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return fn(wrapped);
+      }) as ReturnType<typeof db.transaction>,
+    );
+    runCatalogSync.mockImplementationOnce(async () => {
+      // Visibility here proves commit preceded worker execution, not just the response.
+      rowsSeenAtExecution = {
+        runs: await observer.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, queuedRunId!)),
+        items: await observer.select().from(catalogSyncItemsTable)
+          .where(eq(catalogSyncItemsTable.runId, queuedRunId!)),
+        audits: await observer.select().from(adminAuditLogTable).where(and(
+          eq(adminAuditLogTable.adminId, adminId),
+          eq(adminAuditLogTable.entityId, queuedRunId!),
+        )),
+      };
+      return { selected: 1, succeeded: 1, episodes: 0, failures: [] };
+    });
+    // Calling .then starts Supertest immediately without awaiting the held response.
+    const responsePromise = request(app).post(path).then(
+      (response) => { requestSettled = true; return response; },
+      (error) => { requestSettled = true; throw error; },
+    );
+
+    try {
+      await vi.waitFor(() => expect(auditHeld).toBe(true));
+      expect(queuedRunId).toBeDefined();
+      expect(await observer.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, queuedRunId!))).toEqual([]);
+      expect(await observer.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, queuedRunId!))).toEqual([]);
+      expect(await observer.select().from(adminAuditLogTable).where(and(
+        eq(adminAuditLogTable.adminId, adminId),
+        eq(adminAuditLogTable.entityId, queuedRunId!),
+      ))).toEqual([]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(requestSettled).toBe(false);
+      expect(runCatalogSync).not.toHaveBeenCalled();
+
+      releaseAudit();
+      const response = await responsePromise;
+      expect(response.status).toBe(202);
+      expect(response.body.runId).toBe(queuedRunId);
+      await vi.waitFor(() => expect(rowsSeenAtExecution).toEqual({
+        runs: [expect.objectContaining({ id: queuedRunId, trigger, totalItems: 1 })],
+        items: [expect.objectContaining({ runId: queuedRunId, itemKey: "catalog-refresh-audit-item" })],
+        audits: [expect.objectContaining({
+          adminId, action, entityType: "catalog_sync", entityId: queuedRunId,
+          details: sourceRunId === undefined ? null : { sourceRunId },
+        })],
+      }));
+      expect(runCatalogSync).toHaveBeenCalledOnce();
+    } finally {
+      // Always unblock the transaction and drain detached work before teardown.
+      releaseAudit();
+      try {
+        const response = await responsePromise;
+        if (response.status === 202) await waitForFinishedRun(response.body.runId);
+      } finally {
+        observerClient.release();
+      }
     }
   });
 
