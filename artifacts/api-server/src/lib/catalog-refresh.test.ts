@@ -91,6 +91,9 @@ describe("catalog refresh startup failure", () => {
         const [run] = await db.select().from(catalogSyncRunsTable)
           .where(eq(catalogSyncRunsTable.id, runId));
         expect(run.status).toBe("failed");
+        expect(run).toMatchObject({
+          totalItems: 2, processedItems: 2, failedItems: 2, succeededItems: 0, episodesUpdated: 0,
+        });
         expect(run.error).toBe(startupError.message);
         expect(run.finishedAt).toBeInstanceOf(Date);
         const failedItems = await db.select().from(catalogSyncItemsTable)
@@ -166,6 +169,9 @@ describe("catalog refresh startup failure", () => {
         const [run] = await db.select().from(catalogSyncRunsTable)
           .where(eq(catalogSyncRunsTable.id, runId));
         expect(run.status).toBe("failed");
+        expect(run).toMatchObject({
+          totalItems: 4, processedItems: 4, failedItems: 3, succeededItems: 1, episodesUpdated: 5,
+        });
         const results = await db.select().from(catalogSyncItemsTable)
           .where(eq(catalogSyncItemsTable.runId, runId));
         expect(results).toHaveLength(4);
@@ -611,6 +617,8 @@ describe("catalog refresh recovery", () => {
     expect(recovered.map((run) => run.status)).toEqual(["failed", "failed", "queued", "queued", "succeeded"]);
     expect(recovered[0].error).toContain("retry the failed titles");
     expect(recovered[1].error).toBe("Catalog refresh was interrupted by a server restart");
+    expect(recovered[0]).toMatchObject({ processedItems: 2, failedItems: 1 });
+    expect(recovered[1]).toMatchObject({ processedItems: 1, failedItems: 1 });
     for (const run of recovered.slice(0, 2)) {
       expect(run.finishedAt).toBeInstanceOf(Date);
     }
@@ -626,6 +634,43 @@ describe("catalog refresh recovery", () => {
     await recoverInterruptedRuns(cutoff);
     expect(await db.select().from(catalogSyncRunsTable)
       .where(inArray(catalogSyncRunsTable.id, createdRunIds)).orderBy(catalogSyncRunsTable.id)).toEqual(recovered);
+  });
+
+  it.each(["queued", "running"] as const)("reconciles mixed item totals when recovering a %s run without losing successful work", async (status) => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const staleAt = new Date(cutoff.getTime() - 1_000);
+    const [run] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual", status, createdAt: staleAt,
+      totalItems: 4, processedItems: 2, succeededItems: 1, failedItems: 1, episodesUpdated: 7,
+    }).returning();
+    createdRunIds.push(run.id);
+    const originalItems = await db.insert(catalogSyncItemsTable).values(
+      (["succeeded", "failed", "running", "queued"] as const).map((itemStatus) => ({
+        runId: run.id, itemKey: `reconcile-${run.id}-${itemStatus}`,
+        title: `Reconcile ${itemStatus}`, provider: "TVMaze", status: itemStatus,
+        startedAt: itemStatus === "queued" ? null : staleAt,
+        finishedAt: ["succeeded", "failed"].includes(itemStatus) ? staleAt : null,
+        error: itemStatus === "failed" ? "Original provider failure" : null,
+      })),
+    ).returning();
+
+    await recoverInterruptedRuns(cutoff);
+    const [recovered] = await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, run.id));
+    const results = await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, run.id)).orderBy(catalogSyncItemsTable.id);
+    expect(recovered).toMatchObject({
+      status: "failed", totalItems: 4, processedItems: results.length,
+      failedItems: results.filter((item) => item.status === "failed").length,
+      succeededItems: 1, episodesUpdated: 7,
+    });
+    expect(recovered.failedItems).toBe(3);
+    expect(results.slice(0, 2)).toEqual(originalItems.slice(0, 2));
+    expect(results.slice(2).every((item) => item.status === "failed" && item.error === recovered.error)).toBe(true);
+
+    await recoverInterruptedRuns(cutoff);
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, run.id))).toEqual([recovered]);
   });
 
   it("does not recover queued work while its local startup write is pending, even when stale", async () => {
@@ -1313,6 +1358,8 @@ describe("catalog refresh recovery", () => {
       expect(actual).toEqual({
         ...original,
         status: "failed",
+        processedItems: 4,
+        failedItems: 3,
         error: original.status === "queued" ? queuedExplanation : runningExplanation,
         finishedAt: expect.any(Date),
       });

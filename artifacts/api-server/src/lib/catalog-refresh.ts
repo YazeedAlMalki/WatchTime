@@ -20,6 +20,24 @@ const activeRunIds = new Set<number>();
 
 type CatalogRefreshTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
+async function reconcileTerminatedRunCounts(tx: CatalogRefreshTransaction, runIds: number[]) {
+  if (!runIds.length) return;
+  // Count persisted outcomes after unfinished titles have been failed, rather
+  // than relying on the last progress callback. Preserve successful work totals.
+  await tx.update(catalogSyncRunsTable).set({
+    processedItems: sql`(
+      select count(*)::int from ${catalogSyncItemsTable}
+      where ${catalogSyncItemsTable.runId} = ${catalogSyncRunsTable.id}
+        and ${catalogSyncItemsTable.status} in ('succeeded', 'failed')
+    )`,
+    failedItems: sql`(
+      select count(*)::int from ${catalogSyncItemsTable}
+      where ${catalogSyncItemsTable.runId} = ${catalogSyncRunsTable.id}
+        and ${catalogSyncItemsTable.status} = 'failed'
+    )`,
+  }).where(inArray(catalogSyncRunsTable.id, runIds));
+}
+
 export async function startCatalogRefresh(
   trigger: "scheduled" | "manual" | "retry",
   items: SourceItem[] = sourceItems,
@@ -121,6 +139,7 @@ async function executeRun(runId: number, items: SourceItem[]) {
             eq(catalogSyncItemsTable.runId, runId),
             inArray(catalogSyncItemsTable.status, ["queued", "running"]),
           ));
+        await reconcileTerminatedRunCounts(tx, [runId]);
       });
     } catch (recordError) {
       logger.error({ err: recordError, runId }, "unable to record catalog refresh failure");
@@ -260,6 +279,7 @@ export async function recoverInterruptedRuns(
           inArray(catalogSyncItemsTable.status, ["queued", "running"]),
         ));
       }
+      await reconcileTerminatedRunCounts(tx, runs.map((run) => run.id));
       return runs;
     });
     if (interrupted.length) {
