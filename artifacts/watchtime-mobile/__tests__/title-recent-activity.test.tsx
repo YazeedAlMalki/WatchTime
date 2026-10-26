@@ -68,7 +68,12 @@ jest.mock('@/lib/home-startup', () => ({
   },
 }));
 jest.mock('@/lib/startup-metrics', () => ({ markStartup: jest.fn() }));
-jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
+jest.mock('@expo/vector-icons', () => ({
+  Feather: ({ name }: { name: string }) => {
+    const { Text } = require('react-native');
+    return <Text testID={`icon-${name}`} />;
+  },
+}));
 jest.mock('@/components/ui', () => {
   const { Text } = require('react-native');
   return {
@@ -363,6 +368,88 @@ it.each([
   });
   await act(async () => shows.unmount());
   client.clear();
+});
+
+it('keeps the watched checkmark, account progress, in-progress feed and History unchanged after a rejected unmark', async () => {
+  mockTitleIsMovie = false;
+  mockMovieWatched = false;
+  mockWatched = true;
+  jest.clearAllMocks();
+  const failure = new Error('Offline');
+  mockUnmarkRequest.mockRejectedValueOnce(failure);
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
+  const showsKey = [
+    ...getGetMyShowsQueryKey(), 'account', 'activity-user', 'infinite',
+    { q: undefined, status: undefined },
+  ];
+  const inProgressKey = [
+    ...getGetMyInProgressShowsQueryKey(), 'account', 'activity-user', 'infinite',
+  ];
+  client.setQueryData(activityKey, mockActivity());
+  client.setQueryData(showsKey, { pages: [mockShows()], pageParams: [undefined] });
+  client.setQueryData(inProgressKey, { pages: [mockInProgress()], pageParams: [undefined] });
+  const invalidate = jest.spyOn(client, 'invalidateQueries');
+  const screens = await render(
+    <QueryClientProvider client={client}>
+      <View testID="mounted-my-shows"><MyShowsScreen /></View>
+      <View testID="open-title-detail"><TitleDetailScreen /></View>
+    </QueryClientProvider>,
+  );
+  try {
+    const shows = within(screens.getByTestId('mounted-my-shows'));
+    const detail = within(screens.getByTestId('open-title-detail'));
+    await waitFor(() => expect(shows.getByText('1 / 2 episodes')).toBeTruthy());
+    expect(shows.getByTestId('mark-watched-102')).toBeTruthy();
+    await fireEvent.press(detail.getByTestId('season-1'));
+    await waitFor(() => expect(detail.getByTestId('episode-check-101')).toBeEnabled());
+    expect(within(detail.getByTestId('episode-check-101')).getByTestId('icon-check')).toBeTruthy();
+    expect(detail.getByText('1/2 watched')).toBeTruthy();
+
+    const snapshots = [activityKey, showsKey, inProgressKey].map((key) => ({
+      key, data: client.getQueryData(key), state: client.getQueryState(key),
+    }));
+    await fireEvent.press(detail.getByTestId('episode-check-101'));
+    await waitFor(() => {
+      expect(mockUnmarkRequest).toHaveBeenCalledTimes(1);
+      expect(client.getMutationCache().getAll()).toHaveLength(1);
+      expect(client.getMutationCache().getAll()[0].state.status).toBe('error');
+      expect(detail.getByTestId('episode-check-101')).toBeEnabled();
+    });
+    expect(client.getMutationCache().getAll()[0].state.error).toBe(failure);
+    expect(mockUnmarkRequest).toHaveBeenCalledWith({ episodeId: 101 });
+    expect(mockMarkRequest).not.toHaveBeenCalled();
+    expect(mockWatched).toBe(true);
+    expect(within(detail.getByTestId('episode-check-101')).getByTestId('icon-check')).toBeTruthy();
+    expect(detail.getByText('1/2 watched')).toBeTruthy();
+    expect(shows.getByText('1 / 2 episodes')).toBeTruthy();
+    expect(shows.getByTestId('mark-watched-102')).toBeTruthy();
+    expect(shows.queryByTestId('mark-watched-101')).toBeNull();
+
+    await fireEvent.press(shows.getByTestId('tab-history'));
+    await waitFor(() => expect(shows.getByTestId('history-item-42')).toBeTruthy());
+    expect(shows.getByText('S1E1 — Pilot')).toBeTruthy();
+    expect(shows.queryByText('No recent activity')).toBeNull();
+    for (const { key, data, state } of snapshots) {
+      expect(client.getQueryData(key)).toBe(data);
+      expect(client.getQueryState(key)).toEqual(state);
+      expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+    }
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(mockShowsFetch).not.toHaveBeenCalled();
+    expect(mockInProgressFetch).not.toHaveBeenCalled();
+    expect(mockActivityFetch).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => screens.unmount());
+    invalidate.mockRestore();
+    client.clear();
+  }
 });
 
 it.each([
