@@ -77,6 +77,15 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const catalogRunIds: number[] = [];
 const scheduledTimers: NodeJS.Timeout[] = [];
 
+function cleanupSchedulerTimers() {
+  for (const timer of scheduledTimers.splice(0)) clearTimeout(timer);
+  if (vi.isFakeTimers()) vi.clearAllTimers();
+  // Restore spies while their clock is still installed; otherwise real-timer
+  // restoration can reinstall a spy that fake timers captured at startup.
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+}
+
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -99,11 +108,19 @@ async function waitForCatalogRun(
 
 let healthSnapshot: (typeof integrationHealthTable.$inferSelect)[] = [];
 beforeEach(async () => {
+  expect(vi.isFakeTimers()).toBe(false);
+  expect(vi.isMockFunction(globalThis.setTimeout)).toBe(false);
+  expect(vi.isMockFunction(globalThis.clearTimeout)).toBe(false);
+  // Recovery and its transaction, worker startup, and provider locking can
+  // overlap. Open their connections on real timers rather than relying on
+  // earlier cases to have warmed the pool before a fake clock is installed.
+  const clients = await Promise.all(Array.from({ length: 4 }, () => pool.connect()));
+  for (const client of clients) client.release();
   healthSnapshot = await db.select().from(integrationHealthTable);
 });
 
 afterEach(async () => {
-  for (const timer of scheduledTimers.splice(0)) clearTimeout(timer);
+  cleanupSchedulerTimers();
   if (catalogRunIds.length) {
     await db.delete(catalogSyncRunsTable).where(inArray(catalogSyncRunsTable.id, catalogRunIds.splice(0)));
   }
@@ -891,7 +908,6 @@ describe("real catalog sync", () => {
   });
 
   it("schedules exactly one first refresh after 1,000 ms when no completed runs exist", async () => {
-    vi.restoreAllMocks();
     // Isolate only the latest-run read; shared catalog history stays intact.
     const captureTimers = () => vi.spyOn(globalThis, "setTimeout").mockClear();
     let setTimeoutSpy: ReturnType<typeof captureTimers> | undefined;
@@ -922,9 +938,7 @@ describe("real catalog sync", () => {
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1_000);
       expect(vi.getTimerCount()).toBe(1);
     } finally {
-      vi.clearAllTimers();
-      vi.restoreAllMocks();
-      vi.useRealTimers();
+      cleanupSchedulerTimers();
     }
   });
 
@@ -1043,7 +1057,6 @@ describe("real catalog sync", () => {
   );
 
   it("keeps exactly one weekly successor when enqueue succeeds but successor recovery fails", async () => {
-    vi.restoreAllMocks();
     const originalItems = [...sourceItems];
     const fetchMock = vi.fn(() => {
       throw new Error("Provider requests must not run while testing recovery scheduling");
@@ -1174,9 +1187,7 @@ describe("real catalog sync", () => {
         expect(fetchMock).not.toHaveBeenCalled();
       }
     } finally {
-      vi.clearAllTimers();
-      vi.restoreAllMocks();
-      vi.useRealTimers();
+      cleanupSchedulerTimers();
     }
   });
 
@@ -1306,8 +1317,6 @@ describe("real catalog sync", () => {
         const timerIndex = setTimeoutSpy.mock.calls.map(([, delay]) => delay).lastIndexOf(WEEK_MS);
         const existingTimer = setTimeoutSpy.mock.results[timerIndex]?.value as NodeJS.Timeout;
         expect(existingTimer).toBeDefined();
-        const pendingTimers = vi.getTimerCount();
-        expect(pendingTimers).toBeGreaterThan(0);
 
         const failure = new Error(`Startup ${failurePoint} database failure`);
         if (failurePoint === "recovery") {
@@ -1318,13 +1327,12 @@ describe("real catalog sync", () => {
 
         await expect(scheduleCatalogRefresh()).rejects.toBe(failure);
 
+        // Real recovery may add pool timeouts; only the captured refresh
+        // timer must remain pending, with no replacement scheduled.
         expect(clearTimeoutSpy).not.toHaveBeenCalledWith(existingTimer);
-        expect(vi.getTimerCount()).toBe(pendingTimers);
         expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === WEEK_MS)).toHaveLength(1);
       } finally {
-        vi.clearAllTimers();
-        vi.restoreAllMocks();
-        vi.useRealTimers();
+        cleanupSchedulerTimers();
       }
     },
   );
