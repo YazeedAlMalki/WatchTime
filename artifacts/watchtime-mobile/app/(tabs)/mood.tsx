@@ -553,7 +553,7 @@ export default function MoodScreen() {
                   <View key={k}>
                     <Text style={[s.label, ta, { color: c.foreground, marginBottom: 6 }]}>{t(`content.${k}`)}</Text>
                     <Wrap rtl={rtl}>
-                      {[0, 1, 2, 3, 4].map((lv) => <Chip key={lv} c={c} rtl={rtl} testID={`chip-limit-${k}-${lv}`} label={t(LIMIT_LABEL[lv])} a11y={`${t(`content.${k}`)}: ${t(LIMIT_LABEL[lv])}`} on={f.limits[k] === lv} onPress={() => actions.setLimit(k, lv)} />)}
+                      {[0, 1, 2, 3, 4].map((lv) => <Chip key={lv} c={c} rtl={rtl} testID={`chip-limit-${k}-${lv}`} label={t(LIMIT_LABEL[lv])} a11y={t('content.limit.accessibility', { category: t(`content.${k}`), level: t(LIMIT_LABEL[lv]) })} on={f.limits[k] === lv} onPress={() => actions.setLimit(k, lv)} />)}
                     </Wrap>
                   </View>
                 ))}

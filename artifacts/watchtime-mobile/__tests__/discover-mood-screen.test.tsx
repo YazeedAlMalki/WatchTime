@@ -9,6 +9,9 @@ jest.mock(
 jest.mock("expo-image", () => ({ Image: () => null }));
 jest.mock("expo-haptics", () => ({ selectionAsync: jest.fn() }));
 jest.mock("@expo/vector-icons", () => ({ Feather: () => null }));
+jest.mock("@/lib/discover-mood/use-sync", () => ({
+  useMoodDiscoverySync: jest.fn(),
+}));
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
@@ -87,5 +90,49 @@ describe("WatchTime Mobile mood-discovery screen", () => {
     expect(view.getByTestId("text-runtime-value").props.children).toBe(
       t("runtime.custom.value", { n: 119 }),
     );
+  });
+
+  it("announces every content limit by category and level in English and Arabic", async () => {
+    const view = await render(<MoodScreen />);
+    await waitFor(() => expect(view.queryByTestId("mood-loading")).toBeNull());
+
+    const limits = {
+      sexualContent: 0,
+      violence: 1,
+      gore: 2,
+      profanity: 3,
+      animalHarm: 4,
+      disturbingThemes: 2,
+    };
+    const levelKeys = ["content.none", "content.mild", "content.moderate", "content.strong", "content.any"];
+    await act(async () => {
+      actions.resetForNewSession();
+      actions.setLang("en");
+      actions.patchFilters({ limits });
+    });
+
+    await fireEvent.press(view.getByTestId("button-fine-tune"));
+    await fireEvent.press(view.getByTestId("toggle-section-content"));
+
+    for (const lang of ["en", "ar"] as const) {
+      await act(async () => actions.setLang(lang));
+      const { t } = getT(lang);
+
+      for (const category of CONTENT_KEYS) {
+        for (const level of [0, 1, 2, 3, 4]) {
+          const option = view.getByTestId(`chip-limit-${category}-${level}`);
+          expect(option.props.accessibilityRole).toBe("button");
+          expect(option.props.accessibilityLabel).toBe(t("content.limit.accessibility", {
+            category: t(`content.${category}`),
+            level: t(levelKeys[level]),
+          }));
+          expect(option.props.accessibilityState?.selected).toBe(limits[category] === level);
+        }
+      }
+    }
+
+    await fireEvent.press(view.getByTestId("chip-limit-sexualContent-3"));
+    expect(view.getByTestId("chip-limit-sexualContent-0").props.accessibilityState?.selected).toBe(false);
+    expect(view.getByTestId("chip-limit-sexualContent-3").props.accessibilityState?.selected).toBe(true);
   });
 });

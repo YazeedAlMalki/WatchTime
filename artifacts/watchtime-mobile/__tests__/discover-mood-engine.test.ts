@@ -2,6 +2,7 @@ import { MOVIES } from "../lib/discover-mood/data";
 import { classify, evaluate } from "../lib/discover-mood/engine";
 import { defaultFilters } from "../lib/discover-mood/store";
 import { getT } from "../lib/discover-mood/i18n";
+import { CONTENT_KEYS } from "../lib/discover-mood/types";
 import type { Movie, StoreState } from "../lib/discover-mood/types";
 
 jest.mock(
@@ -65,5 +66,26 @@ describe("WatchTime Mobile mood discovery", () => {
     expect(getT("ar").dir).toBe("rtl");
     expect(getT("ar").t("title")).toBe("اكتشف حسب المزاج");
     expect(getT("ar").t("results.heading", { n: 3 })).toContain("3");
+  });
+
+  it("translates accessibility names for every content category and limit level", () => {
+    const levels = ["content.none", "content.mild", "content.moderate", "content.strong", "content.any"];
+
+    for (const lang of ["en", "ar"] as const) {
+      const { t } = getT(lang);
+      for (const category of CONTENT_KEYS) {
+        for (const levelKey of levels) {
+          const label = t("content.limit.accessibility", {
+            category: t(`content.${category}`),
+            level: t(levelKey),
+          });
+          const expected = lang === "en"
+            ? `${t(`content.${category}`)} limit: ${t(levelKey)}`
+            : `مستوى ${t(`content.${category}`)}: ${t(levelKey)}`;
+
+          expect(label).toBe(expected);
+        }
+      }
+    }
   });
 });
