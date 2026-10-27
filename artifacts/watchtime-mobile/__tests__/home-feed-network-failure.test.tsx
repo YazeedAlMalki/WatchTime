@@ -123,16 +123,17 @@ describe('Home network refetch failures with a real query client', () => {
     fetchSpy.mockRestore();
   });
 
-  it.each(['cards', 'empty sections'] as const)(
+  it.each(['cards', 'empty sections', 'empty sections recovering to cards'] as const)(
     'keeps cached %s through a failed focused retry and clears only the successfully retried warning',
     async (cachedContent) => {
-    const empty = cachedContent === 'empty sections';
+    const empty = cachedContent !== 'cards';
+    const recoversToCards = cachedContent !== 'empty sections';
     const feeds = feedCases.map((feed) => ({
       ...feed,
       data: empty ? [] : feed.data,
-      recoveredData: empty ? [] : feed.recoveredData,
+      recoveredData: recoversToCards ? feed.recoveredData : [],
       card: empty ? feed.empty : feed.card,
-      recoveredCard: empty ? feed.empty : feed.recoveredCard,
+      recoveredCard: recoversToCards ? feed.recoveredCard : feed.empty,
     }));
     for (const feed of feeds) {
       client.setQueryData(feed.key, feed.data);
@@ -256,7 +257,10 @@ describe('Home network refetch failures with a real query client', () => {
         expect(client.getQueryState(feed.key)?.status).toBe('success');
         expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
       });
-      if (!empty) expect(screen.queryByText(feed.card)).toBeNull();
+      if (recoversToCards) {
+        expect(screen.queryByText(feed.card)).toBeNull();
+        expect(screen.queryByText(feed.empty)).toBeNull();
+      }
       expect(client.getQueryData(feed.key)).toEqual(feed.recoveredData);
       expectUnrelatedSectionsUnchanged();
       // Other sections must not refetch or lose their independent warning.
