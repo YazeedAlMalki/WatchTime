@@ -590,6 +590,33 @@ describe("admin alternate-title review", () => {
     ).toBeNull();
   });
 
+  it("warns that removing the edited alias discards its unsaved changes", async () => {
+    confirmSpy.mockReturnValue(true);
+    render();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Unfinished correction",
+      );
+    });
+    act(() => button(container, "Remove").click());
+    await flushEffects();
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Remove “Shared Local Title” from The Lighthouse? This will also discard your unsaved changes. This cannot be undone.",
+    );
+    expect(mocks.deleteMutation.mutate).toHaveBeenCalledWith(
+      {
+        id: initialAlias.id,
+        data: { expectedUpdatedAt: initialAlias.updatedAt },
+      },
+      expect.any(Object),
+    );
+  });
+
   it("keeps a saved correction visible when a successful refresh removes it from the active search", async () => {
     let updateFilteredAliases!: () => void;
     const firstSavedRecord: AdminContentAliasRecord = {

@@ -3223,9 +3223,13 @@ export function AliasReview({
   };
 
   const removeAlias = (alias: AdminContentAlias) => {
+    const discardsUnsavedChanges =
+      editingId === alias.id && hasUnsavedAliasChanges();
     if (
       !window.confirm(
-        `Remove “${alias.alias}” from ${alias.titleName}? This cannot be undone.`,
+        discardsUnsavedChanges
+          ? `Remove “${alias.alias}” from ${alias.titleName}? This will also discard your unsaved changes. This cannot be undone.`
+          : `Remove “${alias.alias}” from ${alias.titleName}? This cannot be undone.`,
       )
     ) {
       return;
