@@ -498,6 +498,65 @@ describe("admin Content review timestamp filter", () => {
     expect(secondPage.body.map((item: any) => item.name)).toEqual([`${fixturePrefix}-26`, `${fixturePrefix}-26`]);
   });
 
+  it("includes only the region whose selected rating has a malformed timestamp", async () => {
+    const fixturePrefix = "timestamp-region-specific-fixture-20261027";
+    const [title] = await db.insert(titlesTable).values({
+      name: fixturePrefix,
+      type: "movie",
+      popularity: 100,
+    }).returning({ id: titlesTable.id });
+    titleIds.push(title.id);
+
+    const rating = (category: string, label: string, url: string) => ({
+      titleId: title.id,
+      sourceName: "Timestamp Region Fixture Provider",
+      status: "available" as const,
+      isCommunity: false,
+      tier: 1,
+      url,
+      updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+      items: [{ category, label, score: null, maxScore: null, description: null }],
+    });
+    const rollback = new Error("Rollback legacy duplicate-rating fixture");
+    try {
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`DROP INDEX safety_records_title_source_unique_idx`);
+        const records = await tx.insert(safetyRecordsTable).values([
+          rating("MPAA", "PG-13", `https://provider.example/ratings/${title.id}/us`),
+          rating("BBFC", "12A", `https://provider.example/ratings/${title.id}/gb`),
+        ]).returning({ id: safetyRecordsTable.id });
+        await tx.update(safetyRecordsTable)
+          .set({ updatedAt: sql`'infinity'::timestamp` })
+          .where(eq(safetyRecordsTable.id, records[1].id));
+
+        const selectSpy = vi.spyOn(db, "select").mockImplementation(tx.select.bind(tx));
+        const executeSpy = vi.spyOn(db, "execute").mockImplementation(tx.execute.bind(tx));
+        try {
+          const response = await request(app)
+            .get(`/api/admin/content?q=${fixturePrefix}&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Timestamp+Region+Fixture+Provider&malformedRefreshTimestampAllRegions=true`)
+            .expect(200);
+
+          expect(response.body).toHaveLength(1);
+          expect(response.body[0]).toMatchObject({
+            name: fixturePrefix,
+            selectedRating: {
+              region: "GB",
+              label: "12A",
+              sourceName: "Timestamp Region Fixture Provider",
+              refreshTimestampMalformed: true,
+            },
+          });
+        } finally {
+          selectSpy.mockRestore();
+          executeSpy.mockRestore();
+        }
+        throw rollback;
+      });
+    } catch (error) {
+      if (error !== rollback) throw error;
+    }
+  });
+
   it("counts malformed provider rows that cannot be assigned to a supported region", async () => {
     const fixturePrefix = "timestamp-unclassified-fixture-20261021";
     const provider = `${fixturePrefix} Provider`;
