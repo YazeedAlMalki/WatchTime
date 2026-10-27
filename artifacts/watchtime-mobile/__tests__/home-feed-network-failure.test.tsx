@@ -151,6 +151,22 @@ describe('Home network refetch failures with a real query client', () => {
     // Seeded data is fresh: every network call below must come from an
     // actual refresh or section retry, rather than an incidental mount.
     expect(fetchSpy).not.toHaveBeenCalled();
+    const successfulCache = feeds.map((feed) => ({
+      data: client.getQueryData(feed.key),
+      dataUpdatedAt: client.getQueryState(feed.key)!.dataUpdatedAt,
+    }));
+    const expectSuccessfulCacheRetained = (index: number) => {
+      const feed = feeds[index];
+      expect(client.getQueryData(feed.key)).toBe(successfulCache[index].data);
+      expect(client.getQueryState(feed.key)?.dataUpdatedAt).toBe(successfulCache[index].dataUpdatedAt);
+      if (empty) {
+        expect(client.getQueryData(feed.key)).toEqual([]);
+        expect(screen.getByText(feed.empty)).toBeTruthy();
+        expect(screen.queryByText(feedCases[index].card)).toBeNull();
+        expect(screen.queryByText(feedCases[index].recoveredCard)).toBeNull();
+      }
+      expect(screen.queryByTestId(feed.fullError)).toBeNull();
+    };
 
     // The native ScrollView mock retains refreshControl as a prop rather
     // than mounting it as a host child in the test renderer.
@@ -168,7 +184,11 @@ describe('Home network refetch failures with a real query client', () => {
       }
     });
     expect(fetchSpy).toHaveBeenCalledTimes(3);
-    for (const feed of feeds) {
+    expect(fetchSpy.mock.calls.map(([path]) => path).sort()).toEqual(
+      feeds.map((feed) => feed.path).sort(),
+    );
+    for (const [index, feed] of feeds.entries()) {
+      expectSuccessfulCacheRetained(index);
       expect(client.getQueryData(feed.key)).toEqual(feed.data);
       expect(screen.getByText(feed.card)).toBeTruthy();
       expect(screen.queryByTestId(feed.fullError)).toBeNull();
@@ -190,8 +210,14 @@ describe('Home network refetch failures with a real query client', () => {
           expect(client.getQueryState(other.key)).toBe(unrelatedStates[otherIndex]);
           expect(screen.getByText(otherIndex < index ? other.recoveredCard : other.card)).toBeTruthy();
           expect(screen.queryByTestId(other.fullError)).toBeNull();
-          if (otherIndex > index) expect(screen.getByTestId(other.warning)).toBeTruthy();
-          else expect(screen.queryByTestId(other.warning)).toBeNull();
+          if (otherIndex > index) {
+            expect(within(screen.getByTestId(other.warning)).getByText(
+              `Couldn't refresh ${other.section}. Results may be out of date.`,
+            )).toBeTruthy();
+            expectSuccessfulCacheRetained(otherIndex);
+          } else {
+            expect(screen.queryByTestId(other.warning)).toBeNull();
+          }
         }
       };
 
@@ -207,6 +233,7 @@ describe('Home network refetch failures with a real query client', () => {
       await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(callsBeforeRetry + 1));
       expect(fetchSpy.mock.calls[callsBeforeRetry][0]).toBe(feed.path);
       expect(client.getQueryState(feed.key)?.fetchStatus).toBe('fetching');
+      expectSuccessfulCacheRetained(index);
       expect(client.getQueryData(feed.key)).toEqual(feed.data);
       expect(screen.getByText(feed.card)).toBeTruthy();
       expect(screen.getByTestId(feed.warning)).toBeTruthy();
@@ -223,6 +250,7 @@ describe('Home network refetch failures with a real query client', () => {
           `Couldn't refresh ${feed.section}. Results may be out of date.`,
         )).toBeTruthy();
       });
+      expectSuccessfulCacheRetained(index);
       expect(client.getQueryData(feed.key)).toEqual(feed.data);
       expect(screen.getByText(feed.card)).toBeTruthy();
       expect(screen.queryByTestId(feed.fullError)).toBeNull();
@@ -240,6 +268,7 @@ describe('Home network refetch failures with a real query client', () => {
       await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(callsBeforeRetry + 2));
       expect(fetchSpy.mock.calls[callsBeforeRetry + 1][0]).toBe(feed.path);
       expect(client.getQueryState(feed.key)?.fetchStatus).toBe('fetching');
+      expectSuccessfulCacheRetained(index);
       expect(screen.getByText(feed.card)).toBeTruthy();
       expect(screen.getByTestId(feed.warning)).toBeTruthy();
       expect(screen.queryByTestId(feed.fullError)).toBeNull();
