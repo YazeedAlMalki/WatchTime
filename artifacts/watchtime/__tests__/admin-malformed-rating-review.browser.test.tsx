@@ -26,7 +26,29 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     useSearchAdminContent: (params: Parameters<typeof api.useSearchAdminContent>[0]) =>
       useQuery({
         queryKey: api.getSearchAdminContentQueryKey(params),
-        queryFn: async () => [],
+        queryFn: async () => params?.malformedRegionalClassification
+          ? [{
+              id: 901,
+              name: "Unsupported rating fixture",
+              type: "movie" as const,
+              mappings: [],
+              selectedRating: null,
+              unclassifiedRating: {
+                provider: "Fixture Provider",
+                recordId: 902,
+                classifications: [{
+                  category: "UNSUPPORTED_SYSTEM",
+                  label: "12",
+                  score: null,
+                  maxScore: null,
+                  description: null,
+                  severity: null,
+                }],
+                rawUpdatedAt: "infinity",
+                sourceUrl: "https://provider.example/ratings/902",
+              },
+            }]
+          : [],
         enabled: false,
       }),
     useListAdminContentAliases: () => ({
@@ -53,6 +75,60 @@ vi.mock("@clerk/react", () => ({
 
 import AdminPage from "@/pages/admin";
 
+it("shows raw provider and classification details for an unclassified malformed record", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&malformedRegionalClassification=true&malformedRefreshTimestampProvider=Fixture+Provider",
+  );
+  const params = {
+    malformedRegionalClassification: true,
+    malformedRefreshTimestampProvider: "Fixture Provider",
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(
+    getSearchAdminContentQueryKey(params),
+    [{
+      id: 901,
+      name: "Unsupported rating fixture",
+      type: "movie" as const,
+      mappings: [],
+      selectedRating: null,
+      unclassifiedRating: {
+        provider: "Fixture Provider",
+        recordId: 902,
+        classifications: [{
+          category: "UNSUPPORTED_SYSTEM",
+          label: "12",
+          score: null,
+          maxScore: null,
+          description: null,
+          severity: null,
+        }],
+        rawUpdatedAt: "infinity",
+        sourceUrl: "https://provider.example/ratings/902",
+      },
+    }],
+  );
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Unsupported rating fixture", { exact: true })).toBeVisible();
+    await expect.element(page.getByText(/Unclassified Fixture Provider rating/)).toBeVisible();
+    await expect.element(page.getByText(/UNSUPPORTED_SYSTEM: 12/)).toBeVisible();
+    await expect.element(page.getByText(/raw timestamp: infinity/)).toBeVisible();
+    await expect.element(page.getByRole("link", { name: "View provider record" }))
+      .toHaveAttribute("href", "https://provider.example/ratings/902");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
 function malformedRating(id: number, name: string) {
   return {
     id,

@@ -87,6 +87,52 @@ describe("admin content URL", () => {
     expect(readAdminContentUrl(new URL(cleared, "https://example.test").search).ownership).toBe("all");
   });
 
+  it("opens a separate provider-specific review for unsupported regional classifications", () => {
+    const reviewUrl = adminContentUrl(
+      "?tab=dashboard",
+      "content",
+      "US",
+      "",
+      "all",
+      undefined,
+      false,
+      0,
+      "Fixture Provider",
+      undefined,
+      undefined,
+      false,
+      "",
+      "all",
+      true,
+    );
+    expect(reviewUrl).toContain("malformedRegionalClassification=true");
+    expect(reviewUrl).toContain("malformedRefreshTimestampProvider=Fixture+Provider");
+    expect(reviewUrl).not.toContain("malformedRefreshTimestamp=true");
+    expect(readAdminContentUrl(new URL(reviewUrl, "https://example.test").search))
+      .toMatchObject({
+        tab: "content",
+        malformedRefreshTimestamp: false,
+        malformedRegionalClassification: true,
+        malformedRefreshTimestampProvider: "Fixture Provider",
+        contentOffset: 0,
+      });
+
+    const secondPage = adminContentUrl(
+      new URL(reviewUrl, "https://example.test").search,
+      "content",
+      "US",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      50,
+    );
+    expect(readAdminContentUrl(new URL(secondPage, "https://example.test").search))
+      .toMatchObject({ malformedRegionalClassification: true, contentOffset: 50 });
+    expect(adminContentUrl(new URL(reviewUrl, "https://example.test").search, "reports", "US"))
+      .not.toContain("malformedRegionalClassification");
+  });
+
   it("shares the malformed timestamp filter with the selected region and search", () => {
     const filtered = adminContentUrl(
       "?tab=content&region=GB&q=Alien&ownership=provider",

@@ -1344,6 +1344,7 @@ export const RetryCatalogRefreshResponse = zod.object({
 export const searchAdminContentQueryRegionDefault = `US`;
 export const searchAdminContentQueryMalformedRefreshTimestampDefault = false;
 export const searchAdminContentQueryMalformedRefreshTimestampAllRegionsDefault = false;
+export const searchAdminContentQueryMalformedRegionalClassificationDefault = false;
 export const searchAdminContentQueryOffsetDefault = 0;
 export const searchAdminContentQueryOffsetMin = 0;
 
@@ -1355,6 +1356,7 @@ export const SearchAdminContentQueryParams = zod.object({
   "malformedRefreshTimestamp": zod.coerce.boolean().default(searchAdminContentQueryMalformedRefreshTimestampDefault).describe('Return only titles whose selected regional rating has a malformed refresh timestamp'),
   "malformedRefreshTimestampProvider": zod.coerce.string().optional().describe('When malformed refresh timestamp filtering is enabled, restrict results to selected ratings from this provider'),
   "malformedRefreshTimestampAllRegions": zod.coerce.boolean().default(searchAdminContentQueryMalformedRefreshTimestampAllRegionsDefault).describe('When enabled with malformedRefreshTimestamp and a provider, review matching malformed selected ratings across every rating region'),
+  "malformedRegionalClassification": zod.coerce.boolean().default(searchAdminContentQueryMalformedRegionalClassificationDefault).describe('Return malformed safety records whose classifications do not match any supported regional system'),
   "mappingProvider": zod.coerce.string().optional().describe('Return titles with a provider mapping from this provider'),
   "mappingStatus": zod.enum(['mapped', 'missing', 'error']).optional().describe('Return titles with a provider mapping in this status'),
   "offset": zod.coerce.number().int().min(searchAdminContentQueryOffsetMin).default(searchAdminContentQueryOffsetDefault).describe('Zero-based offset into matching titles when a content filter is enabled')
@@ -1383,7 +1385,21 @@ export const SearchAdminContentResponseItem = zod.object({
   "sourceUrl": zod.string().nullable()
 }).and(zod.object({
   "refreshTimestampMalformed": zod.boolean()
-})),zod.null()])
+})),zod.null()]),
+  "unclassifiedRating": zod.union([zod.object({
+  "provider": zod.string(),
+  "recordId": zod.int(),
+  "classifications": zod.array(zod.object({
+  "category": zod.string().nullable(),
+  "label": zod.string().nullable(),
+  "score": zod.number().nullable(),
+  "maxScore": zod.number().nullable(),
+  "description": zod.string().nullable(),
+  "severity": zod.string().nullable()
+})),
+  "rawUpdatedAt": zod.string(),
+  "sourceUrl": zod.string().nullable()
+}),zod.null()]).optional()
 })
 export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseItem)
 

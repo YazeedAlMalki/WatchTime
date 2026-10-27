@@ -432,7 +432,8 @@ describe("admin Content review timestamp filter", () => {
     const titles = await db.insert(titlesTable).values([
       { name: `${fixturePrefix}-us-classified`, type: "movie", popularity: 3 },
       { name: `${fixturePrefix}-gb-classified`, type: "movie", popularity: 2 },
-      { name: `${fixturePrefix}-unclassified`, type: "movie", popularity: 1 },
+      { name: `${fixturePrefix}-unsupported`, type: "movie", popularity: 1 },
+      { name: `${fixturePrefix}-missing`, type: "movie", popularity: 0 },
     ]).returning({ id: titlesTable.id });
     titleIds.push(...titles.map(({ id }) => id));
 
@@ -470,14 +471,23 @@ describe("admin Content review timestamp filter", () => {
         updatedAt: new Date("2026-10-01T00:00:00.000Z"),
         items: [{ category: "UNSUPPORTED_SYSTEM", label: "12", score: null, maxScore: null, description: null }],
       },
+      {
+        titleId: titles[3].id,
+        sourceName: provider,
+        status: "available",
+        isCommunity: false,
+        url: `https://provider.example/ratings/${titles[3].id}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [],
+      },
     ]).returning({ id: safetyRecordsTable.id });
     await markMalformedTimestamp(records.map(({ id }) => id));
 
     const alerts = await request(app).get("/api/admin/integrations").expect(200);
     expect(alerts.body.find((row: any) => row.provider === provider))
       .toMatchObject({
-        malformedRefreshTimestampCount: 3,
-        malformedRefreshTimestampUnclassifiedCount: 1,
+        malformedRefreshTimestampCount: 4,
+        malformedRefreshTimestampUnclassifiedCount: 2,
       });
 
     const review = await request(app)
@@ -494,6 +504,40 @@ describe("admin Content review timestamp filter", () => {
         .malformedRefreshTimestampUnclassifiedCount,
     ).toBe(alerts.body.find((row: any) => row.provider === provider)
       .malformedRefreshTimestampCount);
+
+    const unclassifiedReview = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&malformedRegionalClassification=true&malformedRefreshTimestampProvider=${encodeURIComponent(provider)}`)
+      .expect(200);
+    expect(unclassifiedReview.body.map((item: any) => item.name)).toEqual([
+      `${fixturePrefix}-unsupported`,
+      `${fixturePrefix}-missing`,
+    ]);
+    expect(unclassifiedReview.body[0]).toMatchObject({
+      selectedRating: null,
+      unclassifiedRating: {
+        provider,
+        recordId: records[2].id,
+        classifications: [{ category: "UNSUPPORTED_SYSTEM", label: "12" }],
+        rawUpdatedAt: "infinity",
+        sourceUrl: `https://provider.example/ratings/${titles[2].id}`,
+      },
+    });
+    expect(unclassifiedReview.body[1]).toMatchObject({
+      selectedRating: null,
+      unclassifiedRating: {
+        provider,
+        recordId: records[3].id,
+        classifications: [],
+        rawUpdatedAt: "infinity",
+        sourceUrl: `https://provider.example/ratings/${titles[3].id}`,
+      },
+    });
+
+    const regionalReview = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=${encodeURIComponent(provider)}`)
+      .expect(200);
+    expect(regionalReview.body.map((item: any) => item.name))
+      .toEqual([`${fixturePrefix}-us-classified`]);
   });
 
   it("loads mappings only for malformed-timestamp results and preserves mapping values", async () => {
@@ -602,6 +646,9 @@ describe("admin Content review timestamp filter", () => {
   it("rejects invalid filter query values", async () => {
     await request(app).get("/api/admin/content?malformedRefreshTimestamp=sometimes").expect(400);
     await request(app).get("/api/admin/content?malformedRefreshTimestamp=true&offset=-1").expect(400);
+    await request(app)
+      .get("/api/admin/content?malformedRefreshTimestamp=true&malformedRegionalClassification=true")
+      .expect(400);
     await request(app).get("/api/admin/content?mappingStatus=unknown").expect(400);
     await request(app).get("/api/admin/content?mappingProvider=one&mappingProvider=two").expect(400);
     await request(app)

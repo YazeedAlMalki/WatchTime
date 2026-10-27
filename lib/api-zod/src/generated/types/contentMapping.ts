@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AdminRegionalRating } from './adminRegionalRating';
+import type { AdminUnclassifiedRating } from './adminUnclassifiedRating';
 import type { ContentMappingType } from './contentMappingType';
 import type { ProviderMapping } from './providerMapping';
 
@@ -19,4 +20,5 @@ export interface ContentMapping {
   imdbId?: string | null;
   mappings: ProviderMapping[];
   selectedRating: AdminRegionalRating | null;
+  unclassifiedRating?: AdminUnclassifiedRating | null;
 }

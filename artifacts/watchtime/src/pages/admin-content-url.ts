@@ -23,6 +23,7 @@ export function readAdminContentUrl(search: string): {
   q: string;
   ownership: AliasOwnershipFilter;
   malformedRefreshTimestamp: boolean;
+  malformedRegionalClassification: boolean;
   malformedRefreshTimestampProvider: string;
   malformedRefreshTimestampAllRegions: boolean;
   mappingProvider: string;
@@ -38,7 +39,7 @@ export function readAdminContentUrl(search: string): {
     RATING_REGIONS.find(({ code }) => code === rawRegion)?.code ?? "US";
   const rawTab = params.get("tab");
   const tab = ADMIN_TABS.find((value) => value === rawTab)
-    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("malformedRefreshTimestamp") || params.has("malformedRefreshTimestampAllRegions") || params.has("mappingProvider") || params.has("mappingStatus") || params.has("offset") || params.has("aliasId") ? "content" : "dashboard");
+    ?? (params.has("region") || params.has("q") || params.has("ownership") || params.has("malformedRefreshTimestamp") || params.has("malformedRefreshTimestampAllRegions") || params.has("malformedRegionalClassification") || params.has("mappingProvider") || params.has("mappingStatus") || params.has("offset") || params.has("aliasId") ? "content" : "dashboard");
   const rawOwnership = params.get("ownership");
   const ownership = tab === "content" && (rawOwnership === "provider" || rawOwnership === "editorial")
     ? rawOwnership
@@ -72,8 +73,10 @@ export function readAdminContentUrl(search: string): {
     ? rawAliasCursor
     : null;
   const malformedRefreshTimestamp = tab === "content" && params.get("malformedRefreshTimestamp") === "true";
+  const malformedRegionalClassification =
+    tab === "content" && params.get("malformedRegionalClassification") === "true";
   const malformedRefreshTimestampProvider =
-    malformedRefreshTimestamp
+    malformedRefreshTimestamp || malformedRegionalClassification
       ? params.get("malformedRefreshTimestampProvider")?.trim() ?? ""
       : "";
   const malformedRefreshTimestampAllRegions =
@@ -85,7 +88,8 @@ export function readAdminContentUrl(search: string): {
       ? rawMappingStatus
       : "all";
   const contentFiltered =
-    malformedRefreshTimestamp || Boolean(mappingProvider) || mappingStatus !== "all";
+    malformedRefreshTimestamp || malformedRegionalClassification ||
+    Boolean(mappingProvider) || mappingStatus !== "all";
   const rawOffset = params.get("offset");
   const parsedOffset = rawOffset !== null && /^(0|[1-9]\d*)$/.test(rawOffset) &&
       Number.isSafeInteger(Number(rawOffset))
@@ -97,6 +101,7 @@ export function readAdminContentUrl(search: string): {
     q: tab === "content" ? (params.get("q") ?? "") : "",
     ownership,
     malformedRefreshTimestamp,
+    malformedRegionalClassification,
     malformedRefreshTimestampProvider,
     malformedRefreshTimestampAllRegions,
     mappingProvider,
@@ -124,6 +129,7 @@ export function adminContentUrl(
   malformedRefreshTimestampAllRegions?: boolean,
   mappingProvider?: string,
   mappingStatus?: MappingStatusFilter,
+  malformedRegionalClassification?: boolean,
 ): string {
   const params = new URLSearchParams(search);
   const current = readAdminContentUrl(search);
@@ -154,15 +160,25 @@ export function adminContentUrl(
     if (aliasId !== undefined) params.set("aliasId", String(aliasId));
     const selectedMalformedRefreshTimestamp =
       malformedRefreshTimestamp ?? readAdminContentUrl(search).malformedRefreshTimestamp;
-    if (selectedMalformedRefreshTimestamp) params.set("malformedRefreshTimestamp", "true");
+    const selectedMalformedRegionalClassification =
+      malformedRegionalClassification ?? current.malformedRegionalClassification;
+    if (selectedMalformedRefreshTimestamp && !selectedMalformedRegionalClassification) {
+      params.set("malformedRefreshTimestamp", "true");
+    }
     else params.delete("malformedRefreshTimestamp");
+    if (selectedMalformedRegionalClassification) {
+      params.set("malformedRegionalClassification", "true");
+    } else {
+      params.delete("malformedRegionalClassification");
+    }
     const selectedContentOffset = contentOffset ?? readAdminContentUrl(search).contentOffset;
     if (selectedMalformedRefreshTimestamp && selectedContentOffset > 0) {
       params.set("offset", String(selectedContentOffset));
     } else {
       params.delete("offset");
     }
-    const selectedMalformedProvider = selectedMalformedRefreshTimestamp
+    const selectedMalformedProvider =
+      selectedMalformedRefreshTimestamp || selectedMalformedRegionalClassification
       ? malformedRefreshTimestampProvider ??
         readAdminContentUrl(search).malformedRefreshTimestampProvider
       : "";
@@ -171,7 +187,8 @@ export function adminContentUrl(
     } else {
       params.delete("malformedRefreshTimestampProvider");
     }
-    const selectedAllRegions = selectedMalformedRefreshTimestamp
+    const selectedAllRegions = selectedMalformedRefreshTimestamp &&
+      !selectedMalformedRegionalClassification
       ? malformedRefreshTimestampAllRegions ??
         readAdminContentUrl(search).malformedRefreshTimestampAllRegions
       : false;
@@ -185,6 +202,7 @@ export function adminContentUrl(
     else params.delete("mappingStatus");
     const contentHasFilter =
       selectedMalformedRefreshTimestamp ||
+      selectedMalformedRegionalClassification ||
       Boolean(selectedMappingProvider) ||
       selectedMappingStatus !== "all";
     if (contentHasFilter && selectedContentOffset > 0) {
@@ -198,6 +216,7 @@ export function adminContentUrl(
     params.delete("malformedRefreshTimestamp");
     params.delete("malformedRefreshTimestampProvider");
     params.delete("malformedRefreshTimestampAllRegions");
+    params.delete("malformedRegionalClassification");
     params.delete("mappingProvider");
     params.delete("mappingStatus");
     params.delete("offset");

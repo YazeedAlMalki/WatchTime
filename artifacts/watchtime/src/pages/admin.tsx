@@ -115,6 +115,7 @@ export default function AdminPage() {
     q,
     ownership,
     malformedRefreshTimestamp,
+    malformedRegionalClassification,
     malformedRefreshTimestampProvider,
     malformedRefreshTimestampAllRegions,
     mappingProvider,
@@ -137,7 +138,42 @@ export default function AdminPage() {
     setLocation(adminContentUrl(search, "content", region, undefined, nextOwnership));
   };
   const selectMalformedRefreshTimestamp = (enabled: boolean) => {
-    setLocation(adminContentUrl(search, "content", region, undefined, undefined, undefined, enabled, 0));
+    setLocation(adminContentUrl(
+      search,
+      "content",
+      region,
+      undefined,
+      undefined,
+      undefined,
+      enabled,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      false,
+    ));
+  };
+  const selectMalformedRegionalClassification = (enabled: boolean) => {
+    setLocation(adminContentUrl(
+      search,
+      "content",
+      region,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      enabled,
+    ));
   };
   const selectMalformedRefreshTimestampAllRegions = (enabled: boolean) => {
     setLocation(adminContentUrl(
@@ -201,6 +237,24 @@ export default function AdminPage() {
       provider,
       undefined,
       undefined,
+      true,
+    );
+  const reviewUnclassifiedRatingsUrl = (provider: string) =>
+    adminContentUrl(
+      search,
+      "content",
+      region,
+      "",
+      "all",
+      undefined,
+      false,
+      0,
+      provider,
+      undefined,
+      undefined,
+      false,
+      "",
+      "all",
       true,
     );
 
@@ -300,9 +354,9 @@ export default function AdminPage() {
                 status.
               </p>
               <p className="mt-1 text-sm">
-                Each alert separates all malformed provider records from those
-                without a supported regional classification, which do not
-                appear in regional review.
+                Counts include malformed provider records without a supported
+                regional classification. The separate unclassified review keeps
+                those records out of regional results and lets you inspect them.
               </p>
               <ul className="mt-4 space-y-3">
                 {integrations
@@ -325,20 +379,28 @@ export default function AdminPage() {
                         {(integration.malformedRefreshTimestampUnclassifiedCount ?? 0).toLocaleString()}{" "}
                         without a supported regional classification
                       </span>
-                      <Button
-                        asChild
-                        size="sm"
-                        variant="outline"
-                        className="border-orange-400 text-orange-900 dark:border-orange-700 dark:text-orange-200"
-                      >
-                        <Link
-                          href={reviewMalformedTimestampsUrl(
-                            integration.provider,
-                          )}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          asChild
+                          size="sm"
+                          variant="outline"
+                          className="border-orange-400 text-orange-900 dark:border-orange-700 dark:text-orange-200"
                         >
-                          Review affected ratings
-                        </Link>
-                      </Button>
+                          <Link href={reviewMalformedTimestampsUrl(integration.provider)}>
+                            Review regional ratings
+                          </Link>
+                        </Button>
+                        <Button
+                          asChild
+                          size="sm"
+                          variant="outline"
+                          className="border-orange-400 text-orange-900 dark:border-orange-700 dark:text-orange-200"
+                        >
+                          <Link href={reviewUnclassifiedRatingsUrl(integration.provider)}>
+                            Review unclassified
+                          </Link>
+                        </Button>
+                      </div>
                     </li>
                   ))}
               </ul>
@@ -424,6 +486,7 @@ export default function AdminPage() {
             aliasOwnership={ownership}
             onAliasOwnershipChange={selectAliasOwnership}
             malformedRefreshTimestamp={malformedRefreshTimestamp}
+            malformedRegionalClassification={malformedRegionalClassification}
             malformedRefreshTimestampProvider={malformedRefreshTimestampProvider}
             malformedRefreshTimestampAllRegions={malformedRefreshTimestampAllRegions}
             mappingProvider={mappingProvider}
@@ -431,6 +494,7 @@ export default function AdminPage() {
             onMappingProviderChange={selectContentMappingProvider}
             onMappingStatusChange={selectContentMappingStatus}
             onMalformedRefreshTimestampChange={selectMalformedRefreshTimestamp}
+            onMalformedRegionalClassificationChange={selectMalformedRegionalClassification}
             onMalformedRefreshTimestampAllRegionsChange={selectMalformedRefreshTimestampAllRegions}
             contentOffset={contentOffset}
             onContentOffsetChange={selectContentPage}
@@ -1273,6 +1337,7 @@ function ContentTab({
   aliasOwnership,
   onAliasOwnershipChange,
   malformedRefreshTimestamp,
+  malformedRegionalClassification,
   malformedRefreshTimestampProvider,
   malformedRefreshTimestampAllRegions,
   mappingProvider,
@@ -1280,6 +1345,7 @@ function ContentTab({
   onMappingProviderChange,
   onMappingStatusChange,
   onMalformedRefreshTimestampChange,
+  onMalformedRegionalClassificationChange,
   onMalformedRefreshTimestampAllRegionsChange,
   contentOffset,
   onContentOffsetChange,
@@ -1296,6 +1362,7 @@ function ContentTab({
   aliasOwnership: AliasOwnershipFilter;
   onAliasOwnershipChange: (ownership: AliasOwnershipFilter) => void;
   malformedRefreshTimestamp: boolean;
+  malformedRegionalClassification: boolean;
   malformedRefreshTimestampProvider: string;
   malformedRefreshTimestampAllRegions: boolean;
   mappingProvider: string;
@@ -1303,6 +1370,7 @@ function ContentTab({
   onMappingProviderChange: (provider: string) => void;
   onMappingStatusChange: (status: MappingStatusFilter) => void;
   onMalformedRefreshTimestampChange: (enabled: boolean) => void;
+  onMalformedRegionalClassificationChange: (enabled: boolean) => void;
   onMalformedRefreshTimestampAllRegionsChange: (enabled: boolean) => void;
   contentOffset: number;
   onContentOffsetChange: (offset: number) => void;
@@ -1332,7 +1400,8 @@ function ContentTab({
   const contentPageSize = 50;
   const aliasPageSize = 50;
   const hasContentFilters =
-    malformedRefreshTimestamp || Boolean(mappingProvider) || mappingStatus !== "all";
+    malformedRefreshTimestamp || malformedRegionalClassification ||
+    Boolean(mappingProvider) || mappingStatus !== "all";
   const [batchProvider, setBatchProvider] = useState<
     "does_the_dog_die" | "wikidata"
   >("does_the_dog_die");
@@ -1359,6 +1428,9 @@ function ContentTab({
       ...(malformedRefreshTimestampAllRegions ? {} : { region: ratingRegion }),
       ...(debouncedQ ? { q: debouncedQ } : {}),
       ...(malformedRefreshTimestamp ? { malformedRefreshTimestamp: true } : {}),
+      ...(malformedRegionalClassification
+        ? { malformedRegionalClassification: true }
+        : {}),
       ...(malformedRefreshTimestampProvider
         ? { malformedRefreshTimestampProvider }
         : {}),
@@ -2238,7 +2310,7 @@ function ContentTab({
         <Select
           value={ratingRegion}
           onValueChange={(value: RatingRegion) => onRatingRegionChange(value)}
-          disabled={malformedRefreshTimestampAllRegions}
+          disabled={malformedRefreshTimestampAllRegions || malformedRegionalClassification}
         >
           <SelectTrigger
             id="admin-rating-region"
@@ -2256,17 +2328,30 @@ function ContentTab({
           </SelectContent>
         </Select>
         <span className="text-xs text-muted-foreground">
-          {malformedRefreshTimestampAllRegions
+          {malformedRegionalClassification
+            ? `Malformed records without supported classifications${malformedRefreshTimestampProvider ? ` · ${malformedRefreshTimestampProvider}` : ""}; these are kept separate from regional results.`
+            : malformedRefreshTimestampAllRegions
             ? "Includes every supported region; records without a supported regional classification are not listed."
             : "Titles below use the selected official classification."}
         </span>
         <label className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
           <Checkbox
-            checked={malformedRefreshTimestamp}
+            checked={malformedRefreshTimestamp && !malformedRegionalClassification}
             onCheckedChange={(checked) => onMalformedRefreshTimestampChange(checked === true)}
+            disabled={malformedRegionalClassification}
             aria-label="Only ratings with malformed refresh timestamps"
           />
           Only ratings with malformed refresh timestamps
+        </label>
+        <label className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
+          <Checkbox
+            checked={malformedRegionalClassification}
+            onCheckedChange={(checked) =>
+              onMalformedRegionalClassificationChange(checked === true)
+            }
+            aria-label="Only malformed records without a supported regional classification"
+          />
+          Unclassified malformed records
         </label>
         {malformedRefreshTimestamp && (
           <label className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
@@ -2299,7 +2384,9 @@ function ContentTab({
       ) : contentError ? (
         <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
           <p className="font-medium text-foreground">
-            Could not load titles for {malformedRefreshTimestampAllRegions
+            Could not load titles for {malformedRegionalClassification
+              ? `unclassified ratings${malformedRefreshTimestampProvider ? ` from ${malformedRefreshTimestampProvider}` : ""}`
+              : malformedRefreshTimestampAllRegions
               ? `all regions (${malformedRefreshTimestampProvider})`
               : ratingRegion}.
           </p>
@@ -2316,7 +2403,11 @@ function ContentTab({
             <RefreshCw className="mr-2 h-4 w-4" />
             {contentFetching
               ? "Retrying…"
-              : `Retry ${malformedRefreshTimestampAllRegions ? "all-region" : ratingRegion} titles`}
+              : `Retry ${malformedRegionalClassification
+                ? "unclassified ratings"
+                : malformedRefreshTimestampAllRegions
+                  ? "all-region"
+                  : ratingRegion} titles`}
           </Button>
         </div>
       ) : !content?.length ? (
@@ -2329,7 +2420,7 @@ function ContentTab({
         <div className="flex flex-col gap-3">
           {visibleContent.map((item) => (
             <div
-              key={`${item.id}-${item.selectedRating?.region ?? ratingRegion}`}
+              key={`${item.id}-${item.unclassifiedRating?.recordId ?? item.selectedRating?.region ?? ratingRegion}`}
               className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center gap-4"
             >
               <div className="flex-1 min-w-0">
@@ -2370,12 +2461,46 @@ function ContentTab({
                   ))}
                 </div>
                 <div className="mt-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
-                  <span className="font-semibold text-foreground">
-                    Selected {item.selectedRating?.region ?? ratingRegion}{" "}
-                    {item.selectedRating?.sourceName ?? "Wikidata"} rating:
-                  </span>{" "}
-                  {item.selectedRating ? (
+                  {item.unclassifiedRating ? (
                     <>
+                      <span className="font-semibold text-foreground">
+                        Unclassified {item.unclassifiedRating.provider} rating · safety record #
+                        {item.unclassifiedRating.recordId}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {" "}· raw timestamp: {item.unclassifiedRating.rawUpdatedAt} · classification:{" "}
+                        {item.unclassifiedRating.classifications.length
+                          ? item.unclassifiedRating.classifications.map((classification, index) => (
+                              <React.Fragment key={`${classification.category ?? "missing"}-${index}`}>
+                                {index > 0 ? "; " : ""}
+                                {classification.category ?? "(missing category)"}
+                                {classification.label ? `: ${classification.label}` : ""}
+                                {classification.score !== null || classification.maxScore !== null
+                                  ? ` · score ${classification.score ?? "?"}/${classification.maxScore ?? "?"}`
+                                  : ""}
+                                {classification.severity ? ` · ${classification.severity}` : ""}
+                                {classification.description ? ` · ${classification.description}` : ""}
+                              </React.Fragment>
+                            ))
+                          : "none"}
+                      </span>
+                      {item.unclassifiedRating.sourceUrl ? (
+                        <a
+                          className="ml-2 font-medium text-primary hover:underline"
+                          href={item.unclassifiedRating.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          View provider record
+                        </a>
+                      ) : null}
+                    </>
+                  ) : item.selectedRating ? (
+                    <>
+                      <span className="font-semibold text-foreground">
+                        Selected {item.selectedRating.region}{" "}
+                        {item.selectedRating.sourceName} rating:
+                      </span>{" "}
                       <span className="font-medium text-foreground">
                         {item.selectedRating.label}
                       </span>
@@ -2409,9 +2534,14 @@ function ContentTab({
                       ) : null}
                     </>
                   ) : (
-                    <span className="text-muted-foreground">
-                      No available {ratingRegion} Wikidata classification
-                    </span>
+                    <>
+                      <span className="font-semibold text-foreground">
+                        Selected {ratingRegion} Wikidata rating:
+                      </span>{" "}
+                      <span className="text-muted-foreground">
+                        No available {ratingRegion} Wikidata classification
+                      </span>
+                    </>
                   )}
                 </div>
               </div>

@@ -639,12 +639,18 @@ router.get("/content", async (req, res) => {
   const malformedRefreshTimestampParam = req.query.malformedRefreshTimestamp;
   const malformedRefreshTimestampAllRegionsParam =
     req.query.malformedRefreshTimestampAllRegions;
+  const malformedRegionalClassificationParam =
+    req.query.malformedRegionalClassification;
   if (regionParam !== undefined &&
     (typeof regionParam !== "string" ||
       !Object.hasOwn(RATING_REGIONS_BY_CODE, regionParam))) {
     return res.status(400).json({ error: "Invalid rating region" });
   }
-  for (const value of [malformedRefreshTimestampParam, malformedRefreshTimestampAllRegionsParam]) {
+  for (const value of [
+    malformedRefreshTimestampParam,
+    malformedRefreshTimestampAllRegionsParam,
+    malformedRegionalClassificationParam,
+  ]) {
     if (value !== undefined && (typeof value !== "string" || !["true", "false"].includes(value))) {
       return res.status(400).json({ error: "Invalid malformed refresh timestamp filter" });
     }
@@ -671,6 +677,8 @@ router.get("/content", async (req, res) => {
 
   const region = (typeof regionParam === "string" ? regionParam : "US") as RatingRegion;
   const malformedRefreshTimestamp = malformedRefreshTimestampParam === "true";
+  const malformedRegionalClassification =
+    malformedRegionalClassificationParam === "true";
 
   const malformedRefreshTimestampAllRegions =
     malformedRefreshTimestampAllRegionsParam === "true" && malformedRefreshTimestamp;
@@ -683,6 +691,9 @@ router.get("/content", async (req, res) => {
   const hasMappingFilter = Boolean(mappingProvider || mappingStatus);
   if (malformedRefreshTimestampAllRegions && !malformedRefreshTimestampProvider) {
     return res.status(400).json({ error: "A provider is required for all-regions timestamp review" });
+  }
+  if (malformedRefreshTimestamp && malformedRegionalClassification) {
+    return res.status(400).json({ error: "Choose one malformed rating review filter" });
   }
   const matchingProviderMapping = hasMappingFilter
     ? exists(db.select({ id: providerMappingsTable.id })
@@ -792,7 +803,7 @@ router.get("/content", async (req, res) => {
     });
   };
 
-  if (!malformedRefreshTimestamp) {
+  if (!malformedRefreshTimestamp && !malformedRegionalClassification) {
     const titles = await makeTitleQuery()
       .limit(CONTENT_REVIEW_PAGE_SIZE + (hasMappingFilter ? 1 : 0))
       .offset(offset);
@@ -806,6 +817,97 @@ router.get("/content", async (req, res) => {
         ${mappingStatus ? sql`AND mapping.status = ${mappingStatus}` : sql``}
       )`
     : sql``;
+  if (malformedRegionalClassification) {
+    const supportedSystems = sql.join(
+      RATING_REGIONS.map(({ system }) => sql`${system}`),
+      sql`, `,
+    );
+    const matchingRatings = await db.execute<{
+      id: number;
+      recordId: number;
+      provider: string;
+      classifications: {
+        category: string | null;
+        label: string | null;
+        score: number | null;
+        maxScore: number | null;
+        description: string | null;
+        severity: string | null;
+      }[];
+      rawUpdatedAt: string;
+      sourceUrl: string | null;
+    }>(sql`
+      SELECT
+        title.id,
+        rating.id AS "recordId",
+        rating.source_name AS provider,
+        COALESCE(
+          (
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'category', item.value->>'category',
+                'label', item.value->>'label',
+                'score', item.value->'score',
+                'maxScore', item.value->'maxScore',
+                'description', item.value->'description',
+                'severity', item.value->'severity'
+              )
+              ORDER BY item.ordinality
+            )
+            FROM jsonb_array_elements(rating.items)
+              WITH ORDINALITY AS item(value, ordinality)
+          ),
+          '[]'::jsonb
+        ) AS classifications,
+        rating.updated_at::text AS "rawUpdatedAt",
+        rating.url AS "sourceUrl"
+      FROM safety_records AS rating
+      INNER JOIN titles AS title ON title.id = rating.title_id
+      WHERE rating.season_number IS NULL
+        AND rating.episode_number IS NULL
+        AND rating.status = 'available'
+        AND rating.is_community = false
+        AND (
+          NOT isfinite(rating.updated_at)
+          OR abs(extract(epoch FROM (rating.updated_at AT TIME ZONE 'UTC')) * 1000)
+            > ${JS_DATE_LIMIT_MS}
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(rating.items) AS item(value)
+          WHERE item.value->>'category' IN (${supportedSystems})
+        )
+        ${malformedRefreshTimestampProvider
+          ? sql`AND rating.source_name = ${malformedRefreshTimestampProvider}`
+          : sql``}
+        AND (${q} = '' OR title.name ILIKE ${`%${q}%`})
+        ${mappingFilterSql}
+      ORDER BY title.popularity DESC, title.id ASC, rating.id ASC
+      LIMIT ${CONTENT_REVIEW_PAGE_SIZE + 1}
+      OFFSET ${offset}
+    `);
+    const entries = matchingRatings.rows;
+    if (!entries.length) return res.json([]);
+    const titles = await db.select().from(titlesTable)
+      .where(inArray(titlesTable.id, entries.map(({ id }) => id)));
+    const titlesById = new Map(titles.map((title) => [title.id, title]));
+    const pageEntries = entries.flatMap((entry) => {
+      const title = titlesById.get(entry.id);
+      return title ? [{ entry, title }] : [];
+    });
+    const content = await buildContent(pageEntries.map(({ title }) => title));
+    return res.json(content.map((item, index) => ({
+      ...item,
+      selectedRating: null,
+      unclassifiedRating: {
+        provider: pageEntries[index].entry.provider,
+        recordId: pageEntries[index].entry.recordId,
+        classifications: pageEntries[index].entry.classifications,
+        rawUpdatedAt: pageEntries[index].entry.rawUpdatedAt,
+        sourceUrl: pageEntries[index].entry.sourceUrl,
+      },
+    })));
+  }
   const regions = malformedRefreshTimestampAllRegions
     ? RATING_REGIONS
     : [RATING_REGIONS_BY_CODE[region]];

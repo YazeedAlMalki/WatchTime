@@ -27,6 +27,10 @@ malformedRefreshTimestampProvider?: string;
  */
 malformedRefreshTimestampAllRegions?: boolean;
 /**
+ * Return malformed safety records whose classifications do not match any supported regional system
+ */
+malformedRegionalClassification?: boolean;
+/**
  * Return titles with a provider mapping from this provider
  */
 mappingProvider?: string;

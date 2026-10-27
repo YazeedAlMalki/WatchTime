@@ -998,6 +998,10 @@ paths:
           in: query
           description: When enabled with malformedRefreshTimestamp and a provider, review matching malformed selected ratings across every rating region
           schema: { type: boolean, default: false }
+        - name: malformedRegionalClassification
+          in: query
+          description: Return malformed safety records whose classifications do not match any supported regional system
+          schema: { type: boolean, default: false }
         - name: mappingProvider
           in: query
           description: Return titles with a provider mapping from this provider
@@ -2232,6 +2236,32 @@ components:
           oneOf:
             - $ref: "#/components/schemas/AdminRegionalRating"
             - type: "null"
+        unclassifiedRating:
+          oneOf:
+            - $ref: "#/components/schemas/AdminUnclassifiedRating"
+            - type: "null"
+    AdminUnclassifiedRating:
+      type: object
+      required: [provider, recordId, classifications, rawUpdatedAt, sourceUrl]
+      properties:
+        provider: { type: string }
+        recordId: { type: integer }
+        classifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminRawClassification"
+        rawUpdatedAt: { type: string }
+        sourceUrl: { type: ["string", "null"] }
+    AdminRawClassification:
+      type: object
+      required: [category, label, score, maxScore, description, severity]
+      properties:
+        category: { type: ["string", "null"] }
+        label: { type: ["string", "null"] }
+        score: { type: ["number", "null"] }
+        maxScore: { type: ["number", "null"] }
+        description: { type: ["string", "null"] }
+        severity: { type: ["string", "null"] }
     AdminRegionalRating:
       allOf:
         - $ref: "#/components/schemas/RegionalRating"

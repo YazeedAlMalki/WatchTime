@@ -1125,6 +1125,30 @@ export type AdminRegionalRating = RegionalRating & {
   refreshTimestampMalformed: boolean;
 };
 
+export interface AdminRawClassification {
+  /** @nullable */
+  category: string | null;
+  /** @nullable */
+  label: string | null;
+  /** @nullable */
+  score: number | null;
+  /** @nullable */
+  maxScore: number | null;
+  /** @nullable */
+  description: string | null;
+  /** @nullable */
+  severity: string | null;
+}
+
+export interface AdminUnclassifiedRating {
+  provider: string;
+  recordId: number;
+  classifications: AdminRawClassification[];
+  rawUpdatedAt: string;
+  /** @nullable */
+  sourceUrl: string | null;
+}
+
 export interface ContentMapping {
   id: number;
   name: string;
@@ -1135,6 +1159,7 @@ export interface ContentMapping {
   imdbId?: string | null;
   mappings: ProviderMapping[];
   selectedRating: AdminRegionalRating | null;
+  unclassifiedRating?: AdminUnclassifiedRating | null;
 }
 
 export interface AnalyticsPoint {
@@ -1413,6 +1438,10 @@ malformedRefreshTimestampProvider?: string;
  * When enabled with malformedRefreshTimestamp and a provider, review matching malformed selected ratings across every rating region
  */
 malformedRefreshTimestampAllRegions?: boolean;
+/**
+ * Return malformed safety records whose classifications do not match any supported regional system
+ */
+malformedRegionalClassification?: boolean;
 /**
  * Return titles with a provider mapping from this provider
  */
