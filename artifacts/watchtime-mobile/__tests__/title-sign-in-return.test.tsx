@@ -3,7 +3,11 @@ import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockRouter = { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn() };
-const mockRoute = { current: { id: '456' } };
+const mockRoute = { current: { id: '456' }, listeners: new Set<() => void>() };
+const mockSetRoute = (route: { id: string }) => {
+  mockRoute.current = route;
+  mockRoute.listeners.forEach((listener) => listener());
+};
 const mockAuth = {
   current: { isSignedIn: false, isAuthAvailable: true, userId: null as string | null },
 };
@@ -12,6 +16,7 @@ const mockSession = { token: 'session-account-a' };
 const mockTitleRequests: Array<{ id: number; token: string }> = [];
 const mockFetchTitle = jest.fn();
 const mockResolveTitleByToken: Record<string, (title: typeof mockTitle) => void> = {};
+const mockResolveTitleById: Record<number, (title: typeof mockTitle) => void> = {};
 const mockTitle = {
   id: 456,
   name: 'The selected movie',
@@ -36,7 +41,16 @@ const mockSafetyInfo: { current: any } = { current: null };
 
 jest.mock('expo-router', () => ({
   useRouter: () => mockRouter,
-  useLocalSearchParams: () => mockRoute.current,
+  useLocalSearchParams: () => {
+    const React = require('react');
+    return React.useSyncExternalStore(
+      (listener: () => void) => {
+        mockRoute.listeners.add(listener);
+        return () => mockRoute.listeners.delete(listener);
+      },
+      () => mockRoute.current,
+    );
+  },
   Link: ({ children }: { children: React.ReactNode }) => children,
 }));
 jest.mock('@/lib/app-auth', () => ({
@@ -114,6 +128,7 @@ describe('title action sign-in return', () => {
     mockTitleRequests.length = 0;
     mockFetchTitle.mockReset();
     Object.keys(mockResolveTitleByToken).forEach((token) => delete mockResolveTitleByToken[token]);
+    Object.keys(mockResolveTitleById).forEach((id) => delete mockResolveTitleById[Number(id)]);
     mockRoute.current = { id: '456' };
     mockTitle.inWatchlist = false;
     mockTitle.watched = false;
@@ -358,5 +373,72 @@ describe('title action sign-in return', () => {
     expect(mockRouter.push).not.toHaveBeenCalled();
     expect(mockCreateReport).not.toHaveBeenCalled();
     expect(mockCreateContribution).not.toHaveBeenCalled();
+  });
+
+  it('keeps the newly selected title and its watch controls when an older request resolves later', async () => {
+    mockUseQueryForTitle.current = true;
+    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockFetchTitle.mockImplementation((id: number) => new Promise((resolve) => {
+      mockResolveTitleById[id] = resolve;
+    }));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const screen = await render(
+      <QueryClientProvider client={client}>
+        <TitleDetailScreen />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(mockTitleRequests).toContainEqual({ id: 456, token: 'session-account-a' });
+      expect(mockResolveTitleById[456]).toEqual(expect.any(Function));
+    });
+
+    await act(async () => {
+      mockSetRoute({ id: '789' });
+    });
+
+    expect(mockTitleFetch).toHaveBeenLastCalledWith(789);
+    await waitFor(() => {
+      expect(mockTitleRequests).toContainEqual({ id: 789, token: 'session-account-a' });
+      expect(mockResolveTitleById[789]).toEqual(expect.any(Function));
+    });
+
+    await act(async () => {
+      mockResolveTitleById[789]?.({
+        ...mockTitle,
+        id: 789,
+        name: 'The newly selected title',
+        inWatchlist: true,
+        watched: false,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText('The newly selected title')).toBeTruthy();
+      expect(screen.getByText('In Watchlist')).toBeTruthy();
+      expect(screen.getByText('Mark watched')).toBeTruthy();
+    });
+
+    await act(async () => {
+      mockResolveTitleById[456]?.({
+        ...mockTitle,
+        id: 456,
+        name: 'The previously selected title',
+        inWatchlist: false,
+        watched: true,
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText('The newly selected title')).toBeTruthy());
+    expect(screen.queryByText('The previously selected title')).toBeNull();
+    expect(screen.getByText('In Watchlist')).toBeTruthy();
+    expect(screen.getByText('Mark watched')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('watchlist-toggle'));
+    expect(mockRemove).toHaveBeenCalledWith({ id: 789 });
+    expect(mockUnmark).not.toHaveBeenCalled();
+
+    await screen.unmount();
+    client.clear();
   });
 });
