@@ -2246,14 +2246,29 @@ describe("admin alternate-title review", () => {
       language: "de",
       sourceName: "First editorial source",
       sourceUrl: "https://example.test/first-correction",
+      providerCitations: [],
+      isEditorial: true,
       updatedAt: "2026-09-17T00:00:00.000Z",
     };
     const newestCorrection: AdminContentAlias = {
       ...firstCorrection,
       alias: "Newest admin correction",
       language: "it",
-      sourceName: "Newest editorial source",
-      sourceUrl: "https://example.test/newest-correction",
+      sourceName: "Provider sources",
+      sourceUrl: null,
+      providerCitations: [
+        {
+          provider: "tvmaze",
+          sourceName: "TVMaze",
+          sourceUrl: "https://example.test/newest-tvmaze",
+        },
+        {
+          provider: "wikipedia",
+          sourceName: "EN Wikipedia",
+          sourceUrl: "https://example.test/newest-wikipedia",
+        },
+      ],
+      isEditorial: false,
       collision: true,
       collisionTitleCount: 4,
       updatedAt: "2026-09-18T12:30:00.000Z",
@@ -2297,6 +2312,16 @@ describe("admin alternate-title review", () => {
     await flushEffects();
 
     expect(container.textContent).toContain(firstCorrection.alias);
+    const firstConflictNotice =
+      container.querySelector<HTMLElement>('[role="alert"]');
+    expect(firstConflictNotice?.textContent).toContain(
+      firstCorrection.sourceName,
+    );
+    expect(
+      firstConflictNotice?.querySelector(
+        `a[href="${firstCorrection.sourceUrl}"]`,
+      ),
+    ).not.toBeNull();
     expect(container.textContent).toContain(
       new Date(firstCorrection.updatedAt).toLocaleString(),
     );
@@ -2334,7 +2359,22 @@ describe("admin alternate-title review", () => {
       container.querySelector<HTMLElement>('[role="alert"]');
     expect(conflictNotice?.textContent).toContain(newestCorrection.alias);
     expect(conflictNotice?.textContent).toContain(newestCorrection.language);
-    expect(conflictNotice?.textContent).toContain(newestCorrection.sourceName);
+    expect(conflictNotice?.textContent).toContain("TVMaze");
+    expect(conflictNotice?.textContent).toContain("EN Wikipedia");
+    expect(conflictNotice?.querySelector(
+      'a[href="https://example.test/newest-tvmaze"]',
+    )?.textContent).toBe("TVMaze");
+    expect(conflictNotice?.querySelector(
+      'a[href="https://example.test/newest-wikipedia"]',
+    )?.textContent).toBe("EN Wikipedia");
+    expect(conflictNotice?.textContent).not.toContain(
+      firstCorrection.sourceName,
+    );
+    expect(
+      conflictNotice?.querySelector(
+        `a[href="${firstCorrection.sourceUrl}"]`,
+      ),
+    ).toBeNull();
     expect(conflictNotice?.textContent).toContain("4 titles share this alias");
     expect(conflictNotice?.textContent).toContain("Current version");
     expect(conflictNotice?.textContent).toContain(
@@ -2363,7 +2403,7 @@ describe("admin alternate-title review", () => {
       container.querySelector<HTMLInputElement>(
         'input[aria-label="Source link for current correction"]',
       )?.value,
-    ).toBe(newestCorrection.sourceUrl);
+    ).toBe(newestCorrection.sourceUrl ?? "");
 
     act(() => {
       setInput(
