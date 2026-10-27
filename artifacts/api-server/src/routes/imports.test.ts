@@ -379,13 +379,14 @@ describe("private, idempotent watch-history imports", () => {
 
   it.each([
     { name: "reuses the saved preview for identical uploads after a regional alias moves and confirms idempotently", freshImport: false, removeAlias: false, resolveEpisode: false },
+    { name: "reuses the completed import result for identical uploads after a regional alias moves without tracking its new owner", freshImport: false, removeAlias: false, resolveEpisode: false, confirmBeforeRefresh: true },
     { name: "matches a fresh regional import to the current alias owner after a refresh", freshImport: true, removeAlias: false, resolveEpisode: false },
     { name: "leaves a fresh import unmatched after its regional alias is removed without changing an earlier preview", freshImport: true, removeAlias: true, resolveEpisode: false },
     { name: "matches a fresh import to an editorially preserved regional alias after its provider withdraws it", freshImport: true, removeAlias: true, resolveEpisode: false, preserveEditorial: true },
     { name: "matches and tracks a fresh regional import while another catalog provider still supports its alias", freshImport: true, removeAlias: false, resolveEpisode: false, retainProvider: true },
     { name: "records only the chosen show's episode and parent history after reviewing a shared regional title", freshImport: false, removeAlias: false, resolveEpisode: true },
     { name: "does not add history twice when a shared-alias episode becomes watched before manual review", freshImport: false, removeAlias: false, resolveEpisode: true, alreadyWatched: true },
-  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, preserveEditorial = false, retainProvider = false }) => {
+  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, preserveEditorial = false, retainProvider = false, confirmBeforeRefresh = false }) => {
     // Catalog-refresh scenarios must not consume the quota of later import tests.
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
@@ -663,6 +664,21 @@ describe("private, idempotent watch-history imports", () => {
       ));
       expect(previewHistory).toHaveLength(0);
 
+      let savedResult = created.body;
+      if (confirmBeforeRefresh) {
+        const completed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
+        expect(completed.status).toBe(200);
+        expect(completed.body.id).toBe(importId);
+        expect(completed.body.status).toBe("confirmed");
+        expect(completed.body.confirmedAt).toEqual(expect.any(String));
+        expect(Number.isFinite(Date.parse(completed.body.confirmedAt))).toBe(true);
+        expect(completed.body.summary).toMatchObject({ selected: 2, applied: 2, skipped: 2, ambiguous: 2 });
+        completed.body.items.sort((a: { rowNumber: number }, b: { rowNumber: number }) => a.rowNumber - b.rowNumber);
+        expect(completed.body.items).toEqual(created.body.items);
+        expect(completed.body.items[2]).toMatchObject({ titleId: primaryId, episodeId: regionalEpisode.id });
+        savedResult = completed.body;
+      }
+
       const regionalAlias = aliases.find((alias) => alias.titleId === primaryId && alias.alias === "地域限定タイトル")!;
       if (preserveEditorial) {
         // Mirror an explicit admin preservation, retaining the provider citation
@@ -732,6 +748,7 @@ describe("private, idempotent watch-history imports", () => {
       expect(persistedPreview.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId, selected: true });
       expect(persistedPreview.body.items[2]).toMatchObject({ classification: "matched", titleId: primaryId, episodeId: regionalEpisode.id, selected: true });
       expect(persistedPreview.body.items[3]).toMatchObject(ambiguousEpisode);
+      if (confirmBeforeRefresh) expect(persistedPreview.body).toEqual(savedResult);
 
       if (freshImport) {
         // Different content creates a new job for the same user instead of
@@ -784,7 +801,7 @@ describe("private, idempotent watch-history imports", () => {
         return;
       }
 
-      // The same user/source/content fingerprint must reuse the reviewed job,
+      // The same user/source/content fingerprint must reuse the saved job,
       // even though a new match would now point to the secondary title.
       const repeat = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
         source: "generic",
@@ -795,7 +812,12 @@ describe("private, idempotent watch-history imports", () => {
       expect(repeat.body.id).toBe(importId);
       repeat.body.items.sort((a: { rowNumber: number }, b: { rowNumber: number }) => a.rowNumber - b.rowNumber);
       expect(repeat.body).toEqual(persistedPreview.body);
-      expect(repeat.body.items).toEqual(created.body.items);
+      expect(repeat.body).toEqual(savedResult);
+      if (confirmBeforeRefresh) {
+        expect(repeat.body.status).toBe("confirmed");
+        expect(repeat.body.confirmedAt).toBe(savedResult.confirmedAt);
+        expect(repeat.body.summary).toEqual(savedResult.summary);
+      }
       expect(repeat.body.items[0].titleId).toBe(primaryId);
       expect(repeat.body.items[2]).toMatchObject({ titleId: primaryId, episodeId: regionalEpisode.id });
 
@@ -803,6 +825,7 @@ describe("private, idempotent watch-history imports", () => {
       expect(confirmed.status).toBe(200);
       expect(confirmed.body.status).toBe("confirmed");
       confirmed.body.items.sort((a: { rowNumber: number }, b: { rowNumber: number }) => a.rowNumber - b.rowNumber);
+      if (confirmBeforeRefresh) expect(confirmed.body).toEqual(savedResult);
       expect(confirmed.body.summary).toMatchObject({ selected: 2, applied: 2, skipped: 2, ambiguous: 2 });
       expect(confirmed.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId });
       expect(confirmed.body.items[2]).toMatchObject({ classification: "matched", titleId: primaryId, episodeId: regionalEpisode.id });
