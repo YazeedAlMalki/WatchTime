@@ -154,6 +154,59 @@ it("keeps the public menu usable on a short screen with enlarged text", async ()
   expect(dialog.open).toBe(false);
 });
 
+it("keeps the public menu usable after rotating to a shorter viewport", async () => {
+  await page.viewport(320, 640);
+  document.body.append(container);
+  root = createRoot(container);
+  root.render(<PublicNavbar />);
+
+  await userEvent.click(page.getByRole("button", { name: "Open navigation" }));
+  const dialog = container.querySelector("dialog");
+  const close = container.querySelector<HTMLElement>('[aria-label="Close navigation"]');
+  const browse = container.querySelector<HTMLElement>('[data-testid="link-public-browse"]');
+  const signIn = container.querySelector<HTMLElement>('[data-testid="link-public-sign-in"]');
+  if (!dialog || !close || !browse || !signIn) {
+    throw new Error("Public navigation controls did not render");
+  }
+
+  await page.viewport(568, 240);
+  expect(dialog.open).toBe(true);
+  expect(dialog.scrollHeight).toBeGreaterThan(dialog.clientHeight);
+
+  const expectWithinDialogViewport = (element: HTMLElement) => {
+    const dialogBounds = dialog.getBoundingClientRect();
+    const bounds = element.getBoundingClientRect();
+    expect(bounds.top).toBeGreaterThanOrEqual(dialogBounds.top);
+    expect(bounds.bottom).toBeLessThanOrEqual(dialogBounds.bottom);
+    expect(bounds.left).toBeGreaterThanOrEqual(dialogBounds.left);
+    expect(bounds.right).toBeLessThanOrEqual(dialogBounds.right);
+  };
+  const expectNoHorizontalOverflow = () => {
+    expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  };
+
+  await expect.element(page.getByRole("button", { name: "Close navigation" })).toHaveFocus();
+  expectWithinDialogViewport(close);
+  expectNoHorizontalOverflow();
+
+  await userEvent.tab();
+  await expect.element(page.getByTestId("link-public-browse")).toHaveFocus();
+  expectWithinDialogViewport(browse);
+  await userEvent.tab();
+  await userEvent.tab();
+  await expect.element(page.getByTestId("link-public-sign-in")).toHaveFocus();
+  expectWithinDialogViewport(signIn);
+  expectNoHorizontalOverflow();
+
+  await userEvent.tab({ shift: true });
+  await userEvent.tab({ shift: true });
+  await userEvent.tab({ shift: true });
+  await expect.element(page.getByRole("button", { name: "Close navigation" })).toHaveFocus();
+  expectWithinDialogViewport(close);
+  expectNoHorizontalOverflow();
+});
+
 it("keeps the full public navigation readable and separated at an enlarged text size", async () => {
   await page.viewport(1280, 844);
   document.body.append(container);
