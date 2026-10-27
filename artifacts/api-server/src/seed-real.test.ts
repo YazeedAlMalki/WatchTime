@@ -1695,54 +1695,83 @@ describe("real catalog sync", () => {
     },
   );
 
-  it("does not replace a newer schedule when an older scheduled run finishes", async () => {
+  it("preserves the newest of two replacements when an older scheduled start succeeds", async () => {
     const originalItems = [...sourceItems];
-    let releaseFetch!: () => void;
-    const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve; });
-    const fetchMock = vi.fn(async () => {
-      await fetchGate;
-      return jsonResponse(showPayload);
+    const originalInsert = db.insert.bind(db);
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => { releaseStart = resolve; });
+    const returning = vi.fn(async () => {
+      await startGate;
+      const runs = await originalInsert(catalogSyncRunsTable).values({
+        trigger: "scheduled",
+        status: "queued",
+        totalItems: 1,
+      }).returning();
+      catalogRunIds.push(...runs.map(({ id }) => id));
+      return runs;
     });
+    const fetchMock = vi.fn(async () => jsonResponse(showPayload));
     vi.stubGlobal("fetch", fetchMock);
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
-    const [previous] = await db.select({ id: catalogSyncRunsTable.id })
-      .from(catalogSyncRunsTable).orderBy(desc(catalogSyncRunsTable.id)).limit(1);
+    const retryDelay = 5 * 60 * 1000;
+    const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+      delay === WEEK_MS || delay === WEEK_MS / 2 || delay === WEEK_MS / 4 || delay === retryDelay
+        ? [{
+            fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+            delay,
+            timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+          }]
+        : []);
+    const clearedRefreshTimers = () => clearTimeoutSpy.mock.calls
+      .map(([timer]) => timer)
+      .filter((timer) => refreshTimers().some((refresh) => refresh.timer === timer));
 
     try {
-      // Use one known item so the scheduled callback runs a real, gated sync.
+      // Gate enqueueing itself so the callback's success continuation stays
+      // pending until both replacement schedules have been installed.
       sourceItems.splice(0, sourceItems.length, testItem);
       await scheduleCatalogRefresh(WEEK_MS);
-      const firstIndex = setTimeoutSpy.mock.calls.map(([, delay]) => delay).lastIndexOf(WEEK_MS);
-      const first = setTimeoutSpy.mock.results[firstIndex]?.value as NodeJS.Timeout;
-      const fireFirst = setTimeoutSpy.mock.calls[firstIndex]?.[0] as () => void;
-      scheduledTimers.push(first);
-      fireFirst();
+      const first = refreshTimers()[0];
+      expect(first).toBeDefined();
+      vi.spyOn(db, "insert").mockReturnValueOnce({
+        values: () => ({ returning }),
+      } as unknown as ReturnType<typeof db.insert>);
+      first.fire();
+      expect(returning).toHaveBeenCalledOnce();
 
-      // The replacement is installed while the previous scheduled start is pending.
       await scheduleCatalogRefresh(WEEK_MS / 2);
-      const secondIndex = setTimeoutSpy.mock.calls.map(([, delay]) => delay).lastIndexOf(WEEK_MS / 2);
-      const second = setTimeoutSpy.mock.results[secondIndex]?.value as NodeJS.Timeout;
-      scheduledTimers.push(second);
-      expect(clearTimeoutSpy).toHaveBeenCalledWith(first);
+      const second = refreshTimers()[1];
+      expect(second).toBeDefined();
+      expect(second.timer).not.toBe(first.timer);
+      expect(clearedRefreshTimers()).toEqual([first.timer]);
 
-      let runId = 0;
-      await vi.waitFor(async () => {
-        const [run] = await db.select({ id: catalogSyncRunsTable.id })
-          .from(catalogSyncRunsTable).orderBy(desc(catalogSyncRunsTable.id)).limit(1);
-        expect(run?.id).toBeGreaterThan(previous?.id ?? 0);
-        runId = run.id;
-      });
-      catalogRunIds.push(runId);
-      await waitForCatalogRun(runId, () => fetchMock.mock.calls.length === 1);
-      releaseFetch();
-      await waitForCatalogRun(runId, (run) => run.status === "succeeded");
+      await scheduleCatalogRefresh(WEEK_MS / 4);
+      const third = refreshTimers()[2];
+      expect(third).toBeDefined();
+      expect(third.timer).not.toBe(first.timer);
+      expect(third.timer).not.toBe(second.timer);
+      expect(clearedRefreshTimers()).toEqual([first.timer, second.timer]);
+      expect(refreshTimers().map(({ delay }) => delay))
+        .toEqual([WEEK_MS, WEEK_MS / 2, WEEK_MS / 4]);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      releaseStart();
+      const [run] = await returning.mock.results[0].value;
+      await waitForCatalogRun(run.id, (result) => result.status === "succeeded");
       await new Promise<void>((resolve) => setImmediate(resolve));
 
-      expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === WEEK_MS)).toHaveLength(1);
-      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(second);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(returning).toHaveBeenCalledOnce();
+      expect(refreshTimers().map(({ delay }) => delay))
+        .toEqual([WEEK_MS, WEEK_MS / 2, WEEK_MS / 4]);
+      expect(clearedRefreshTimers()).toEqual([first.timer, second.timer]);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(third.timer);
     } finally {
-      releaseFetch();
+      releaseStart();
+      await Promise.allSettled(returning.mock.results.map(({ value }) => value));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
       sourceItems.splice(0, sourceItems.length, ...originalItems);
       vi.restoreAllMocks();
     }

@@ -19,3 +19,9 @@ When a scheduling test successfully enqueues an empty run, its detached worker s
 **Why:** A timer-transition test passed in isolation but the detached empty worker added or cleared pool timers during subsequent scheduler assertions.
 
 **How to apply:** In tests focused only on scheduling, stub the worker's startup transaction and history cleanup, then wait for cleanup to finish before restoring fake timers.
+
+Hold enqueueing, not provider fetching, when testing ownership of a pending scheduled start.
+
+**Why:** Catalog work runs separately from the start promise. A blocked provider request can leave the worker running after the scheduler's success continuation has already completed, so it does not reliably exercise the intended race.
+
+**How to apply:** Gate the run insertion's returned promise, install the competing schedules, then release the insertion and check which timers were created and cancelled.
