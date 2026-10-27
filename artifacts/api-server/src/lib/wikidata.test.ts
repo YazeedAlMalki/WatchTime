@@ -14,6 +14,7 @@ import {
   providerMappingsTable,
   safetyRecordsTable,
   titlesTable,
+  wikidataIdentityConflictsTable,
 } from "@workspace/db";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
@@ -117,6 +118,24 @@ describe("Wikidata SPARQL adapter", () => {
     });
     await expect(client.queryByImdbId("tt1234567"))
       .rejects.toMatchObject({ code: "missing_mapping" });
+  });
+
+  it("reports sorted conflicting entity IDs when an IMDb lookup is ambiguous", async () => {
+    const client = createWikidataClient({
+      retries: 0,
+      fetchFn: async () => jsonResponse({
+        results: {
+          bindings: [
+            { item: { value: "https://www.wikidata.org/entity/Q43" }, imdbId: { value: "tt1234567" } },
+            { item: { value: "https://www.wikidata.org/entity/Q42" }, imdbId: { value: "tt1234567" } },
+          ],
+        },
+      }),
+    });
+    await expect(client.queryByImdbId("tt1234567")).rejects.toMatchObject({
+      code: "ambiguous_mapping",
+      conflictingEntityIds: ["Q42", "Q43"],
+    });
   });
 
   it("retries rate limits with a bounded number of attempts", async () => {
@@ -1244,9 +1263,29 @@ describe("Wikidata refresh persistence", () => {
 
       expect(afterMapping).toEqual(mapping);
       expect(afterRecords).toEqual(beforeRecords);
+      const [conflict] = await db.select().from(wikidataIdentityConflictsTable)
+        .where(eq(wikidataIdentityConflictsTable.titleId, title.id));
+      expect(conflict).toMatchObject({
+        titleId: title.id,
+        imdbId: "tt7654323",
+        conflictingEntityIds: ["Q42", "Q43"],
+        error: ambiguity,
+        reviewedAt: null,
+      });
       expect(health).toMatchObject({
         status: "failing",
         lastError: ambiguity,
+      });
+
+      await expect(refreshWikidataTitle(title.id, {
+        queryByImdbId: async () => ({ ...matchedItem, imdbId: "tt7654323" }),
+      })).resolves.toMatchObject({ ok: true, externalId: "Q42" });
+      const [conflictAfterSuccess] = await db.select().from(wikidataIdentityConflictsTable)
+        .where(eq(wikidataIdentityConflictsTable.titleId, title.id));
+      expect(conflictAfterSuccess).toMatchObject({
+        conflictingEntityIds: ["Q42", "Q43"],
+        error: ambiguity,
+        reviewedAt: null,
       });
     } finally {
       await db.delete(titlesTable).where(eq(titlesTable.id, title.id));

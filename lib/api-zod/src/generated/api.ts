@@ -1386,6 +1386,57 @@ export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseIt
 
 
 /**
+ * @summary List Wikidata identity conflicts for admin review
+ */
+export const listAdminWikidataIdentityConflictsQueryStatusDefault = `pending`;
+export const listAdminWikidataIdentityConflictsQueryLimitDefault = 25;
+export const listAdminWikidataIdentityConflictsQueryLimitMax = 50;
+
+export const listAdminWikidataIdentityConflictsQueryOffsetDefault = 0;
+export const listAdminWikidataIdentityConflictsQueryOffsetMin = 0;
+
+
+
+export const ListAdminWikidataIdentityConflictsQueryParams = zod.object({
+  "status": zod.enum(['pending', 'reviewed', 'all']).default(listAdminWikidataIdentityConflictsQueryStatusDefault),
+  "limit": zod.coerce.number().int().min(1).max(listAdminWikidataIdentityConflictsQueryLimitMax).default(listAdminWikidataIdentityConflictsQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listAdminWikidataIdentityConflictsQueryOffsetMin).default(listAdminWikidataIdentityConflictsQueryOffsetDefault)
+})
+
+export const ListAdminWikidataIdentityConflictsResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.int(),
+  "titleId": zod.int(),
+  "titleName": zod.string(),
+  "titleType": zod.enum(['movie', 'tv', 'anime', 'documentary']),
+  "imdbId": zod.string(),
+  "conflictingEntityIds": zod.array(zod.string()),
+  "verifiedWikidataId": zod.string().nullable(),
+  "error": zod.string(),
+  "detectedAt": zod.coerce.date(),
+  "reviewedAt": zod.coerce.date().nullable()
+})),
+  "hasMore": zod.boolean()
+})
+
+
+/**
+ * @summary Mark a Wikidata identity conflict as reviewed
+ */
+
+
+
+export const ReviewAdminWikidataIdentityConflictParams = zod.object({
+  "titleId": zod.coerce.number().int().min(1)
+})
+
+export const ReviewAdminWikidataIdentityConflictResponse = zod.object({
+  "titleId": zod.int(),
+  "reviewedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Review alternate-title provenance and collisions
  */
 

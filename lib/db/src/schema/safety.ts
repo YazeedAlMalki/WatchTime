@@ -110,6 +110,21 @@ export const providerMappingsTable = pgTable("provider_mappings", {
   index("provider_mappings_provider_external_idx").on(table.provider, table.externalId),
 ]);
 
+export const wikidataIdentityConflictsTable = pgTable("wikidata_identity_conflicts", {
+  id: serial("id").primaryKey(),
+  titleId: integer("title_id")
+    .notNull()
+    .references(() => titlesTable.id, { onDelete: "cascade" }),
+  imdbId: text("imdb_id").notNull(),
+  conflictingEntityIds: jsonb("conflicting_entity_ids").$type<string[]>().notNull(),
+  error: text("error").notNull(),
+  detectedAt: timestamp("detected_at").notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at"),
+}, (table) => [
+  uniqueIndex("wikidata_identity_conflicts_title_unique_idx").on(table.titleId),
+  index("wikidata_identity_conflicts_reviewed_detected_idx").on(table.reviewedAt, table.detectedAt),
+]);
+
 export const adminAuditLogTable = pgTable("admin_audit_log", {
   id: serial("id").primaryKey(),
   adminId: text("admin_id")

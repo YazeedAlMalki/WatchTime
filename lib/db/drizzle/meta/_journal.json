@@ -43,6 +43,13 @@
       "when": 1790694898846,
       "tag": "0005_track_alias_provider_citations",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793039821213,
+      "tag": "0006_persist_wikidata_identity_conflicts",
+      "breakpoints": true
     }
   ]
 }

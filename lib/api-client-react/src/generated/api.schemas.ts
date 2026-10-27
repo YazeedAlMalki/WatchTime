@@ -882,6 +882,41 @@ export interface AdminContentRefreshResult {
   error?: string;
 }
 
+export type AdminWikidataIdentityConflictTitleType = typeof AdminWikidataIdentityConflictTitleType[keyof typeof AdminWikidataIdentityConflictTitleType];
+
+
+export const AdminWikidataIdentityConflictTitleType = {
+  movie: 'movie',
+  tv: 'tv',
+  anime: 'anime',
+  documentary: 'documentary',
+} as const;
+
+export interface AdminWikidataIdentityConflict {
+  id: number;
+  titleId: number;
+  titleName: string;
+  titleType: AdminWikidataIdentityConflictTitleType;
+  imdbId: string;
+  conflictingEntityIds: string[];
+  /** @nullable */
+  verifiedWikidataId: string | null;
+  error: string;
+  detectedAt: string;
+  /** @nullable */
+  reviewedAt: string | null;
+}
+
+export interface AdminWikidataIdentityConflictPage {
+  items: AdminWikidataIdentityConflict[];
+  hasMore: boolean;
+}
+
+export interface AdminWikidataIdentityConflictReview {
+  titleId: number;
+  reviewedAt: string;
+}
+
 export type AdminContentRefreshBatchProvider = typeof AdminContentRefreshBatchProvider[keyof typeof AdminContentRefreshBatchProvider];
 
 
@@ -1394,6 +1429,28 @@ export const SearchAdminContentMappingStatus = {
   mapped: 'mapped',
   missing: 'missing',
   error: 'error',
+} as const;
+
+export type ListAdminWikidataIdentityConflictsParams = {
+status?: ListAdminWikidataIdentityConflictsStatus;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListAdminWikidataIdentityConflictsStatus = typeof ListAdminWikidataIdentityConflictsStatus[keyof typeof ListAdminWikidataIdentityConflictsStatus];
+
+
+export const ListAdminWikidataIdentityConflictsStatus = {
+  pending: 'pending',
+  reviewed: 'reviewed',
+  all: 'all',
 } as const;
 
 export type ListAdminContentAliasesParams = {

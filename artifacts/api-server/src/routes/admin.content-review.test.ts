@@ -7,8 +7,9 @@ import {
   providerMappingsTable,
   safetyRecordsTable,
   titlesTable,
+  wikidataIdentityConflictsTable,
 } from "@workspace/db";
-import { inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
@@ -586,5 +587,74 @@ describe("admin Content review timestamp filter", () => {
     await request(app)
       .get("/api/admin/content?malformedRefreshTimestamp=true&malformedRefreshTimestampAllRegions=true")
       .expect(400);
+  });
+
+  it("lists durable Wikidata conflicts and records review without changing mappings or safety data", async () => {
+    const [title] = await db.insert(titlesTable).values({
+      name: "wikidata-conflict-review-fixture",
+      type: "movie",
+      imdbId: "tt1234567",
+      popularity: 1,
+    }).returning();
+    titleIds.push(title.id);
+    const [mapping] = await db.insert(providerMappingsTable).values({
+      titleId: title.id,
+      provider: "Wikidata",
+      externalId: "Q42",
+      status: "mapped",
+    }).returning();
+    const [safetyRecord] = await db.insert(safetyRecordsTable).values({
+      titleId: title.id,
+      sourceName: "Wikidata",
+      status: "available",
+      isCommunity: false,
+      url: "https://www.wikidata.org/wiki/Q42",
+      items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
+    }).returning();
+    await db.insert(wikidataIdentityConflictsTable).values({
+      titleId: title.id,
+      imdbId: "tt1234567",
+      conflictingEntityIds: ["Q42", "Q43"],
+      error: "Ambiguous Wikidata entity match for IMDb ID tt1234567",
+    });
+
+    const pending = await request(app)
+      .get("/api/admin/wikidata-identity-conflicts?status=pending")
+      .expect(200);
+    expect(pending.body.items).toMatchObject([{
+      titleId: title.id,
+      titleName: "wikidata-conflict-review-fixture",
+      titleType: "movie",
+      imdbId: "tt1234567",
+      conflictingEntityIds: ["Q42", "Q43"],
+      verifiedWikidataId: "Q42",
+      reviewedAt: null,
+    }]);
+    expect(pending.body.hasMore).toBe(false);
+
+    const reviewed = await request(app)
+      .post(`/api/admin/wikidata-identity-conflicts/${title.id}/review`)
+      .expect(200);
+    expect(reviewed.body).toMatchObject({ titleId: title.id });
+
+    const [mappingAfter] = await db.select().from(providerMappingsTable)
+      .where(eq(providerMappingsTable.id, mapping.id));
+    const [safetyAfter] = await db.select().from(safetyRecordsTable)
+      .where(eq(safetyRecordsTable.id, safetyRecord.id));
+    expect(mappingAfter).toEqual(mapping);
+    expect(safetyAfter).toEqual(safetyRecord);
+
+    const stillPending = await request(app)
+      .get("/api/admin/wikidata-identity-conflicts?status=pending")
+      .expect(200);
+    expect(stillPending.body.items).toEqual([]);
+    const allConflicts = await request(app)
+      .get("/api/admin/wikidata-identity-conflicts?status=all")
+      .expect(200);
+    expect(allConflicts.body.items[0]).toMatchObject({
+      titleId: title.id,
+      verifiedWikidataId: "Q42",
+    });
+    expect(allConflicts.body.items[0].reviewedAt).toEqual(reviewed.body.reviewedAt);
   });
 });

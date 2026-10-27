@@ -11,6 +11,7 @@ import {
   feedbackTable,
   providerMappingsTable,
   integrationHealthTable,
+  wikidataIdentityConflictsTable,
   analyticsEventsTable,
   watchedTitlesTable,
   adminAuditLogTable,
@@ -32,6 +33,9 @@ import {
   ListAdminContentAliasesResponse,
   ExportAdminContentAliasesQueryParams,
   ListAdminContentRefreshBatchHistoryResponse,
+  ListAdminWikidataIdentityConflictsQueryParams,
+  ListAdminWikidataIdentityConflictsResponse,
+  ReviewAdminWikidataIdentityConflictResponse,
   SearchAdminContentQueryParams,
   LookupAdminContentAliasCollisionsBody,
   LookupAdminContentAliasCollisionsResponse,
@@ -1600,6 +1604,105 @@ router.post("/content/:id/refresh", async (req, res) => {
     entityType: "title", entityId: id, details: { provider },
   });
   return res.json(result);
+});
+
+router.get("/wikidata-identity-conflicts", async (req, res): Promise<void> => {
+  const parsed = ListAdminWikidataIdentityConflictsQueryParams.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid Wikidata conflict review parameters" });
+    return;
+  }
+  const { status = "pending", limit = 25, offset = 0 } = parsed.data;
+  const reviewedFilter = status === "pending"
+    ? isNull(wikidataIdentityConflictsTable.reviewedAt)
+    : status === "reviewed"
+      ? sql`${wikidataIdentityConflictsTable.reviewedAt} IS NOT NULL`
+      : undefined;
+  const rows = await db.select({
+    id: wikidataIdentityConflictsTable.id,
+    titleId: titlesTable.id,
+    titleName: titlesTable.name,
+    titleType: titlesTable.type,
+    imdbId: wikidataIdentityConflictsTable.imdbId,
+    conflictingEntityIds: wikidataIdentityConflictsTable.conflictingEntityIds,
+    error: wikidataIdentityConflictsTable.error,
+    detectedAt: wikidataIdentityConflictsTable.detectedAt,
+    reviewedAt: wikidataIdentityConflictsTable.reviewedAt,
+  })
+    .from(wikidataIdentityConflictsTable)
+    .innerJoin(titlesTable, eq(titlesTable.id, wikidataIdentityConflictsTable.titleId))
+    .where(reviewedFilter)
+    .orderBy(desc(wikidataIdentityConflictsTable.detectedAt), asc(wikidataIdentityConflictsTable.id))
+    .limit(limit + 1)
+    .offset(offset);
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  const mappings = pageRows.length
+    ? await db.select({
+        titleId: providerMappingsTable.titleId,
+        externalId: providerMappingsTable.externalId,
+        status: providerMappingsTable.status,
+      })
+        .from(providerMappingsTable)
+        .where(and(
+          inArray(providerMappingsTable.titleId, pageRows.map(({ titleId }) => titleId)),
+          eq(providerMappingsTable.provider, "Wikidata"),
+        ))
+        .orderBy(asc(providerMappingsTable.id))
+    : [];
+  const verifiedMappings = new Map<number, string>();
+  for (const mapping of mappings) {
+    if (mapping.status === "mapped" && mapping.externalId && !verifiedMappings.has(mapping.titleId)) {
+      verifiedMappings.set(mapping.titleId, mapping.externalId);
+    }
+  }
+  const response = ListAdminWikidataIdentityConflictsResponse.parse({
+    items: pageRows.map((row) => ({
+      ...row,
+      conflictingEntityIds: row.conflictingEntityIds as string[],
+      verifiedWikidataId: verifiedMappings.get(row.titleId) ?? null,
+      detectedAt: row.detectedAt.toISOString(),
+      reviewedAt: row.reviewedAt?.toISOString() ?? null,
+    })),
+    hasMore,
+  });
+  res.json(response);
+});
+
+router.post("/wikidata-identity-conflicts/:titleId/review", async (req, res): Promise<void> => {
+  const rawTitleId = Array.isArray(req.params.titleId) ? req.params.titleId[0] : req.params.titleId;
+  const titleId = Number(rawTitleId);
+  if (!Number.isSafeInteger(titleId) || titleId <= 0) {
+    res.status(400).json({ error: "Invalid title ID" });
+    return;
+  }
+  const [updated] = await db.update(wikidataIdentityConflictsTable)
+    .set({ reviewedAt: new Date() })
+    .where(and(
+      eq(wikidataIdentityConflictsTable.titleId, titleId),
+      isNull(wikidataIdentityConflictsTable.reviewedAt),
+    ))
+    .returning({
+      titleId: wikidataIdentityConflictsTable.titleId,
+      reviewedAt: wikidataIdentityConflictsTable.reviewedAt,
+    });
+  const [current] = updated
+    ? [updated]
+    : await db.select({
+        titleId: wikidataIdentityConflictsTable.titleId,
+        reviewedAt: wikidataIdentityConflictsTable.reviewedAt,
+      })
+        .from(wikidataIdentityConflictsTable)
+        .where(eq(wikidataIdentityConflictsTable.titleId, titleId))
+        .limit(1);
+  if (!current?.reviewedAt) {
+    res.status(404).json({ error: "Wikidata identity conflict not found" });
+    return;
+  }
+  res.json(ReviewAdminWikidataIdentityConflictResponse.parse({
+    titleId: current.titleId,
+    reviewedAt: current.reviewedAt.toISOString(),
+  }));
 });
 
 function serializeSafetySyncRun(run: typeof safetySyncRunsTable.$inferSelect) {

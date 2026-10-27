@@ -4,6 +4,7 @@ import {
   providerMappingsTable,
   safetyRecordsTable,
   titlesTable,
+  wikidataIdentityConflictsTable,
 } from "@workspace/db";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
@@ -62,6 +63,7 @@ export class WikidataError extends Error {
       | "missing_mapping"
       | "ambiguous_mapping",
     readonly httpStatus?: number,
+    readonly conflictingEntityIds?: string[],
   ) {
     super(message);
     this.name = "WikidataError";
@@ -197,9 +199,12 @@ function parseSparqlResponse(payload: unknown, expectedImdbId: string): Wikidata
     throw new WikidataError(`No Wikidata item matched IMDb ID ${expectedImdbId}`, "missing_mapping");
   }
   if (items.size > 1) {
+    const conflictingEntityIds = [...items.keys()].sort();
     throw new WikidataError(
       `Ambiguous Wikidata entity match for IMDb ID ${expectedImdbId}`,
       "ambiguous_mapping",
+      undefined,
+      conflictingEntityIds,
     );
   }
   return [...items.values()][0];
@@ -443,6 +448,33 @@ async function updateMappingStatus(
   else await db.transaction(update);
 }
 
+async function recordWikidataIdentityConflict(values: {
+  titleId: number;
+  imdbId: string;
+  conflictingEntityIds: string[];
+  error: string;
+}, transaction?: WikidataTransaction) {
+  const detectedAt = new Date();
+  const persist = async (tx: WikidataTransaction) => {
+    await tx.insert(wikidataIdentityConflictsTable).values({
+      ...values,
+      detectedAt,
+      reviewedAt: null,
+    }).onConflictDoUpdate({
+      target: wikidataIdentityConflictsTable.titleId,
+      set: {
+        imdbId: values.imdbId,
+        conflictingEntityIds: values.conflictingEntityIds,
+        error: values.error,
+        detectedAt,
+        reviewedAt: null,
+      },
+    });
+  };
+  if (transaction) await persist(transaction);
+  else await db.transaction(persist);
+}
+
 function toSafetyItems(item: WikidataItem) {
   return item.classifications.map((classification) => ({
     category: classification.propertyName,
@@ -576,6 +608,14 @@ export async function refreshWikidataTitle(
       : new WikidataError("Unexpected Wikidata refresh failure", "unavailable");
     if (error.code === "missing_mapping" || error.code === "ambiguous_mapping") {
       await updateMappingStatus(titleId, error.code === "missing_mapping" ? "missing" : "error", transaction);
+    }
+    if (error.code === "ambiguous_mapping" && title.imdbId && error.conflictingEntityIds?.length) {
+      await recordWikidataIdentityConflict({
+        titleId,
+        imdbId: normalizeImdbId(title.imdbId),
+        conflictingEntityIds: error.conflictingEntityIds,
+        error: error.message,
+      }, transaction);
     }
     await updateIntegrationHealth({
       status: errorHealthStatus(error),

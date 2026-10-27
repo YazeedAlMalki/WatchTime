@@ -1023,6 +1023,58 @@ paths:
                   $ref: "#/components/schemas/ContentMapping"
         "403":
           description: Forbidden
+  /admin/wikidata-identity-conflicts:
+    get:
+      operationId: listAdminWikidataIdentityConflicts
+      tags: [admin]
+      summary: List Wikidata identity conflicts for admin review
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, reviewed, all]
+            default: pending
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Wikidata identity conflicts and page state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminWikidataIdentityConflictPage"
+        "400":
+          description: Invalid conflict review parameters
+        "403":
+          description: Forbidden
+  /admin/wikidata-identity-conflicts/{titleId}/review:
+    post:
+      operationId: reviewAdminWikidataIdentityConflict
+      tags: [admin]
+      summary: Mark a Wikidata identity conflict as reviewed
+      parameters:
+        - name: titleId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Conflict review recorded without changing mappings or safety data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminWikidataIdentityConflictReview"
+        "400":
+          description: Invalid title ID
+        "404":
+          description: Conflict not found
+        "403":
+          description: Forbidden
   /admin/content-aliases:
     get:
       operationId: listAdminContentAliases
@@ -2000,6 +2052,37 @@ components:
         classifications: { type: integer }
         status: { type: string, enum: [provider_unavailable, missing, error] }
         error: { type: string }
+    AdminWikidataIdentityConflict:
+      type: object
+      required: [id, titleId, titleName, titleType, imdbId, conflictingEntityIds, verifiedWikidataId, error, detectedAt, reviewedAt]
+      properties:
+        id: { type: integer }
+        titleId: { type: integer }
+        titleName: { type: string }
+        titleType: { type: string, enum: [movie, tv, anime, documentary] }
+        imdbId: { type: string }
+        conflictingEntityIds:
+          type: array
+          items: { type: string }
+        verifiedWikidataId: { type: ["string", "null"] }
+        error: { type: string }
+        detectedAt: { type: string, format: date-time }
+        reviewedAt: { type: ["string", "null"], format: date-time }
+    AdminWikidataIdentityConflictPage:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminWikidataIdentityConflict"
+        hasMore: { type: boolean }
+    AdminWikidataIdentityConflictReview:
+      type: object
+      required: [titleId, reviewedAt]
+      properties:
+        titleId: { type: integer }
+        reviewedAt: { type: string, format: date-time }
     AdminContentRefreshBatch:
       type: object
       required: [id, provider, status, limit, offset, processed, mapped, missing, errors, nextOffset, catalogFingerprint, results, startedAt, completedAt]

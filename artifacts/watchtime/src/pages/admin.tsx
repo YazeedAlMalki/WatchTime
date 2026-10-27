@@ -22,6 +22,8 @@ import {
   useRefreshAdminContentBatch,
   useGetAdminContentRefreshBatch,
   useListAdminContentRefreshBatchHistory,
+  useListAdminWikidataIdentityConflicts,
+  useReviewAdminWikidataIdentityConflict,
   useGetAdminAuditLog,
   getGetAdminDashboardQueryKey,
   getListAdminIntegrationsQueryKey,
@@ -33,9 +35,11 @@ import {
   getListCatalogRefreshesQueryKey,
   getGetAdminContentRefreshBatchQueryKey,
   getListAdminContentRefreshBatchHistoryQueryKey,
+  getListAdminWikidataIdentityConflictsQueryKey,
   lookupAdminContentAliasCollisions,
   type AdminContentRefreshBatch,
   type AdminContentRefreshBatchHistoryEntry,
+  type AdminWikidataIdentityConflict,
   type AdminContentAlias,
   type AdminContentAliasCollisionCount,
   type AdminContentAliasPage,
@@ -1332,6 +1336,8 @@ function ContentTab({
   const [batchLimit, setBatchLimit] = useState("10");
   const [batchOffset, setBatchOffset] = useState("0");
   const [showBatchHistory, setShowBatchHistory] = useState(false);
+  const [showReviewedIdentityConflicts, setShowReviewedIdentityConflicts] = useState(false);
+  const [identityConflictOffset, setIdentityConflictOffset] = useState(0);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 400);
@@ -1398,6 +1404,49 @@ function ContentTab({
       },
     },
   );
+  const identityConflictQueryParams = {
+    status: showReviewedIdentityConflicts ? "all" as const : "pending" as const,
+    limit: 25,
+    offset: identityConflictOffset,
+  };
+  const identityConflictsQuery = useListAdminWikidataIdentityConflicts(
+    identityConflictQueryParams,
+    {
+      query: {
+        queryKey: getListAdminWikidataIdentityConflictsQueryKey(identityConflictQueryParams),
+        staleTime: 0,
+      },
+    },
+  );
+  const reviewIdentityConflict = useReviewAdminWikidataIdentityConflict();
+  const markIdentityConflictReviewed = (conflict: AdminWikidataIdentityConflict) => {
+    reviewIdentityConflict.mutate(
+      { titleId: conflict.titleId },
+      {
+        onSuccess: () => {
+          if (
+            !showReviewedIdentityConflicts &&
+            identityConflictOffset > 0 &&
+            identityConflictsQuery.data?.items.length === 1
+          ) {
+            setIdentityConflictOffset((offset) => Math.max(0, offset - 25));
+          }
+          void qc.invalidateQueries({
+            queryKey: getListAdminWikidataIdentityConflictsQueryKey(),
+          });
+          toast({
+            title: "Wikidata conflict marked reviewed",
+            description: `${conflict.titleName} remains available with its existing verified mapping and safety data.`,
+          });
+        },
+        onError: () => toast({
+          title: "Could not mark conflict reviewed",
+          description: "The conflict is unchanged. Try again.",
+          variant: "destructive",
+        }),
+      },
+    );
+  };
   const batchResult: AdminContentRefreshBatch | null =
     batchStatus?.lastCompleted ?? null;
   const canResumeBatch =
@@ -1939,6 +1988,179 @@ function ContentTab({
           </div>
         </div>
       </div>
+      <section
+        aria-labelledby="wikidata-identity-conflicts-heading"
+        className="mb-5 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-3"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 id="wikidata-identity-conflicts-heading" className="font-semibold text-foreground">
+              Wikidata identity conflicts
+            </h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Ambiguous entity matches stay here even after a later refresh succeeds.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="rounded-xl"
+              aria-pressed={showReviewedIdentityConflicts}
+              onClick={() => {
+                setShowReviewedIdentityConflicts((visible) => !visible);
+                setIdentityConflictOffset(0);
+              }}
+            >
+              {showReviewedIdentityConflicts ? "Hide reviewed" : "Include reviewed"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="rounded-xl"
+              onClick={() => void identityConflictsQuery.refetch()}
+              disabled={identityConflictsQuery.isFetching}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${identityConflictsQuery.isFetching ? "animate-spin" : ""}`} />
+              Refresh list
+            </Button>
+          </div>
+        </div>
+        {identityConflictsQuery.isLoading ? (
+          <p className="text-sm text-muted-foreground" role="status">Loading conflicts…</p>
+        ) : identityConflictsQuery.isError ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+              Wikidata identity conflicts could not be loaded.
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="rounded-xl"
+              onClick={() => void identityConflictsQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : identityConflictsQuery.data?.items.length ? (
+          <div className="space-y-2">
+            {identityConflictsQuery.data.items.map((conflict) => (
+              <div
+                key={conflict.id}
+                className="rounded-xl border border-border/60 bg-card p-3 space-y-2"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-foreground">{conflict.titleName}</span>
+                      <span className="rounded bg-secondary px-2 py-0.5 text-xs uppercase text-muted-foreground">
+                        {conflict.titleType}
+                      </span>
+                      {conflict.reviewedAt && (
+                        <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                          Reviewed
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <span>Title #{conflict.titleId}</span>
+                      <a
+                        className="font-medium text-primary hover:underline"
+                        href={`https://www.imdb.com/title/${encodeURIComponent(conflict.imdbId)}/`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        IMDb {conflict.imdbId}
+                      </a>
+                      <span>Conflict detected {new Date(conflict.detectedAt).toLocaleString()}</span>
+                      {conflict.reviewedAt && (
+                        <span>Reviewed {new Date(conflict.reviewedAt).toLocaleString()}</span>
+                      )}
+                    </div>
+                  </div>
+                  {!conflict.reviewedAt && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="rounded-xl gap-1.5"
+                      onClick={() => markIdentityConflictReviewed(conflict)}
+                      disabled={reviewIdentityConflict.isPending}
+                    >
+                      <CheckCheck className="h-4 w-4" />
+                      Mark reviewed
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">{conflict.error}</p>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+                  <span className="font-medium text-foreground">
+                    Existing verified mapping:{" "}
+                    {conflict.verifiedWikidataId ? (
+                      <a
+                        className="text-primary hover:underline"
+                        href={`https://www.wikidata.org/wiki/${encodeURIComponent(conflict.verifiedWikidataId)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {conflict.verifiedWikidataId}
+                      </a>
+                    ) : "none"}
+                  </span>
+                  <span className="font-medium text-foreground">Conflicting entities:</span>
+                  {conflict.conflictingEntityIds.map((entityId) => (
+                    <a
+                      key={entityId}
+                      className="text-primary hover:underline"
+                      href={`https://www.wikidata.org/wiki/${encodeURIComponent(entityId)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {entityId}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {(identityConflictOffset > 0 || identityConflictsQuery.data.hasMore) && (
+              <div className="flex items-center justify-center gap-3 pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={() => setIdentityConflictOffset(Math.max(0, identityConflictOffset - 25))}
+                  disabled={identityConflictOffset === 0 || identityConflictsQuery.isFetching}
+                >
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground" aria-live="polite">
+                  Page {Math.floor(identityConflictOffset / 25) + 1}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={() => setIdentityConflictOffset(identityConflictOffset + 25)}
+                  disabled={!identityConflictsQuery.data.hasMore || identityConflictsQuery.isFetching}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {showReviewedIdentityConflicts
+              ? "No Wikidata identity conflicts have been recorded."
+              : "No Wikidata identity conflicts need review."}
+          </p>
+        )}
+      </section>
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input

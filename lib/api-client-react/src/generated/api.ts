@@ -32,6 +32,8 @@ import type {
   AdminContentRefreshInput,
   AdminContentRefreshResult,
   AdminDashboard,
+  AdminWikidataIdentityConflictPage,
+  AdminWikidataIdentityConflictReview,
   AnalyticsSummary,
   AuditLogPage,
   CatalogRefreshAccepted,
@@ -64,6 +66,7 @@ import type {
   ListAdminContributionsParams,
   ListAdminFeedbackParams,
   ListAdminReportsParams,
+  ListAdminWikidataIdentityConflictsParams,
   ListTitlesParams,
   MoodDiscoveryStateResponse,
   MoodDiscoveryStateUpdate,
@@ -3628,6 +3631,161 @@ export function useSearchAdminContent<TData = Awaited<ReturnType<typeof searchAd
 
 
 
+
+export const getListAdminWikidataIdentityConflictsUrl = (params?: ListAdminWikidataIdentityConflictsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/wikidata-identity-conflicts?${stringifiedParams}` : `/api/admin/wikidata-identity-conflicts`
+}
+
+/**
+ * @summary List Wikidata identity conflicts for admin review
+ */
+export const listAdminWikidataIdentityConflicts = async (params?: ListAdminWikidataIdentityConflictsParams, options?: Parameters<typeof customFetch>[1]): Promise<AdminWikidataIdentityConflictPage> => {
+
+  return customFetch<AdminWikidataIdentityConflictPage>(getListAdminWikidataIdentityConflictsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminWikidataIdentityConflictsQueryKey = (params?: ListAdminWikidataIdentityConflictsParams,) => {
+    return [
+    `/api/admin/wikidata-identity-conflicts`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAdminWikidataIdentityConflictsQueryOptions = <TData = Awaited<ReturnType<typeof listAdminWikidataIdentityConflicts>>, TError = ErrorType<void>>(params?: ListAdminWikidataIdentityConflictsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminWikidataIdentityConflicts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminWikidataIdentityConflictsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminWikidataIdentityConflicts>>> = ({ signal }) => listAdminWikidataIdentityConflicts(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminWikidataIdentityConflicts>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminWikidataIdentityConflictsQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminWikidataIdentityConflicts>>>
+export type ListAdminWikidataIdentityConflictsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List Wikidata identity conflicts for admin review
+ */
+
+export function useListAdminWikidataIdentityConflicts<TData = Awaited<ReturnType<typeof listAdminWikidataIdentityConflicts>>, TError = ErrorType<void>>(
+ params?: ListAdminWikidataIdentityConflictsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminWikidataIdentityConflicts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminWikidataIdentityConflictsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getReviewAdminWikidataIdentityConflictUrl = (titleId: number,) => {
+
+
+
+
+  return `/api/admin/wikidata-identity-conflicts/${titleId}/review`
+}
+
+/**
+ * @summary Mark a Wikidata identity conflict as reviewed
+ */
+export const reviewAdminWikidataIdentityConflict = async (titleId: number, options?: Parameters<typeof customFetch>[1]): Promise<AdminWikidataIdentityConflictReview> => {
+
+  return customFetch<AdminWikidataIdentityConflictReview>(getReviewAdminWikidataIdentityConflictUrl(titleId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getReviewAdminWikidataIdentityConflictMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewAdminWikidataIdentityConflict>>, TError,{titleId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reviewAdminWikidataIdentityConflict>>, TError,{titleId: number}, TContext> => {
+
+const mutationKey = ['reviewAdminWikidataIdentityConflict'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reviewAdminWikidataIdentityConflict>>, {titleId: number}> = (props) => {
+          const {titleId} = props ?? {};
+
+          return  reviewAdminWikidataIdentityConflict(titleId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReviewAdminWikidataIdentityConflictMutationResult = NonNullable<Awaited<ReturnType<typeof reviewAdminWikidataIdentityConflict>>>
+
+    export type ReviewAdminWikidataIdentityConflictMutationError = ErrorType<void>
+
+    /**
+ * @summary Mark a Wikidata identity conflict as reviewed
+ */
+export const useReviewAdminWikidataIdentityConflict = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewAdminWikidataIdentityConflict>>, TError,{titleId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reviewAdminWikidataIdentityConflict>>,
+        TError,
+        {titleId: number},
+        TContext
+      > => {
+      return useMutation(getReviewAdminWikidataIdentityConflictMutationOptions(options));
+    }
 
 export const getListAdminContentAliasesUrl = (params?: ListAdminContentAliasesParams,) => {
   const normalizedParams = new URLSearchParams();
