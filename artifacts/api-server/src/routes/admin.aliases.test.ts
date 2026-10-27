@@ -1324,6 +1324,121 @@ describe("admin title aliases", () => {
     expect(collisionRows).toHaveLength(2);
   });
 
+  it("terminates a streamed export when a later batch query fails", async () => {
+    await db.insert(titleAliasesTable).values(Array.from({ length: 501 }, (_, index) => ({
+      titleId: createdTitleIds[0],
+      alias: `Failed streamed export ${String(index).padStart(4, "0")}`,
+      normalizedAlias: `failedstreamedexport${String(index).padStart(4, "0")}`,
+      language: "en",
+      sourceName: "Export failure test",
+      isEditorial: true,
+    })));
+
+    let batchQueries = 0;
+    const originalConnect = pool.connect.bind(pool);
+    const connectSpy = vi.spyOn(pool, "connect").mockImplementation(((callback?: any) => {
+      if (callback) return originalConnect(callback);
+      return originalConnect().then((client) => {
+        const originalQuery = client.query.bind(client) as (...args: any[]) => Promise<any>;
+        const originalRelease = client.release.bind(client);
+        client.query = ((...args: any[]) => {
+          const statement = args[0] as string | { text?: string };
+          const queryText = typeof statement === "string" ? statement : statement.text ?? "";
+          if (
+            queryText.includes("title_aliases")
+            && /\border by\b/i.test(queryText)
+            && /\blimit\b/i.test(queryText)
+          ) {
+            batchQueries += 1;
+            if (batchQueries === 2) {
+              return Promise.reject(new Error("Simulated later alias batch failure"));
+            }
+          }
+          return originalQuery(...args);
+        }) as typeof client.query;
+        client.release = ((...args: any[]) => {
+          client.query = originalQuery as typeof client.query;
+          client.release = originalRelease as typeof client.release;
+          return originalRelease(...args);
+        }) as typeof client.release;
+        return client;
+      });
+    }) as typeof pool.connect);
+
+    const server = app.listen(0);
+    let client: ReturnType<typeof httpRequest> | undefined;
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      await new Promise<void>((resolve) => server.once("listening", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected a local HTTP server address");
+
+      client = httpRequest({
+        host: "127.0.0.1",
+        port: address.port,
+        path: "/api/admin/content-aliases/export?q=Failed%20streamed%20export",
+        headers: { "accept-encoding": "identity" },
+      });
+      const responseTermination = new Promise<{
+        kind: "aborted" | "ended" | "error" | "timeout";
+        statusCode?: number;
+        exportCount?: string;
+        sawCsvHeader?: boolean;
+      }>((resolve) => {
+        const timeout = setTimeout(() => resolve({ kind: "timeout" }), 5_000);
+        const finish = (result: {
+          kind: "aborted" | "ended" | "error" | "timeout";
+          statusCode?: number;
+          exportCount?: string;
+          sawCsvHeader?: boolean;
+        }) => {
+          clearTimeout(timeout);
+          resolve(result);
+        };
+        client!.once("error", () => finish({ kind: "error" }));
+        client!.once("response", (response) => {
+          let sawCsvHeader = false;
+          response.on("data", (chunk: Buffer) => {
+            if (chunk.toString().includes('"ID","Title ID","Title"')) sawCsvHeader = true;
+          });
+          response.once("aborted", () => finish({
+            kind: "aborted",
+            statusCode: response.statusCode,
+            exportCount: response.headers["x-export-count"] as string | undefined,
+            sawCsvHeader,
+          }));
+          response.once("end", () => finish({
+            kind: "ended",
+            statusCode: response.statusCode,
+            exportCount: response.headers["x-export-count"] as string | undefined,
+            sawCsvHeader,
+          }));
+          response.once("error", () => finish({ kind: "error" }));
+        });
+      });
+      client.end();
+
+      const termination = await responseTermination;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(batchQueries).toBe(2);
+      expect(termination).toEqual({
+        kind: "aborted",
+        statusCode: 200,
+        exportCount: "501",
+        sawCsvHeader: true,
+      });
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      client?.destroy();
+      process.off("unhandledRejection", onUnhandledRejection);
+      connectSpy.mockRestore();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("stops loading export batches and removes backpressure listeners after client cancellation", async () => {
     await db.insert(titleAliasesTable).values(Array.from({ length: 1_001 }, (_, index) => ({
       titleId: createdTitleIds[0],

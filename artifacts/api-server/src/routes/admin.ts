@@ -1664,7 +1664,15 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
       afterId = rows[rows.length - 1].alias.id;
     }
     return !res.destroyed;
-  }, { isolationLevel: "repeatable read", accessMode: "read only" });
+  }, { isolationLevel: "repeatable read", accessMode: "read only" }).catch((error) => {
+    if (res.headersSent) {
+      // The CSV cannot be replaced with an error response after streaming begins.
+      // Destroying the response makes the incomplete download terminate promptly.
+      res.destroy();
+      return false;
+    }
+    throw error;
+  });
   if (completed && !res.destroyed) res.end();
 });
 
