@@ -781,6 +781,7 @@ it("keeps the selected alias page when an older page response finishes late", as
   let resolveOlderPage!: (response: Response) => void;
   let markOlderPageRequested!: () => void;
   let markOlderPageCompleted!: () => void;
+  let olderPageIsCompleted = false;
   const olderPageResponse = new Promise<Response>((resolve) => {
     resolveOlderPage = resolve;
   });
@@ -834,6 +835,7 @@ it("keeps the selected alias page when an older page response finishes late", as
     }
     markOlderPageRequested();
     return olderPageResponse.then((response) => {
+      olderPageIsCompleted = true;
       markOlderPageCompleted();
       return response;
     });
@@ -852,7 +854,11 @@ it("keeps the selected alias page when an older page response finishes late", as
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
     await expect.element(page.getByText("Page 2 · 2 matching aliases")).toBeVisible();
     await expect.element(page.getByText("Second page alias")).toBeVisible();
+    expect(olderPageIsCompleted).toBe(false);
+    expect(requests).toHaveLength(2);
     expect(requests.at(-1)?.searchParams.get("cursor")).toBe(nextPageCursor);
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(nextPageCursor);
 
     resolveOlderPage(responseFor(firstPage));
     await olderPageCompleted;
@@ -861,6 +867,8 @@ it("keeps the selected alias page when an older page response finishes late", as
     await expect.element(page.getByText("Page 2 · 2 matching aliases")).toBeVisible();
     await expect.element(page.getByText("Second page alias")).toBeVisible();
     await expect.element(page.getByText("First page alias")).not.toBeInTheDocument();
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(nextPageCursor);
   } finally {
     root.unmount();
     container.remove();
