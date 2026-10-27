@@ -436,7 +436,7 @@ async function updateMappingStatus(
     // mapping that can still be used by the rest of the application.
     if (currentMapping.status === "mapped" && currentMapping.externalId) return;
     await tx.update(providerMappingsTable)
-      .set({ status })
+      .set({ externalId: null, status })
       .where(eq(providerMappingsTable.id, currentMapping.id));
   };
   if (transaction) await update(transaction);

@@ -1253,6 +1253,90 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
+  it("does not create an unverified Wikidata identity or safety record for an ambiguous new match", async () => {
+    const previousHealth = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_ambiguous_unmapped_test__",
+      year: 2020,
+      imdbId: "tt7654324",
+      popularity: 0,
+    }).returning();
+    const ambiguity = "Ambiguous Wikidata entity match for IMDb ID tt7654324";
+    const client = createWikidataClient({
+      retries: 0,
+      fetchFn: async () => jsonResponse({
+        results: {
+          bindings: [
+            {
+              item: { value: "https://www.wikidata.org/entity/Q44" },
+              imdbId: { value: "tt7654324" },
+              P1657: { value: "https://www.wikidata.org/entity/Q123" },
+              P1657Label: { value: "PG" },
+            },
+            {
+              item: { value: "https://www.wikidata.org/entity/Q45" },
+              imdbId: { value: "tt7654324" },
+              P1657: { value: "https://www.wikidata.org/entity/Q124" },
+              P1657Label: { value: "R" },
+            },
+          ],
+        },
+      }),
+    });
+
+    try {
+      await expect(refreshWikidataTitle(title.id, client)).resolves.toMatchObject({
+        ok: false,
+        titleId: title.id,
+        titleName: title.name,
+        status: "error",
+        error: ambiguity,
+      });
+
+      const mappings = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, title.id),
+        eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
+      ));
+      expect(mappings).toHaveLength(1);
+      expect(mappings[0]).toMatchObject({
+        externalId: null,
+        status: "error",
+      });
+
+      // Existing error rows must not retain an unverified ID either.
+      await db.update(providerMappingsTable)
+        .set({ externalId: "Q999" })
+        .where(eq(providerMappingsTable.id, mappings[0].id));
+      await expect(refreshWikidataTitle(title.id, client)).resolves.toMatchObject({
+        ok: false,
+        status: "error",
+        error: ambiguity,
+      });
+      const [clearedMapping] = await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.id, mappings[0].id));
+      expect(clearedMapping).toMatchObject({
+        externalId: null,
+        status: "error",
+      });
+
+      const safetyRecords = await db.select().from(safetyRecordsTable)
+        .where(and(
+          eq(safetyRecordsTable.titleId, title.id),
+          eq(safetyRecordsTable.sourceName, WIKIDATA_PROVIDER),
+        ));
+      expect(safetyRecords).toEqual([]);
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousHealth.length > 0) {
+        await db.insert(integrationHealthTable).values(previousHealth);
+      }
+    }
+  });
+
   it("keeps newer title data when an older successful lookup finishes last", async () => {
     const previousHealthRows = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
