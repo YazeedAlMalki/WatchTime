@@ -8,6 +8,7 @@
  */
 
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import { get as httpGet, ServerResponse } from "node:http";
 
 const ADMIN_A_ID = "test-email-filter-admin-a";
 const ADMIN_B_ID = "test-email-filter-admin-b";
@@ -419,6 +420,109 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
       return Number(id);
     });
     expect(exportedIds).toEqual([...streamExportRowIds].sort((a, b) => b - a));
+  });
+
+  it("keeps a multi-batch download on its starting snapshot when a matching row arrives", async () => {
+    const initialIds = [...streamExportRowIds].sort((a, b) => b - a);
+    const firstBatchLastId = initialIds[499];
+    let releaseFirstBatch!: () => void;
+    const firstBatchReached = new Promise<void>((resolve) => {
+      releaseFirstBatch = resolve;
+    });
+    const originalWrite = ServerResponse.prototype.write;
+    let heldWrite: { response: ServerResponse; args: any[] } | undefined;
+    const writeSpy = vi.spyOn(ServerResponse.prototype, "write").mockImplementation(function (
+      this: ServerResponse,
+      ...args: any[]
+    ) {
+      const chunk = args[0];
+      if (
+        !heldWrite
+        && typeof chunk === "string"
+        && chunk.startsWith(`"${firstBatchLastId}",`)
+      ) {
+        heldWrite = { response: this, args };
+        releaseFirstBatch();
+        return false;
+      }
+      return originalWrite.apply(this, args as any);
+    } as any);
+    const server = app.listen(0, "127.0.0.1");
+    let exportRequest: ReturnType<typeof httpGet> | undefined;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("listening", resolve);
+        server.once("error", reject);
+      });
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not bind to a TCP port");
+      }
+
+      const filters = new URLSearchParams({
+        action: STREAM_EXPORT_ACTION,
+        adminEmail: STREAM_ADMIN_EMAIL,
+        entityType: "content",
+        dateFrom: EXPORT_DAY_START.toISOString(),
+        dateTo: EXPORT_DAY_END.toISOString(),
+      });
+      const download = new Promise<{ status: number | undefined; text: string }>((resolve, reject) => {
+        const currentRequest = httpGet({
+          hostname: "127.0.0.1",
+          port: address.port,
+          path: `/api/admin/audit-log/export?${filters.toString()}`,
+        }, (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer) => chunks.push(chunk));
+          response.on("end", () => resolve({
+            status: response.statusCode,
+            text: Buffer.concat(chunks).toString("utf8"),
+          }));
+          response.on("error", reject);
+        });
+        exportRequest = currentRequest;
+        currentRequest.on("error", reject);
+        currentRequest.end();
+      });
+
+      await firstBatchReached;
+      const [newRow] = await db.insert(adminAuditLogTable).values({
+        adminId: STREAM_ADMIN_ID,
+        action: STREAM_EXPORT_ACTION,
+        entityType: "content",
+        entityId: 83999,
+        details: { testBatch: "inserted-after-first-export-batch" },
+        // This sorts after the original 501 rows, so a later READ COMMITTED
+        // page would include it while the export's original snapshot excludes it.
+        createdAt: new Date(`${EXPORT_DAY}T11:00:00.000Z`),
+      }).returning({ id: adminAuditLogTable.id });
+
+      expect(heldWrite).toBeDefined();
+      originalWrite.apply(heldWrite!.response, heldWrite!.args as any);
+      // The intercepted write deliberately reports backpressure. Release the
+      // route only after the concurrent insert has committed.
+      heldWrite!.response.emit("drain");
+
+      const result = await download;
+      const lines = result.text.trimEnd().split(/\r?\n/);
+      const exportedIds = lines.slice(1).map((line) => {
+        const id = line.match(/^"(\d+)"/)?.[1];
+        expect(id).toBeDefined();
+        return Number(id);
+      });
+
+      expect(result.status).toBe(200);
+      expect(exportedIds).toHaveLength(STREAM_EXPORT_COUNT);
+      expect(exportedIds).toEqual(initialIds);
+      expect(exportedIds).not.toContain(newRow.id);
+    } finally {
+      writeSpy.mockRestore();
+      exportRequest?.destroy();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 
   it("returns all rows when no email filter is active", async () => {
