@@ -44,6 +44,7 @@ app.use("/api", trackingRouter);
 
 let titleIds: number[] = [];
 const ALIASES_PER_SHOW = 9;
+const SPARSE_ALIASES_PER_SHOW = 50;
 
 async function removeFixture() {
   // Also removes leftovers if a previous benchmark process was interrupted.
@@ -205,6 +206,85 @@ describe("large personal library", () => {
     expect(aliasRowsScanned).toBeGreaterThan(0);
     expect(aliasRowsScanned).toBeLessThanOrEqual(4 * PAGE_SIZE * ALIASES_PER_SHOW);
     process.stdout.write(`Alternate-title benchmark (${SHOW_COUNT} tracked shows, ${SHOW_COUNT * ALIASES_PER_SHOW} matching aliases): ${JSON.stringify({ milliseconds: Math.round(searched.milliseconds), responseBytes: Buffer.byteLength(searched.response.text), aliasRowsScanned, aliasIndexes: [...new Set(aliasIndexes)], planMs: plan["Execution Time"] })}\n`);
+  }, 120_000);
+
+  it("keeps sparse alternate-title search work bounded when most aliases do not match", async () => {
+    // Half the tracked titles have two matching aliases; every title also has
+    // enough unrelated aliases to make a catalog-wide substring scan costly.
+    await db.delete(titleAliasesTable).where(inArray(titleAliasesTable.titleId, titleIds));
+    const aliases = titleIds.flatMap((titleId, index) => {
+      const matchingAliases = index % 2 === 0
+        ? [
+            { titleId, alias: `Needle ${titleId}`, normalizedAlias: `needle ${titleId}`, sourceName: "performance-fixture" },
+            { titleId, alias: `Needle alternate ${titleId}`, normalizedAlias: `needle alternate ${titleId}`, sourceName: "performance-fixture" },
+          ]
+        : [];
+      const unrelatedAliases = Array.from(
+        { length: SPARSE_ALIASES_PER_SHOW - matchingAliases.length },
+        (_, i) => {
+          const alias = `Background ${titleId}-${i}`;
+          return {
+            titleId, alias, normalizedAlias: alias.toLowerCase(), sourceName: "performance-fixture",
+          };
+        },
+      );
+      return [...unrelatedAliases, ...matchingAliases];
+    });
+    for (let i = 0; i < aliases.length; i += 1000) {
+      await db.insert(titleAliasesTable).values(aliases.slice(i, i + 1000));
+    }
+    await pool.query("ANALYZE title_aliases");
+
+    const searched = await measuredPageFor(
+      "/api/me/shows?q=needle", PAGE_SIZE, undefined,
+    );
+    expect(searched.response.status).toBe(200);
+    expect(searched.response.body).toHaveLength(PAGE_SIZE);
+    expect(searched.samples.length).toBeGreaterThanOrEqual(1);
+    expect(searched.samples.length).toBeLessThanOrEqual(2);
+    expect(searched.samples.every((sample) => sample.rows <= PAGE_SIZE)).toBe(true);
+    expect(Buffer.byteLength(searched.response.text)).toBeLessThan(PAGE_SIZE * 1000);
+
+    const matchingTitleIds = titleIds.filter((_, index) => index % 2 === 0);
+    const expectedTitleIds = matchingTitleIds.slice(-PAGE_SIZE).reverse();
+    expect(searched.response.body.map((show: any) => show.title.id)).toEqual(expectedTitleIds);
+    expect(searched.response.body.map((show: any) => show.matchedAlternateTitle))
+      .toEqual(expectedTitleIds.map((id) => `Needle ${id}`));
+
+    const searchQuery = searched.samples.find((sample) => sample.sql.includes("title_aliases"));
+    expect(searchQuery).toBeDefined();
+    const explained = await pool.query(
+      `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${searchQuery!.sql}`,
+      searchQuery!.values,
+    );
+    const plan = explained.rows[0]["QUERY PLAN"][0] as {
+      "Execution Time": number;
+      Plan: Record<string, unknown>;
+    };
+    const aliasNodes: Record<string, unknown>[] = [];
+    const aliasIndexes: string[] = [];
+    const walk = (node: Record<string, unknown>) => {
+      if (node["Relation Name"] === "title_aliases") aliasNodes.push(node);
+      if (typeof node["Index Name"] === "string" && String(node["Index Name"]).startsWith("title_aliases_")) {
+        aliasIndexes.push(node["Index Name"] as string);
+      }
+      for (const child of (node.Plans ?? []) as Record<string, unknown>[]) walk(child);
+    };
+    walk(plan.Plan);
+    const aliasRowsScanned = aliasNodes.reduce((total, node) => {
+      const rows = Number(node["Actual Rows"] ?? 0);
+      const removed = Number(node["Rows Removed by Filter"] ?? 0);
+      const loops = Number(node["Actual Loops"] ?? 0);
+      return total + (rows + removed) * loops;
+    }, 0);
+    expect(aliasIndexes.some((name) =>
+      name === "title_aliases_title_idx" || name === "title_aliases_title_normalized_idx",
+    )).toBe(true);
+    expect(aliasRowsScanned).toBeGreaterThan(0);
+    // At most about two title-scoped alias passes are needed for each match:
+    // one to qualify the title and one to return its selected alternate.
+    expect(aliasRowsScanned).toBeLessThanOrEqual(4 * PAGE_SIZE * SPARSE_ALIASES_PER_SHOW);
+    process.stdout.write(`Sparse alternate-title benchmark (${SHOW_COUNT} tracked shows, ${SHOW_COUNT * SPARSE_ALIASES_PER_SHOW} aliases, ${SHOW_COUNT / 2 * 2} matching aliases): ${JSON.stringify({ milliseconds: Math.round(searched.milliseconds), responseBytes: Buffer.byteLength(searched.response.text), aliasRowsScanned, aliasIndexes: [...new Set(aliasIndexes)], planMs: plan["Execution Time"] })}\n`);
   }, 120_000);
 
   it("keeps in-progress discovery bounded on first and later ID pages", async () => {
