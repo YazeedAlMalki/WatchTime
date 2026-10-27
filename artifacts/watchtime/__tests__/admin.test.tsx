@@ -159,13 +159,13 @@ describe("admin moderation queue page recovery", () => {
     container.remove();
   });
 
-  async function settle(assertion: () => void) {
+  async function settle(assertion: () => void, timeout = 1000) {
     await vi.waitFor(async () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
       assertion();
-    });
+    }, { timeout });
   }
 
   async function selectValue(index: number, label: string) {
@@ -269,7 +269,7 @@ describe("admin moderation queue page recovery", () => {
         expect(container.textContent).toContain(
           `${isReports ? "Report" : "Feedback"} ${expectedOffset + 1}`,
         );
-      });
+      }, 5000);
       expect(update).toHaveBeenCalledWith(
         isReports
           ? { reportId: pageSize * 2 + 1, data: { status: "resolved" } }

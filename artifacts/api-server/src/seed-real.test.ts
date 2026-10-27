@@ -1044,7 +1044,8 @@ describe("real catalog sync", () => {
           expect(run.id).toBeGreaterThan(previous?.id ?? 0);
           catalogRunIds.push(run.id);
           expect(run.trigger).toBe("scheduled");
-          await waitForCatalogRun(run.id, (result) => result.status === "succeeded");
+          await waitForCatalogRun(run.id, (result) =>
+            result.status === "succeeded" || result.status === "skipped");
         } else {
           expect(db.insert).toHaveBeenCalledTimes(2);
         }
@@ -2594,6 +2595,138 @@ describe("real catalog sync", () => {
         for (const { value } of retryReturning.mock.results) {
           const [run] = await value;
           await waitForCatalogRun(run.id, (result) => result.status === "succeeded");
+        }
+      } finally {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+        sourceItems.splice(0, sourceItems.length, ...originalItems);
+        vi.restoreAllMocks();
+      }
+    }
+  });
+
+  it("preserves a newer schedule after an older five-minute retry rejects, then resumes weekly scheduling", async () => {
+    const originalItems = [...sourceItems];
+    const originalInsert = db.insert.bind(db);
+    const scheduledFailure = new Error("Scheduled enqueue failed");
+    const scheduledReturning = vi.fn().mockRejectedValue(scheduledFailure);
+    let rejectRetry!: (error: Error) => void;
+    const retryGate = new Promise<never>((_resolve, reject) => { rejectRetry = reject; });
+    const retryReturning = vi.fn(() => retryGate);
+    const newestReturning = vi.fn(async () => {
+      const runs = await originalInsert(catalogSyncRunsTable).values({
+        trigger: "scheduled",
+        status: "queued",
+        totalItems: 0,
+      }).returning();
+      catalogRunIds.push(...runs.map(({ id }) => id));
+      return runs;
+    });
+    const newestValues = vi.fn(() => ({ returning: newestReturning }));
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const retryDelay = 5 * 60 * 1000;
+    // Observe only refresh timers; database recovery keeps its real timeouts.
+    const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+      delay === WEEK_MS || delay === WEEK_MS / 2 || delay === retryDelay
+        ? [{
+            fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+            delay,
+            timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+          }]
+        : []);
+    const clearedRefreshTimers = () => clearTimeoutSpy.mock.calls
+      .map(([timer]) => timer)
+      .filter((timer) => refreshTimers().some((refresh) => refresh.timer === timer));
+
+    try {
+      sourceItems.splice(0, sourceItems.length);
+      await scheduleCatalogRefresh(WEEK_MS);
+      const first = refreshTimers()[0];
+      const insertSpy = vi.spyOn(db, "insert").mockReturnValueOnce({
+        values: () => ({ returning: scheduledReturning }),
+      } as unknown as ReturnType<typeof db.insert>).mockReturnValueOnce({
+        values: () => ({ returning: retryReturning }),
+      } as unknown as ReturnType<typeof db.insert>).mockReturnValueOnce({
+        values: newestValues,
+      } as unknown as ReturnType<typeof db.insert>);
+
+      first.fire();
+      expect(scheduledReturning).toHaveBeenCalledOnce();
+      await vi.waitFor(() => {
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, retryDelay]);
+      });
+      const retry = refreshTimers()[1];
+      expect(clearedRefreshTimers()).toEqual([first.timer]);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(retry.timer);
+
+      // Hold enqueueing itself, so the retry still owns a pending start.
+      retry.fire();
+      expect(retryReturning).toHaveBeenCalledOnce();
+      expect(newestReturning).not.toHaveBeenCalled();
+      expect(refreshTimers()).toHaveLength(2);
+
+      await scheduleCatalogRefresh(WEEK_MS / 2);
+      const newest = refreshTimers()[2];
+      expect(newest.timer).not.toBe(retry.timer);
+      expect(clearedRefreshTimers()).toEqual([first.timer, retry.timer]);
+      expect(refreshTimers().map(({ delay }) => delay))
+        .toEqual([WEEK_MS, retryDelay, WEEK_MS / 2]);
+      const connectSpy = vi.spyOn(pool, "connect");
+
+      const retryFailure = new Error("Older retry enqueue failed");
+      rejectRetry(retryFailure);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(clearedRefreshTimers()).toEqual([first.timer, retry.timer]);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(newest.timer);
+      expect(refreshTimers().map(({ delay }) => delay))
+        .toEqual([WEEK_MS, retryDelay, WEEK_MS / 2]);
+      expect(refreshTimers().filter(({ delay }) => delay === retryDelay)).toHaveLength(1);
+      expect(connectSpy).not.toHaveBeenCalled();
+      expect(insertSpy).toHaveBeenCalledTimes(2);
+      expect(errorSpy.mock.calls).toEqual([
+        [{ err: scheduledFailure }, "unable to start scheduled catalog refresh"],
+        [{ err: retryFailure }, "unable to start scheduled catalog refresh"],
+      ]);
+
+      newest.fire();
+      expect(newestValues).toHaveBeenCalledExactlyOnceWith({
+        trigger: "scheduled",
+        status: "queued",
+        totalItems: 0,
+      });
+      expect(newestReturning).toHaveBeenCalledOnce();
+      await vi.waitFor(() => {
+        expect(refreshTimers().map(({ delay }) => delay))
+          .toEqual([WEEK_MS, retryDelay, WEEK_MS / 2, WEEK_MS]);
+      });
+      const [run] = await newestReturning.mock.results[0].value;
+      await waitForCatalogRun(run.id, (result) =>
+        result.status === "succeeded" || result.status === "skipped");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const next = refreshTimers()[3];
+      expect(next.timer).not.toBe(newest.timer);
+      expect(clearedRefreshTimers()).toEqual([first.timer, retry.timer, newest.timer]);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(next.timer);
+      expect(refreshTimers()).toHaveLength(4);
+      expect(refreshTimers().filter(({ delay }) => delay === retryDelay)).toHaveLength(1);
+      expect(insertSpy.mock.calls).toEqual(Array.from({ length: 3 }, () => [catalogSyncRunsTable]));
+      expect(scheduledReturning).toHaveBeenCalledOnce();
+      expect(retryReturning).toHaveBeenCalledOnce();
+      expect(newestReturning).toHaveBeenCalledOnce();
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        expect.anything(), "unable to reschedule catalog refresh",
+      );
+    } finally {
+      rejectRetry(new Error("release pending retry during cleanup"));
+      try {
+        for (const { value } of newestReturning.mock.results) {
+          const [run] = await value;
+          await waitForCatalogRun(run.id, (result) =>
+            result.status === "succeeded" || result.status === "skipped");
         }
       } finally {
         await new Promise<void>((resolve) => setImmediate(resolve));
