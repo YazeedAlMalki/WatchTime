@@ -90,6 +90,7 @@ const LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS = new Set([
 const CONTENT_REVIEW_PAGE_SIZE = 50;
 const JS_DATE_LIMIT_MS = 8_640_000_000_000_000;
 const CONTENT_ALIAS_EXPORT_BATCH_SIZE = 500;
+export const CONTENT_ALIAS_EXPORT_MAX_DURATION_MS = 30_000;
 const AUDIT_LOG_EXPORT_BATCH_SIZE = 500;
 const AUDIT_LOG_DEFAULT_LIMIT = 50;
 const AUDIT_LOG_MAX_LIMIT = 200;
@@ -1578,6 +1579,11 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="alternate-title-review.csv"');
   let afterId = 0;
+  const exportTimeout = setTimeout(() => {
+    // Closing the response makes a partial CSV unmistakably incomplete to the
+    // client and releases the snapshot once the current database query returns.
+    if (!res.destroyed) res.destroy();
+  }, CONTENT_ALIAS_EXPORT_MAX_DURATION_MS);
   const waitForDrainOrClose = (): Promise<boolean> => new Promise((resolve) => {
     if (res.destroyed) {
       resolve(false);
@@ -1601,78 +1607,84 @@ router.get("/content-aliases/export", async (req, res): Promise<void> => {
     // installed. Resolve directly in that case rather than waiting forever.
     if (res.destroyed) onClose();
   });
-  const completed = await db.transaction(async (tx) => {
-    const [countRow] = await tx.select({
-      total: sql<number>`count(*)::int`,
-    }).from(titleAliasesTable)
-      .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
-      .where(where);
-    const total = countRow?.total ?? 0;
-
-    res.setHeader("X-Export-Count", String(total));
-    res.write(header.map(escapeCsv).join(","));
-    while (!res.destroyed) {
-      const rows = await tx.select({
-        alias: titleAliasesTable,
-        titleName: titlesTable.name,
-        titleType: titlesTable.type,
-        titleYear: titlesTable.year,
+  let completed = false;
+  try {
+    completed = await db.transaction(async (tx) => {
+      const [countRow] = await tx.select({
+        total: sql<number>`count(*)::int`,
       }).from(titleAliasesTable)
         .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
-        .where(and(where, gt(titleAliasesTable.id, afterId)))
-        .orderBy(asc(titleAliasesTable.id))
-        .limit(CONTENT_ALIAS_EXPORT_BATCH_SIZE);
+        .where(where);
+      const total = countRow?.total ?? 0;
+
       if (res.destroyed) return false;
-      if (!rows.length) break;
-      const collisions = await getAliasCollisionCounts(
-        [...new Set(rows.map((row) => row.alias.normalizedAlias))],
-        tx,
-      );
-      if (res.destroyed) return false;
-      for (const { alias, titleName, titleType, titleYear } of rows) {
+      res.setHeader("X-Export-Count", String(total));
+      res.write(header.map(escapeCsv).join(","));
+      while (!res.destroyed) {
+        const rows = await tx.select({
+          alias: titleAliasesTable,
+          titleName: titlesTable.name,
+          titleType: titlesTable.type,
+          titleYear: titlesTable.year,
+        }).from(titleAliasesTable)
+          .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
+          .where(and(where, gt(titleAliasesTable.id, afterId)))
+          .orderBy(asc(titleAliasesTable.id))
+          .limit(CONTENT_ALIAS_EXPORT_BATCH_SIZE);
         if (res.destroyed) return false;
-        const collisionCount = collisions.get(alias.normalizedAlias) ?? 1;
-        const providerCitations = alias.isEditorial
-          ? []
-          : (alias.providerSources ?? []).flatMap((provider: string) => {
-              const citation = alias.providerCitations?.[provider];
-              return citation
-                ? [{ provider, sourceName: citation.sourceName, sourceUrl: citation.sourceUrl }]
-                : [];
-            });
-        const csvRow = [
-          alias.id,
-          alias.titleId,
-          titleName,
-          titleType,
-          titleYear,
-          alias.alias,
-          alias.language,
-          alias.sourceName,
-          alias.sourceUrl,
-          alias.isEditorial ? "Editorial" : "Provider-owned",
-          alias.isEditorial ? "Yes" : "No",
-          collisionCount > 1 ? "Yes" : "No",
-          collisionCount,
-          alias.updatedAt.toISOString(),
-          JSON.stringify(providerCitations),
-        ].map(escapeCsv).join(",");
-        if (!res.write(`\r\n${csvRow}`)) {
-          if (!await waitForDrainOrClose()) return false;
+        if (!rows.length) break;
+        const collisions = await getAliasCollisionCounts(
+          [...new Set(rows.map((row) => row.alias.normalizedAlias))],
+          tx,
+        );
+        if (res.destroyed) return false;
+        for (const { alias, titleName, titleType, titleYear } of rows) {
+          if (res.destroyed) return false;
+          const collisionCount = collisions.get(alias.normalizedAlias) ?? 1;
+          const providerCitations = alias.isEditorial
+            ? []
+            : (alias.providerSources ?? []).flatMap((provider: string) => {
+                const citation = alias.providerCitations?.[provider];
+                return citation
+                  ? [{ provider, sourceName: citation.sourceName, sourceUrl: citation.sourceUrl }]
+                  : [];
+              });
+          const csvRow = [
+            alias.id,
+            alias.titleId,
+            titleName,
+            titleType,
+            titleYear,
+            alias.alias,
+            alias.language,
+            alias.sourceName,
+            alias.sourceUrl,
+            alias.isEditorial ? "Editorial" : "Provider-owned",
+            alias.isEditorial ? "Yes" : "No",
+            collisionCount > 1 ? "Yes" : "No",
+            collisionCount,
+            alias.updatedAt.toISOString(),
+            JSON.stringify(providerCitations),
+          ].map(escapeCsv).join(",");
+          if (!res.write(`\r\n${csvRow}`)) {
+            if (!await waitForDrainOrClose()) return false;
+          }
         }
+        afterId = rows[rows.length - 1].alias.id;
       }
-      afterId = rows[rows.length - 1].alias.id;
-    }
-    return !res.destroyed;
-  }, { isolationLevel: "repeatable read", accessMode: "read only" }).catch((error) => {
-    if (res.headersSent) {
-      // The CSV cannot be replaced with an error response after streaming begins.
-      // Destroying the response makes the incomplete download terminate promptly.
-      res.destroy();
-      return false;
-    }
-    throw error;
-  });
+      return !res.destroyed;
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }).catch((error) => {
+      if (res.headersSent) {
+        // The CSV cannot be replaced with an error response after streaming begins.
+        // Destroying the response makes the incomplete download terminate promptly.
+        res.destroy();
+        return false;
+      }
+      throw error;
+    });
+  } finally {
+    clearTimeout(exportTimeout);
+  }
   if (completed && !res.destroyed) res.end();
 });
 

@@ -19,6 +19,7 @@ import {
   mockMalformedSafetyTimestampDuplicate,
   mockSafetyRecordQueryOrder,
 } from "../test-utils/malformedSafetyTimestamp";
+import { CONTENT_ALIAS_EXPORT_MAX_DURATION_MS } from "./admin";
 
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
@@ -1690,6 +1691,95 @@ describe("admin title aliases", () => {
     const collisionTargetRow = lines.slice(1).find((line) => line.includes('"Snapshot collision target"'));
     expect(collisionTargetRow?.split(",").slice(11, 13)).toEqual(['"Yes"', '"2"']);
     expect(csvText).not.toContain("Collision peer outside export filter");
+  });
+
+  it("closes a stalled export at its deadline and releases its database transaction", async () => {
+    await db.insert(titleAliasesTable).values(Array.from({ length: 501 }, (_, index) => ({
+      titleId: createdTitleIds[0],
+      alias: `Timed export ${String(index).padStart(4, "0")}`,
+      normalizedAlias: `timedexport${String(index).padStart(4, "0")}`,
+      language: "en",
+      sourceName: "Export timeout test",
+      isEditorial: true,
+    })));
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const originalWrite = ServerResponse.prototype.write;
+    let forcedBackpressure = false;
+    let resolveBackpressure!: () => void;
+    const backpressureStarted = new Promise<void>((resolve) => {
+      resolveBackpressure = resolve;
+    });
+    let resolveServerClose!: () => void;
+    const serverClosed = new Promise<void>((resolve) => {
+      resolveServerClose = resolve;
+    });
+    let onTransactionRelease: (() => void) | undefined;
+    const transactionReleased = new Promise<void>((resolve) => {
+      onTransactionRelease = resolve;
+    });
+    const writeSpy = vi.spyOn(ServerResponse.prototype, "write").mockImplementation(function (
+      this: ServerResponse,
+      ...args: any[]
+    ) {
+      const chunk = args[0];
+      if (
+        !forcedBackpressure
+        && typeof chunk === "string"
+        && chunk.startsWith("\r\n")
+        && chunk.includes("Timed export 0000")
+      ) {
+        forcedBackpressure = true;
+        this.once("close", resolveServerClose);
+        const result = originalWrite.apply(this, args as any);
+        resolveBackpressure();
+        return false;
+      }
+      return originalWrite.apply(this, args as any);
+    } as any);
+
+    const server = app.listen(0, "127.0.0.1");
+    let client: ReturnType<typeof httpRequest> | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("listening", resolve);
+        server.once("error", reject);
+      });
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Test server did not bind to a TCP port");
+
+      let responseAborted!: () => void;
+      const clientAborted = new Promise<void>((resolve) => {
+        responseAborted = resolve;
+      });
+      client = httpRequest({
+        host: "127.0.0.1",
+        port: address.port,
+        path: "/api/admin/content-aliases/export?q=Timed%20export",
+        headers: { "accept-encoding": "identity" },
+      });
+      client.once("error", () => responseAborted());
+      client.once("response", (response) => {
+        response.once("aborted", responseAborted);
+      });
+      client.end();
+
+      await backpressureStarted;
+      pool.once("release", onTransactionRelease!);
+      await vi.advanceTimersByTimeAsync(CONTENT_ALIAS_EXPORT_MAX_DURATION_MS);
+      await Promise.all([clientAborted, serverClosed, transactionReleased]);
+      await db.select({ id: titleAliasesTable.id })
+        .from(titleAliasesTable)
+        .limit(1);
+
+      expect(forcedBackpressure).toBe(true);
+    } finally {
+      if (onTransactionRelease) pool.off("release", onTransactionRelease);
+      client?.destroy();
+      writeSpy.mockRestore();
+      vi.useRealTimers();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("rejects an unknown alias ownership filter", async () => {
