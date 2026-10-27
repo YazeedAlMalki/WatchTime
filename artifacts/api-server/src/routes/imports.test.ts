@@ -86,10 +86,10 @@ afterAll(async () => {
     `import_create:${USER_B}`,
     `import_confirm:${USER_B}`,
   ]));
-  await db.delete(importsTable).where(eq(importsTable.userId, USER_A));
-  await db.delete(watchedEpisodesTable).where(eq(watchedEpisodesTable.userId, USER_A));
-  await db.delete(watchedTitlesTable).where(eq(watchedTitlesTable.userId, USER_A));
-  await db.delete(watchlistTable).where(eq(watchlistTable.userId, USER_A));
+  await db.delete(importsTable).where(inArray(importsTable.userId, [USER_A, USER_B]));
+  await db.delete(watchedEpisodesTable).where(inArray(watchedEpisodesTable.userId, [USER_A, USER_B]));
+  await db.delete(watchedTitlesTable).where(inArray(watchedTitlesTable.userId, [USER_A, USER_B]));
+  await db.delete(watchlistTable).where(inArray(watchlistTable.userId, [USER_A, USER_B]));
   await db.delete(episodesTable).where(eq(episodesTable.titleId, showId));
   await db.delete(titlesTable).where(inArray(titlesTable.id, cleanupTitleIds));
   await db.delete(usersTable).where(eq(usersTable.id, USER_A));
@@ -160,6 +160,176 @@ describe("private, idempotent watch-history imports", () => {
     ]);
     const rows = await db.select().from(watchedTitlesTable).where(and(eq(watchedTitlesTable.userId, USER_A), eq(watchedTitlesTable.titleId, movieId)));
     expect(rows).toHaveLength(1);
+  });
+
+  it("keeps identical uploads private and matches each user's new preview to the current alias owner", async () => {
+    const alias = "利用者別の地域タイトル";
+    const fixtures: SourceItem[] = [990096, 990097].map((tvmazeId, index) => ({
+      key: `test:import-private-alias-${index}`,
+      source: "tvmaze",
+      type: "tv",
+      name: `__import_private_alias_${index}__`,
+      tvmazeId,
+      expectedTitle: `__import_private_alias_${index}__`,
+      expectedYear: 2020,
+      expectedImdbId: `tt999009${index + 6}`,
+      aliases: index === 0 ? [{
+        alias, language: "ja", sourceName: "JA Wikipedia",
+        sourceUrl: `https://ja.wikipedia.org/wiki/${alias}`,
+      }] : [],
+      popularity: 0,
+    }));
+    const users = [USER_A, USER_B];
+    const rateLimitKeys = users.flatMap((user) => [`import_create:${user}`, `import_confirm:${user}`]);
+    const healthSnapshot = await db.select().from(integrationHealthTable);
+    const jobIds: number[] = [];
+    let titleIds: number[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const fixture = fixtures.find((item) => String(input).includes(`/shows/${item.tvmazeId}?`));
+      if (!fixture) throw new Error(`Unexpected catalog request: ${input}`);
+      return new Response(JSON.stringify({
+        id: fixture.tvmazeId,
+        name: fixture.name,
+        type: "Scripted",
+        genres: ["Drama"],
+        premiered: "2020-01-01",
+        status: "Ended",
+        summary: "<p>Private import fixture</p>",
+        image: null,
+        externals: { imdb: fixture.expectedImdbId },
+        _embedded: {
+          cast: [],
+          episodes: [{ season: 2, number: 3, name: "Fixture episode", airdate: "2020-02-03" }],
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    try {
+      await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, rateLimitKeys));
+      const initial = await runCatalogSync({ dryRun: false, allowPartial: true }, fixtures.map((item) => ({ ...item, aliases: [] })));
+      expect(initial?.failures).toEqual([]);
+      const refreshed = await runCatalogSync({ dryRun: false, allowPartial: true }, fixtures);
+      expect(refreshed?.succeeded).toBe(2);
+      expect(refreshed?.failures).toEqual([]);
+      const titles = await db.select().from(titlesTable).where(inArray(titlesTable.imdbId, ["tt9990096", "tt9990097"]));
+      expect(titles).toHaveLength(2);
+      const primaryId = titles.find((title) => title.imdbId === "tt9990096")!.id;
+      const secondaryId = titles.find((title) => title.imdbId === "tt9990097")!.id;
+      titleIds = [primaryId, secondaryId];
+      const episodes = await db.select().from(episodesTable).where(inArray(episodesTable.titleId, titleIds));
+      const primaryEpisode = episodes.find((episode) => episode.titleId === primaryId)!;
+      const secondaryEpisode = episodes.find((episode) => episode.titleId === secondaryId)!;
+      const upload = {
+        source: "generic",
+        fileName: "private-regional-history.csv",
+        content: [
+          "kind,title,type,year,season,episode",
+          `watchlist,${alias},tv,2020,,`,
+          `watched_episode,${alias},tv,2020,2,3`,
+        ].join("\n"),
+      };
+      const sortedItems = (items: { rowNumber: number }[]) => [...items].sort((a, b) => a.rowNumber - b.rowNumber);
+      const first = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send(upload);
+      if (first.body.id) jobIds.push(first.body.id);
+      expect(first.status).toBe(201);
+      expect(first.body.status).toBe("ready");
+      expect(first.body.summary).toMatchObject({ matched: 2, ambiguous: 0, unmatched: 0 });
+      expect(sortedItems(first.body.items)).toMatchObject([
+        { classification: "matched", titleId: primaryId, selected: true },
+        { classification: "matched", titleId: primaryId, episodeId: primaryEpisode.id, selected: true },
+      ]);
+
+      const moved = await runCatalogSync({ dryRun: false, allowPartial: true }, [
+        { ...fixtures[0], aliases: [] },
+        { ...fixtures[1], aliases: fixtures[0].aliases },
+      ]);
+      expect(moved?.succeeded).toBe(2);
+      expect(moved?.failures).toEqual([]);
+      const owners = await db.select().from(titleAliasesTable).where(and(
+        inArray(titleAliasesTable.titleId, titleIds), eq(titleAliasesTable.alias, alias),
+      ));
+      expect(owners.map((row) => row.titleId)).toEqual([secondaryId]);
+
+      // Exactly the same source and bytes must be classified anew for USER_B.
+      const second = await supertest(app).post("/api/imports").set("x-test-user", USER_B).send(upload);
+      if (second.body.id) jobIds.push(second.body.id);
+      expect(second.status).toBe(201);
+      expect(second.body.id).not.toBe(first.body.id);
+      expect(second.body.status).toBe("ready");
+      expect(second.body.summary).toMatchObject({ matched: 2, ambiguous: 0, unmatched: 0 });
+      expect(sortedItems(second.body.items)).toMatchObject([
+        { classification: "matched", titleId: secondaryId, selected: true },
+        { classification: "matched", titleId: secondaryId, episodeId: secondaryEpisode.id, selected: true },
+      ]);
+      const jobs = await db.select().from(importsTable).where(inArray(importsTable.id, jobIds));
+      expect(jobs).toHaveLength(2);
+      expect(jobs.find((job) => job.id === first.body.id)?.userId).toBe(USER_A);
+      expect(jobs.find((job) => job.id === second.body.id)?.userId).toBe(USER_B);
+      expect(new Set(jobs.map((job) => job.fingerprint)).size).toBe(1);
+
+      for (const [job, stranger] of [[first.body, USER_B], [second.body, USER_A]] as const) {
+        const responses = await Promise.all([
+          supertest(app).get(`/api/imports/${job.id}`).set("x-test-user", stranger),
+          supertest(app).get(`/api/imports/${job.id}/report`).set("x-test-user", stranger),
+          supertest(app).patch(`/api/imports/${job.id}/items/${job.items[0].id}`).set("x-test-user", stranger).send({ skip: true }),
+          supertest(app).post(`/api/imports/${job.id}/confirm`).set("x-test-user", stranger),
+        ]);
+        expect(responses.map((response) => response.status)).toEqual([404, 404, 404, 404]);
+      }
+      const history = async (userId: string) => {
+        const [watchlist, watchedEpisodes, watchedTitles] = await Promise.all([
+          db.select().from(watchlistTable).where(and(eq(watchlistTable.userId, userId), inArray(watchlistTable.titleId, titleIds))),
+          db.select().from(watchedEpisodesTable).where(and(eq(watchedEpisodesTable.userId, userId), inArray(watchedEpisodesTable.titleId, titleIds))),
+          db.select().from(watchedTitlesTable).where(and(eq(watchedTitlesTable.userId, userId), inArray(watchedTitlesTable.titleId, titleIds))),
+        ]);
+        return { watchlist, watchedEpisodes, watchedTitles };
+      };
+      expect(await history(USER_A)).toEqual({ watchlist: [], watchedEpisodes: [], watchedTitles: [] });
+      expect(await history(USER_B)).toEqual({ watchlist: [], watchedEpisodes: [], watchedTitles: [] });
+      for (const [job, owner] of [[first.body, USER_A], [second.body, USER_B]] as const) {
+        const preview = await supertest(app).get(`/api/imports/${job.id}`).set("x-test-user", owner);
+        expect(preview.status).toBe(200);
+        expect(preview.body.status).toBe("ready");
+        expect(sortedItems(preview.body.items)).toEqual(sortedItems(job.items));
+      }
+      const confirmedB = await supertest(app).post(`/api/imports/${second.body.id}/confirm`).set("x-test-user", USER_B);
+      expect(confirmedB.status).toBe(200);
+      expect(confirmedB.body.status).toBe("confirmed");
+      expect(confirmedB.body.summary).toMatchObject({ applied: 2, selected: 2, skipped: 0 });
+      const historyB = await history(USER_B);
+      expect(historyB.watchlist).toMatchObject([{ titleId: secondaryId, userId: USER_B }]);
+      expect(historyB.watchedEpisodes).toMatchObject([{ titleId: secondaryId, episodeId: secondaryEpisode.id, userId: USER_B }]);
+      expect(historyB.watchedTitles).toMatchObject([{ titleId: secondaryId, userId: USER_B }]);
+      expect(await history(USER_A)).toEqual({ watchlist: [], watchedEpisodes: [], watchedTitles: [] });
+      const untouchedA = await supertest(app).get(`/api/imports/${first.body.id}`).set("x-test-user", USER_A);
+      expect(untouchedA.status).toBe(200);
+      expect(untouchedA.body.status).toBe("ready");
+      expect(sortedItems(untouchedA.body.items)).toEqual(sortedItems(first.body.items));
+
+      const confirmedA = await supertest(app).post(`/api/imports/${first.body.id}/confirm`).set("x-test-user", USER_A);
+      expect(confirmedA.status).toBe(200);
+      expect(confirmedA.body.status).toBe("confirmed");
+      expect(confirmedA.body.summary).toMatchObject({ applied: 2, selected: 2, skipped: 0 });
+      const historyA = await history(USER_A);
+      expect(historyA.watchlist).toMatchObject([{ titleId: primaryId, userId: USER_A }]);
+      expect(historyA.watchedEpisodes).toMatchObject([{ titleId: primaryId, episodeId: primaryEpisode.id, userId: USER_A }]);
+      expect(historyA.watchedTitles).toMatchObject([{ titleId: primaryId, userId: USER_A }]);
+      expect(await history(USER_B)).toEqual(historyB);
+      const unchangedB = await supertest(app).get(`/api/imports/${second.body.id}`).set("x-test-user", USER_B);
+      expect(unchangedB.status).toBe(200);
+      expect(unchangedB.body).toEqual(confirmedB.body);
+    } finally {
+      vi.unstubAllGlobals();
+      await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, rateLimitKeys));
+      if (jobIds.length) await db.delete(importsTable).where(inArray(importsTable.id, jobIds));
+      if (titleIds.length) {
+        await db.delete(watchedEpisodesTable).where(and(inArray(watchedEpisodesTable.userId, users), inArray(watchedEpisodesTable.titleId, titleIds)));
+        await db.delete(watchedTitlesTable).where(and(inArray(watchedTitlesTable.userId, users), inArray(watchedTitlesTable.titleId, titleIds)));
+        await db.delete(watchlistTable).where(and(inArray(watchlistTable.userId, users), inArray(watchlistTable.titleId, titleIds)));
+      }
+      await db.delete(titlesTable).where(inArray(titlesTable.imdbId, ["tt9990096", "tt9990097"]));
+      await db.delete(integrationHealthTable);
+      if (healthSnapshot.length) await db.insert(integrationHealthTable).values(healthSnapshot);
+    }
   });
 
   it("uses external IDs and alternate titles, but leaves ambiguity and non-exact episodes unresolved", async () => {
