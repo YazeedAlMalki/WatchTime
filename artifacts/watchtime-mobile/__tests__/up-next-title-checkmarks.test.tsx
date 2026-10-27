@@ -22,6 +22,7 @@ const mockTitleFetch = jest.fn();
 const mockActivityFetch = jest.fn();
 const mockMarkRequest = jest.fn();
 const mockUnmarkRequest = jest.fn();
+const mockRecommendationFetch = jest.fn();
 
 const mockTitleData = () => ({
   id: 42,
@@ -97,7 +98,9 @@ jest.mock('@/components/ui', () => {
     EmptyState: () => null,
     ErrorState: () => null,
     Loading: () => <View testID="loading" />,
-    PosterCard: () => null,
+    PosterCard: ({ title }: { title: { id: number; name: string } }) => (
+      <Text testID={`poster-card-${title.id}`}>{title.name}</Text>
+    ),
   };
 });
 jest.mock('@/hooks/useColors', () => ({
@@ -177,7 +180,18 @@ jest.mock('@workspace/api-client-react', () => {
       },
     }),
     useGetMyWatchlist: () => useQuery({ queryKey: ['/api/me/watchlist'], queryFn: () => [] }),
-    useGetMyRecommendations: () => useQuery({ queryKey: recsKey(), queryFn: () => [] }),
+    useGetMyRecommendations: () => useQuery({
+      queryKey: recsKey(),
+      queryFn: () => {
+        mockRecommendationFetch();
+        return [{
+          reason: 'Based on your shows',
+          titles: mockWatched.has(201)
+            ? [{ id: 902, name: 'Updated recommendation' }]
+            : [{ id: 901, name: 'Initial recommendation' }],
+        }];
+      },
+    }),
     useGetSimilarTitles: () => ({ data: [] }),
     useGetTitleSafety: () => ({ data: null, isLoading: false }),
     useMarkEpisodeWatched: (options: {
@@ -356,6 +370,43 @@ it('moves the last watched show out of Up Next and into Caught Up after a Home m
     expect(screen.getByTestId('filtered-shows-up-next').props.children).toBe('');
     expect(screen.getByTestId('filtered-shows-caught-up').props.children).toBe('42');
   });
+
+  await act(async () => screen.unmount());
+  client.clear();
+});
+
+it('refreshes and shows Home recommendations after marking an Up Next episode watched', async () => {
+  mockWatched.clear();
+  mockMarkRequest.mockReset();
+  mockMarkRequest.mockResolvedValue({ ok: true });
+  mockRecommendationFetch.mockClear();
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const screen = await render(
+    <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+  );
+
+  await waitFor(() => {
+    expect(screen.getByTestId('mark-watched-201')).toBeEnabled();
+    expect(mockRecommendationFetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('poster-card-901')).toBeTruthy();
+  });
+
+  await fireEvent.press(screen.getByTestId('mark-watched-201'));
+  await waitFor(() => {
+    expect(mockMarkRequest).toHaveBeenCalledWith({
+      episodeId: 201, data: { includePrevious: true },
+    });
+    expect(mockWatched.has(201)).toBe(true);
+    expect(mockRecommendationFetch).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('poster-card-902')).toBeTruthy();
+  });
+  expect(screen.queryByTestId('poster-card-901')).toBeNull();
 
   await act(async () => screen.unmount());
   client.clear();
