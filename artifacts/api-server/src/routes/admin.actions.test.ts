@@ -267,6 +267,29 @@ describe("restored admin actions", () => {
     expect(beyondEnd.body).toEqual([]);
   });
 
+  it("returns only contributions matching each supported status filter", async () => {
+    const statuses = ["pending", "approved", "rejected", "flagged"] as const;
+    const createdAt = new Date("2099-01-02T00:00:00.000Z");
+    const inserted = await db.insert(contributionsTable).values(
+      statuses.map((status) => ({
+        userId: adminId,
+        titleId,
+        category: "violence" as const,
+        severity: "mild" as const,
+        status,
+        createdAt,
+      })),
+    ).returning({ id: contributionsTable.id, status: contributionsTable.status });
+
+    for (const status of statuses) {
+      const response = await request(app)
+        .get(`/api/admin/contributions?status=${status}`).expect(200);
+      expect(response.body.every((row: { status: string }) => row.status === status)).toBe(true);
+      expect(response.body.some((row: { id: number }) =>
+        row.id === inserted.find((row) => row.status === status)?.id)).toBe(true);
+    }
+  });
+
   it.each([
     "limit=0", "limit=101", "limit=-1", "limit=1.5", "limit=nope",
     "offset=-1", "offset=1000001", "offset=0.5", "offset=nope",
