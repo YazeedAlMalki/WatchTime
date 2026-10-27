@@ -16,3 +16,9 @@ When mocks wrap account-scoped mutation hooks, forward both `onMutate` and `onSu
 **How to apply:** In screen tests that use real React Query mutations, pass the `onMutate` callback result through to the success callback and use the screen's query key override.
 
 Run distinct initiating-screen scenarios in separate Jest files when using the Expo renderer. In this workspace, My Shows mounted as null after an earlier Home scenario in the same test file, even with explicit unmount and cleanup; the same My Shows scenario passed in isolation and in its own file. **Why:** A renderer lifecycle failure can look like a missing query invalidation. **How to apply:** Keep one cross-screen journey per test file rather than depending on consecutive screen journeys within the same Jest module.
+
+For a Home → title → Home journey, rerender distinct route subtrees under the same QueryClientProvider instead of creating three independent render roots. This still unmounts each departing screen while retaining the pending mutation and shared cache. Keep a combined My Shows scenario after other Home journeys if they must share a file.
+
+**Why:** A new render root after the combined My Shows scenario can be empty in the full suite even when the same test passes alone; switching route subtrees avoids the separate-root problem within a journey.
+
+**How to apply:** Assert the departing screen is absent, keep requests deferred until the destination is mounted, and run the whole file to detect order-dependent renderer failures.

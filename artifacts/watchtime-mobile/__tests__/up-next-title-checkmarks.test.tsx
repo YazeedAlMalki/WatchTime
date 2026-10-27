@@ -787,6 +787,10 @@ it('keeps a Home retry visible when refreshed metadata and progress still identi
   }
 });
 
+// Keep this journey before the combined My Shows mount below: that renderer
+// scenario can leave later Home mounts empty despite passing in isolation.
+it('finishes a pending Home mark after opening the title and does not repeat it on return', pendingHomeMarkNavigation);
+
 it('shows a failed Home mark and refreshes title, seasons, and activity after a successful retry', async () => {
   mockWatched.clear();
   mockMarkRequest.mockReset();
@@ -951,5 +955,100 @@ it('shows a failed Home mark and refreshes title, seasons, and activity after a 
   await act(async () => detail.unmount());
   client.clear();
 });
+
+async function pendingHomeMarkNavigation() {
+  mockWatched.clear();
+  mockMarkRequest.mockReset();
+  mockTitleFetch.mockClear();
+  mockSeasonFetch.mockClear();
+  mockRouter.push.mockClear();
+  let finishMark!: () => void;
+  mockMarkRequest.mockImplementationOnce(() => new Promise<void>((resolve) => {
+    finishMark = resolve;
+  }));
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const { getGetTitleQueryKey, getGetSeasonQueryKey, getGetMyShowsQueryKey } = mockApi;
+  // Fresh cached data must change through mutation invalidation, not an
+  // incidental stale-on-mount refetch when the viewer opens the title.
+  client.setQueryData(getGetTitleQueryKey(42), mockTitleData());
+  for (const season of mockSeasons) {
+    client.setQueryData(getGetSeasonQueryKey(42, season.seasonNumber), mockSeasonData(season.seasonNumber));
+  }
+  const screen = await render(
+    <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+  );
+
+  try {
+    await screen.findByTestId('mark-watched-201');
+    await fireEvent.press(screen.getByTestId('mark-watched-201'), { stopPropagation: jest.fn() });
+    await waitFor(() => {
+      expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Saving…')).toBeTruthy();
+      expect(screen.getByTestId('mark-watched-201')).toBeDisabled();
+    });
+    expect(mockMarkRequest).toHaveBeenCalledWith({
+      episodeId: 201, data: { includePrevious: true },
+    });
+    await fireEvent.press(screen.getByTestId('upnext-42'));
+    expect(mockRouter.push).toHaveBeenCalledWith('/title/42');
+
+    // Replace the route subtree, actually unmounting Home and its mutation
+    // observer while keeping the same QueryClient and pending request alive.
+    await screen.rerender(
+      <QueryClientProvider client={client}>
+        <TitleDetailScreen />
+        <SeasonRows season={1} />
+        <SeasonRows season={2} />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId('upnext-42')).toBeNull();
+    expect(screen.getAllByText('0/2 watched')).toHaveLength(2);
+    expect(screen.getByTestId('episode-state-201').props.children).toEqual(['○', ' ', 'Third']);
+    expect(mockWatched.size).toBe(0);
+    expect(mockTitleFetch).not.toHaveBeenCalled();
+    expect(mockSeasonFetch).not.toHaveBeenCalled();
+    expect(client.getMutationCache().getAll().map((mutation) => mutation.state.status)).toEqual(['pending']);
+
+    await act(async () => finishMark());
+    await waitFor(() => {
+      expect(screen.getByText('2/2 watched')).toBeTruthy();
+      expect(screen.getByText('1/2 watched')).toBeTruthy();
+      expect(screen.getByTestId('episode-state-101').props.children).toEqual(['✓', ' ', 'Pilot']);
+      expect(screen.getByTestId('episode-state-102').props.children).toEqual(['✓', ' ', 'Second']);
+      expect(screen.getByTestId('episode-state-201').props.children).toEqual(['✓', ' ', 'Third']);
+      expect(screen.getByTestId('episode-state-202').props.children).toEqual(['○', ' ', 'Fourth']);
+      expect(client.getMutationCache().getAll().map((mutation) => mutation.state.status)).toEqual(['success']);
+    });
+    expect(mockTitleFetch).toHaveBeenCalledTimes(1);
+    expect(mockSeasonFetch.mock.calls).toEqual(expect.arrayContaining([[1], [2]]));
+    expect(mockSeasonFetch).toHaveBeenCalledTimes(2);
+    expect([...mockWatched].sort()).toEqual([101, 102, 201]);
+    // Home is inactive at completion, so its cached list must be invalidated
+    // for the return visit rather than relying on the old card's observer.
+    expect(client.getQueryState(getGetMyShowsQueryKey())?.isInvalidated).toBe(true);
+
+    await screen.rerender(
+      <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('3/4 episodes')).toBeTruthy();
+      expect(screen.getByText('S2 · E2 — Fourth')).toBeTruthy();
+      expect(screen.getByTestId('mark-watched-202')).toBeEnabled();
+    });
+    expect(screen.queryByText('Saving…')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByTestId('mark-watched-201')).toBeNull();
+    expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+    expect(client.getMutationCache().getAll()).toHaveLength(1);
+  } finally {
+    await act(async () => screen.unmount());
+    client.clear();
+  }
+}
 
 afterEach(cleanup);
