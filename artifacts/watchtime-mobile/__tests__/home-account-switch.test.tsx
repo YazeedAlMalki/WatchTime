@@ -286,6 +286,142 @@ describe('Home feed account switching', () => {
     expect(screen.queryByText('Account A private watchlist title')).toBeNull();
   });
 
+  it('keeps late Home responses from the previous account out of the new account feed', async () => {
+    const accountAResponses = {
+      shows: deferred<any[]>(),
+      watchlist: deferred<any[]>(),
+      recommendations: deferred<any[]>(),
+    };
+    mockFeedResponses['clerk-session-account-a'] = {
+      shows: accountAResponses.shows.promise,
+      watchlist: accountAResponses.watchlist.promise,
+      recommendations: accountAResponses.recommendations.promise,
+    };
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <AppAuthProvider>
+          <HomeScreen />
+        </AppAuthProvider>
+      </QueryClientProvider>,
+    );
+
+    await act(async () => releaseFrame?.(0));
+    await act(async () => releaseFrame?.(0));
+    await waitFor(() => {
+      expect(mockFeedRequests).toEqual(expect.arrayContaining([
+        { feed: 'shows', token: 'clerk-session-account-a' },
+        { feed: 'watchlist', token: 'clerk-session-account-a' },
+        { feed: 'recommendations', token: 'clerk-session-account-a' },
+      ]));
+    });
+
+    const accountBResponses = {
+      shows: deferred<any[]>(),
+      watchlist: deferred<any[]>(),
+      recommendations: deferred<any[]>(),
+    };
+    mockFeedResponses['clerk-session-account-b'] = {
+      shows: accountBResponses.shows.promise,
+      watchlist: accountBResponses.watchlist.promise,
+      recommendations: accountBResponses.recommendations.promise,
+    };
+    mockActiveSession.token = 'clerk-session-account-b';
+    mockClerkAuthState.current = {
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'account-b',
+      getToken: mockGetSessionToken,
+    };
+
+    await act(async () => {
+      screen.rerender(
+        <QueryClientProvider client={queryClient}>
+          <AppAuthProvider>
+            <HomeScreen />
+          </AppAuthProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitFor(() => {
+      expect(mockFeedRequests).toEqual(expect.arrayContaining([
+        { feed: 'shows', token: 'clerk-session-account-b' },
+        { feed: 'watchlist', token: 'clerk-session-account-b' },
+        { feed: 'recommendations', token: 'clerk-session-account-b' },
+      ]));
+    });
+    expect(screen.queryByText('Account A late show')).toBeNull();
+    expect(screen.queryByText('Account A late watchlist title')).toBeNull();
+    expect(screen.queryByText('Account A late recommendation')).toBeNull();
+
+    await act(async () => {
+      accountAResponses.shows.resolve([{
+        title: {
+          id: 501,
+          name: 'Account A late show',
+          type: 'series',
+          year: 2024,
+          genres: [],
+          altTitles: [],
+          providers: [],
+          posterUrl: null,
+        },
+        watchedEpisodes: 1,
+        totalEpisodes: 4,
+        nextEpisode: {
+          id: 5011,
+          seasonNumber: 1,
+          episodeNumber: 2,
+          name: 'Account A late episode',
+        },
+      }]);
+      accountAResponses.watchlist.resolve([{ id: 502, name: 'Account A late watchlist title' }]);
+      accountAResponses.recommendations.resolve([{
+        reason: 'Because you watched Account A late show',
+        titles: [{ id: 503, name: 'Account A late recommendation' }],
+      }]);
+      await Promise.all([
+        accountAResponses.shows.promise,
+        accountAResponses.watchlist.promise,
+        accountAResponses.recommendations.promise,
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData(['/api/me/shows', 'account', 'account-a'])).toBeDefined();
+      expect(queryClient.getQueryData(['/api/me/watchlist', 'account', 'account-a'])).toBeDefined();
+      expect(queryClient.getQueryData(['/api/me/recommendations', 'account', 'account-a'])).toBeDefined();
+    });
+    expect(screen.queryByText('Account A late show')).toBeNull();
+    expect(screen.queryByText('Account A late episode')).toBeNull();
+    expect(screen.queryByText('Account A late watchlist title')).toBeNull();
+    expect(screen.queryByText('Account A late recommendation')).toBeNull();
+    expect(screen.queryByText('Because you watched Account A late show')).toBeNull();
+
+    await act(async () => {
+      accountBResponses.shows.resolve([]);
+      accountBResponses.watchlist.resolve([{ id: 504, name: 'Account B current watchlist title' }]);
+      accountBResponses.recommendations.resolve([{
+        reason: 'Because you watched Account B show',
+        titles: [{ id: 505, name: 'Account B current recommendation' }],
+      }]);
+      await Promise.all([
+        accountBResponses.shows.promise,
+        accountBResponses.watchlist.promise,
+        accountBResponses.recommendations.promise,
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Account B current watchlist title')).toBeTruthy();
+      expect(screen.getByText('Account B current recommendation')).toBeTruthy();
+    });
+    expect(screen.queryByText('Account A late show')).toBeNull();
+    expect(screen.queryByText('Account A late watchlist title')).toBeNull();
+    expect(screen.queryByText('Account A late recommendation')).toBeNull();
+  });
+
   it('clears My Shows immediately and fetches every personal feed for the new account', async () => {
     mockFeedResponses['clerk-session-account-a'].shows = [{
       title: {
