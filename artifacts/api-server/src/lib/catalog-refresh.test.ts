@@ -509,6 +509,61 @@ describe("catalog refresh recovery", () => {
     }
   });
 
+  it("releases the catalog and every recovered worker lock after committing repairs", async () => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const staleAt = new Date(cutoff.getTime() - 1_000);
+    const runs = await db.insert(catalogSyncRunsTable).values([
+      { trigger: "manual", status: "queued", createdAt: staleAt },
+      { trigger: "manual", status: "running", createdAt: staleAt, startedAt: staleAt },
+    ]).returning();
+    const runIds = runs.map((run) => run.id);
+    createdRunIds.push(...runIds);
+    await db.insert(catalogSyncItemsTable).values(runs.map((run) => ({
+      runId: run.id, itemKey: `commit-lock-cleanup-${run.id}`,
+      title: "Recovery lock cleanup", provider: "TVMaze",
+      status: run.status, startedAt: run.startedAt,
+    })));
+
+    // Reserve the probe before recovery so it cannot reuse a recovery session:
+    // advisory locks are reentrant and would otherwise hide leaked ownership.
+    const lockProbe = await pool.connect();
+    try {
+      await expect(recoverInterruptedRuns(cutoff)).resolves.toBeUndefined();
+
+      const recoveredRuns = await db.select().from(catalogSyncRunsTable)
+        .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id);
+      expect(recoveredRuns).toHaveLength(runs.length);
+      for (const run of recoveredRuns) {
+        expect(run).toMatchObject({ status: "failed", processedItems: 1, failedItems: 1 });
+        expect(run.finishedAt).toBeInstanceOf(Date);
+      }
+      const recoveredItems = await db.select().from(catalogSyncItemsTable)
+        .where(inArray(catalogSyncItemsTable.runId, runIds));
+      expect(recoveredItems).toHaveLength(runs.length);
+      for (const item of recoveredItems) {
+        expect(item.status).toBe("failed");
+        expect(item.finishedAt).toBeInstanceOf(Date);
+      }
+
+      const catalogLock = await lockProbe.query<{ locked: boolean }>(
+        "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+      );
+      expect(catalogLock.rows[0].locked).toBe(true);
+      for (const runId of runIds) {
+        const workerLock = await lockProbe.query<{ locked: boolean }>(
+          "select pg_try_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1) as locked", [runId],
+        );
+        expect(workerLock.rows[0].locked).toBe(true);
+      }
+    } finally {
+      try {
+        await lockProbe.query("select pg_advisory_unlock_all()");
+      } finally {
+        lockProbe.release();
+      }
+    }
+  });
+
   it("rolls back a midway title-update failure, releases recovery locks, and recovers on retry", async () => {
     const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
     const staleAt = new Date(cutoff.getTime() - 1_000);
