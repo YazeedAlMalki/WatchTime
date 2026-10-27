@@ -43,3 +43,4 @@
 - [Alternate-title query planning](alternate-title-query-planning.md) — correlated alias `EXISTS` can become a catalog-wide scan; verify plans and prefer per-title bounded lookups.
 - [Alias collision freshness](alias-collision-freshness.md) — collision badges need an independent authoritative lookup so alias-list failures do not mask current counts.
 - [Streaming export race tests](streaming-export-race-tests.md) — pause a real HTTP download to coordinate concurrent database mutations between streamed batches.
+- [Mood store persistence test scopes](mood-store-persistence-test-scopes.md) — set the expected guest or account scope explicitly; the store singleton retains scope across tests.

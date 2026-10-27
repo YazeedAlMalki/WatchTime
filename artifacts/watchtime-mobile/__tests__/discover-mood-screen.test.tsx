@@ -9,7 +9,7 @@ jest.mock(
 jest.mock("expo-image", () => ({ Image: () => null }));
 jest.mock("expo-haptics", () => ({ selectionAsync: jest.fn() }));
 jest.mock("@expo/vector-icons", () => ({ Feather: () => null }));
-jest.mock("@/lib/discover-mood/use-sync", () => ({
+jest.mock("../lib/discover-mood/use-sync", () => ({
   useMoodDiscoverySync: jest.fn(),
 }));
 jest.mock("react-native-safe-area-context", () => ({

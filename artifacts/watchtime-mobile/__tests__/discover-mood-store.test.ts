@@ -14,6 +14,7 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 }));
 
 import { act, renderHook, waitFor } from "@testing-library/react-native";
+import React from "react";
 import { actions, useStore } from "../lib/discover-mood/store";
 
 const STORAGE_KEY = "watchtime.discoverMood.v1";
@@ -126,5 +127,31 @@ describe("WatchTime Mobile mood discovery storage", () => {
     expect(actions.getPersonalState().saved).toEqual(["guest-pick"]);
     await actions.setAccountScope("user-a");
     expect(actions.getPersonalState().saved).toEqual(["server-pick"]);
+  });
+
+  it("persists the Arabic language choice and restores it during hydration", async () => {
+    mockStorageValues.clear();
+    await actions.setAccountScope(null);
+    const { result, unmount } = await renderHook(() => useStore());
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    await act(async () => {
+      actions.setLang("ar");
+    });
+    await waitFor(() => {
+      expect(JSON.parse(mockStorageValues.get(STORAGE_KEY) ?? "{}").lang).toBe("ar");
+    });
+    unmount();
+
+    // A fresh store module represents a reload while keeping AsyncStorage intact.
+    jest.doMock("react", () => React);
+    jest.resetModules();
+    const reloadedStore = require("../lib/discover-mood/store") as typeof import("../lib/discover-mood/store");
+    const reloaded = await renderHook(() => reloadedStore.useStore());
+
+    await waitFor(() => {
+      expect(reloaded.result.current).toMatchObject({ hydrated: true, lang: "ar" });
+    });
+    reloaded.unmount();
   });
 });
