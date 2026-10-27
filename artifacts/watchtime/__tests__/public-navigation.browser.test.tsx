@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
+import { Route, Router as WouterRouter } from "wouter";
 import "@/index.css";
 
 vi.mock("@/pages/landing", () => ({
@@ -216,6 +217,43 @@ it.each([320, 1280])(
   },
 );
 
+it("closes the public menu and restores trigger focus after keyboard Browse navigation", async () => {
+  document.body.append(container);
+  root = createRoot(container);
+  root.render(
+    <WouterRouter>
+      <PublicNavbar />
+      <Route path="/browse">
+        <h1>Browse Catalog</h1>
+      </Route>
+    </WouterRouter>,
+  );
+
+  const trigger = page.getByRole("button", { name: "Open navigation" });
+  await expect.element(trigger).toBeVisible();
+  const browse = page.getByTestId("link-public-browse");
+  const dialog = container.querySelector("dialog");
+  if (!dialog) throw new Error("Public navigation dialog did not render");
+
+  for (let attempt = 0; attempt < 12 && document.activeElement !== container.querySelector('[aria-label="Open navigation"]'); attempt++) {
+    await userEvent.tab();
+  }
+  await expect.element(trigger).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(dialog).toBeVisible();
+  await expect.element(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect.element(page.getByRole("button", { name: "Close navigation" })).toHaveFocus();
+
+  await userEvent.tab();
+  await expect.element(browse).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+
+  await expect.element(page.getByRole("heading", { name: "Browse Catalog" })).toBeVisible();
+  expect(dialog.open).toBe(false);
+  await expect.element(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect.element(trigger).toHaveFocus();
+});
+
 it("keeps the public mobile menu keyboard accessible without loading authenticated scripts", async () => {
   window.history.replaceState({}, "", "/");
   document.cookie = "__session=; Max-Age=0; path=/";
@@ -261,8 +299,11 @@ it("keeps the public mobile menu keyboard accessible without loading authenticat
   await userEvent.keyboard("{Enter}");
   await expect.element(dialog).toBeVisible();
   expect(authenticatedScripts()).toHaveLength(initialAuthenticatedScripts);
-  await userEvent.click(page.getByTestId("link-public-browse"));
+  await userEvent.tab();
+  await expect.element(page.getByTestId("link-public-browse")).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
   expect(window.location.pathname).toBe("/browse");
   await expect.element(dialog).not.toBeInTheDocument();
   await expect.poll(() => authenticatedScripts().length).toBeGreaterThan(initialAuthenticatedScripts);
+  await expect.element(page.getByRole("heading", { name: "Browse Catalog" })).toBeVisible();
 });
