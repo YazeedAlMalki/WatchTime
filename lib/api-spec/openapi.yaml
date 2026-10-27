@@ -2147,7 +2147,7 @@ components:
             - type: "null"
     IntegrationHealth:
       type: object
-      required: [provider, status, successRatePercent, refreshAttempts, successfulRefreshes, mappedTitles, missingMappings, malformedRefreshTimestampCount, lastSyncAtMalformed, lastSuccessAtMalformed, sustainedFailureAlert, lowAccumulatedSuccessRateAlert]
+      required: [provider, status, successRatePercent, refreshAttempts, successfulRefreshes, mappedTitles, missingMappings, malformedRefreshTimestampCount, malformedRefreshTimestampUnclassifiedCount, lastSyncAtMalformed, lastSuccessAtMalformed, sustainedFailureAlert, lowAccumulatedSuccessRateAlert]
       properties:
         provider: { type: string }
         status: { type: string, enum: [healthy, degraded, failing, provider_unavailable] }
@@ -2168,6 +2168,9 @@ components:
         malformedRefreshTimestampCount:
           type: integer
           description: Number of malformed rating refresh timestamps for this provider; a data-quality metric that does not affect provider refresh status.
+        malformedRefreshTimestampUnclassifiedCount:
+          type: integer
+          description: Number of malformed rating records for this provider without a supported regional classification.
         sustainedFailureAlert: { type: boolean }
         lowAccumulatedSuccessRateAlert:
           type: boolean

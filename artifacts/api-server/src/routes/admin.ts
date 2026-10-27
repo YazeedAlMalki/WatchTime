@@ -456,6 +456,10 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
 */
 
 router.get("/integrations", async (_req, res) => {
+  const supportedRatingSystems = sql.join(
+    [...new Set(RATING_REGIONS.map(({ system }) => system))].map((system) => sql`${system}`),
+    sql`, `,
+  );
   const [rows, malformedTimestampCounts] = await Promise.all([
     db
       .select({
@@ -480,6 +484,13 @@ router.get("/integrations", async (_req, res) => {
       .select({
         provider: safetyRecordsTable.sourceName,
         count: sql<number>`count(*)::int`,
+        unclassifiedCount: sql<number>`count(*) filter (
+          where not exists (
+            select 1
+            from jsonb_array_elements(${safetyRecordsTable.items}) as item(value)
+            where item.value->>'category' in (${supportedRatingSystems})
+          )
+        )::int`,
       })
       .from(safetyRecordsTable)
       .where(sql`
@@ -488,8 +499,8 @@ router.get("/integrations", async (_req, res) => {
       `)
       .groupBy(safetyRecordsTable.sourceName),
   ]);
-  const malformedTimestampCountByProvider = new Map(
-    malformedTimestampCounts.map((row) => [row.provider, row.count]),
+  const malformedTimestampCountsByProvider = new Map(
+    malformedTimestampCounts.map((row) => [row.provider, row]),
   );
   const sustainedFailureThreshold = Date.now() - 3 * 24 * 60 * 60 * 1000;
   return res.json(
@@ -517,7 +528,9 @@ router.get("/integrations", async (_req, res) => {
       mappedTitles: r.mappedTitles,
       missingMappings: r.missingMappings,
       malformedRefreshTimestampCount:
-        malformedTimestampCountByProvider.get(r.provider) ?? 0,
+        malformedTimestampCountsByProvider.get(r.provider)?.count ?? 0,
+      malformedRefreshTimestampUnclassifiedCount:
+        malformedTimestampCountsByProvider.get(r.provider)?.unclassifiedCount ?? 0,
       sustainedFailureAlert:
         (r.provider === "TVMaze" || r.provider === "Wikipedia") &&
         r.status === "failing" &&

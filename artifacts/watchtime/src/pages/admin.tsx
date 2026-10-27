@@ -300,9 +300,9 @@ export default function AdminPage() {
                 status.
               </p>
               <p className="mt-1 text-sm">
-                Counts include malformed provider records without a supported
-                regional classification; those records do not appear in
-                regional review.
+                Each alert separates all malformed provider records from those
+                without a supported regional classification, which do not
+                appear in regional review.
               </p>
               <ul className="mt-4 space-y-3">
                 {integrations
@@ -319,8 +319,11 @@ export default function AdminPage() {
                         {integration.provider}:{" "}
                         {integration.malformedRefreshTimestampCount.toLocaleString()}{" "}
                         {integration.malformedRefreshTimestampCount === 1
-                          ? "rating has a malformed refresh timestamp"
-                          : "ratings have malformed refresh timestamps"}
+                          ? "malformed rating"
+                          : "malformed ratings"}
+                        {" · "}
+                        {(integration.malformedRefreshTimestampUnclassifiedCount ?? 0).toLocaleString()}{" "}
+                        without a supported regional classification
                       </span>
                       <Button
                         asChild

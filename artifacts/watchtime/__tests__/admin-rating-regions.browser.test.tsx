@@ -116,6 +116,7 @@ it("pages through later malformed-timestamp matches without dropping the region 
       mappedTitles: 5,
       missingMappings: 0,
       malformedRefreshTimestampCount: 3,
+      malformedRefreshTimestampUnclassifiedCount: 1,
       sustainedFailureAlert: false,
       lowAccumulatedSuccessRateAlert: false,
     },
@@ -128,6 +129,7 @@ it("pages through later malformed-timestamp matches without dropping the region 
       mappedTitles: 5,
       missingMappings: 0,
       malformedRefreshTimestampCount: 0,
+      malformedRefreshTimestampUnclassifiedCount: 0,
       sustainedFailureAlert: false,
       lowAccumulatedSuccessRateAlert: false,
     },
@@ -142,14 +144,14 @@ it("pages through later malformed-timestamp matches without dropping the region 
       name: "Malformed rating timestamp alerts",
     })).toBeVisible();
     await expect.element(page.getByText(
-      "Timestamp Provider: 3 ratings have malformed refresh timestamps",
+      "Timestamp Provider: 3 malformed ratings · 1 without a supported regional classification",
     )).toBeVisible();
     await expect.element(page.getByText("Clean Provider")).not.toBeInTheDocument();
     await expect.element(page.getByText(
       "These data-quality warnings do not change provider health status.",
     )).toBeVisible();
     await expect.element(page.getByText(
-      "Counts include malformed provider records without a supported regional classification; those records do not appear in regional review.",
+      "Each alert separates all malformed provider records from those without a supported regional classification, which do not appear in regional review.",
     )).toBeVisible();
 
     const reviewLink = page.getByRole("link", { name: "Review affected ratings" });

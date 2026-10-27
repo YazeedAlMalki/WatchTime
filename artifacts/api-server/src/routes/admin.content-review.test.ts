@@ -430,7 +430,8 @@ describe("admin Content review timestamp filter", () => {
     const fixturePrefix = "timestamp-unclassified-fixture-20261021";
     const provider = `${fixturePrefix} Provider`;
     const titles = await db.insert(titlesTable).values([
-      { name: `${fixturePrefix}-classified`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-us-classified`, type: "movie", popularity: 3 },
+      { name: `${fixturePrefix}-gb-classified`, type: "movie", popularity: 2 },
       { name: `${fixturePrefix}-unclassified`, type: "movie", popularity: 1 },
     ]).returning({ id: titlesTable.id });
     titleIds.push(...titles.map(({ id }) => id));
@@ -458,6 +459,15 @@ describe("admin Content review timestamp filter", () => {
         isCommunity: false,
         url: `https://provider.example/ratings/${titles[1].id}`,
         updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{ category: "BBFC", label: "12A", score: null, maxScore: null, description: null }],
+      },
+      {
+        titleId: titles[2].id,
+        sourceName: provider,
+        status: "available",
+        isCommunity: false,
+        url: `https://provider.example/ratings/${titles[2].id}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
         items: [{ category: "UNSUPPORTED_SYSTEM", label: "12", score: null, maxScore: null, description: null }],
       },
     ]).returning({ id: safetyRecordsTable.id });
@@ -465,15 +475,25 @@ describe("admin Content review timestamp filter", () => {
 
     const alerts = await request(app).get("/api/admin/integrations").expect(200);
     expect(alerts.body.find((row: any) => row.provider === provider))
-      .toMatchObject({ malformedRefreshTimestampCount: 2 });
+      .toMatchObject({
+        malformedRefreshTimestampCount: 3,
+        malformedRefreshTimestampUnclassifiedCount: 1,
+      });
 
     const review = await request(app)
       .get(`/api/admin/content?q=${fixturePrefix}&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=${encodeURIComponent(provider)}&malformedRefreshTimestampAllRegions=true`)
       .expect(200);
     expect(review.body.map((item: any) => item.name))
-      .toEqual([`${fixturePrefix}-classified`]);
-    expect(review.body[0].selectedRating)
-      .toMatchObject({ region: "US", refreshTimestampMalformed: true });
+      .toEqual([`${fixturePrefix}-us-classified`, `${fixturePrefix}-gb-classified`]);
+    expect(review.body.map((item: any) => item.selectedRating.region))
+      .toEqual(["US", "GB"]);
+    expect(review.body.every((item: any) => item.selectedRating.refreshTimestampMalformed))
+      .toBe(true);
+    expect(review.body.length +
+      alerts.body.find((row: any) => row.provider === provider)
+        .malformedRefreshTimestampUnclassifiedCount,
+    ).toBe(alerts.body.find((row: any) => row.provider === provider)
+      .malformedRefreshTimestampCount);
   });
 
   it("loads mappings only for malformed-timestamp results and preserves mapping values", async () => {
