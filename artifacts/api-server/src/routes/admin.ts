@@ -540,18 +540,31 @@ router.get("/integrations", async (_req, res) => {
 
 router.get("/catalog-refreshes", async (_req, res) => {
   const runs = await db
-    .select().from(catalogSyncRunsTable)
+    .select({
+      run: catalogSyncRunsTable,
+      startedAtIsSupported: sql<boolean>`
+        isfinite(${catalogSyncRunsTable.startedAt})
+        and abs(extract(epoch from ${catalogSyncRunsTable.startedAt}) * 1000)
+          <= ${JS_DATE_LIMIT_MS}
+      `,
+      finishedAtIsSupported: sql<boolean>`
+        isfinite(${catalogSyncRunsTable.finishedAt})
+        and abs(extract(epoch from ${catalogSyncRunsTable.finishedAt}) * 1000)
+          <= ${JS_DATE_LIMIT_MS}
+      `,
+    })
+    .from(catalogSyncRunsTable)
     .orderBy(desc(catalogSyncRunsTable.createdAt), desc(catalogSyncRunsTable.id))
     .limit(20);
-  const runIds = runs.map((run) => run.id);
+  const runIds = runs.map(({ run }) => run.id);
   const items = runIds.length
     ? await db.select().from(catalogSyncItemsTable)
         .where(and(inArray(catalogSyncItemsTable.runId, runIds), eq(catalogSyncItemsTable.status, "failed")))
     : [];
-  return res.json(runs.map((run) => ({
+  return res.json(runs.map(({ run, startedAtIsSupported, finishedAtIsSupported }) => ({
     ...run,
-    startedAt: run.startedAt?.toISOString() ?? null,
-    finishedAt: run.finishedAt?.toISOString() ?? null,
+    startedAt: serializeCatalogRunTimestamp(run.startedAt, startedAtIsSupported),
+    finishedAt: serializeCatalogRunTimestamp(run.finishedAt, finishedAtIsSupported),
     createdAt: run.createdAt.toISOString(),
     failures: items.filter((item) => item.runId === run.id).map((item) => ({
       title: item.title,
@@ -560,6 +573,21 @@ router.get("/catalog-refreshes", async (_req, res) => {
     })),
   })));
 });
+
+function serializeCatalogRunTimestamp(
+  value: Date | null,
+  isSupported: boolean | null,
+): string | null {
+  if (
+    !value ||
+    !isSupported ||
+    !Number.isFinite(value.getTime()) ||
+    Math.abs(value.getTime()) > JS_DATE_LIMIT_MS
+  ) {
+    return null;
+  }
+  return value.toISOString();
+}
 
 router.post("/catalog-refreshes", async (req, res) => {
   const runId = await startCatalogRefresh("manual", undefined, async (tx, id) => {
