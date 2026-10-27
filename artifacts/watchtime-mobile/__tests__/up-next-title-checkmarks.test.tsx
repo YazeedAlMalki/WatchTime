@@ -20,6 +20,7 @@ const mockSeasonFetch = jest.fn();
 const mockTitleFetch = jest.fn();
 const mockActivityFetch = jest.fn();
 const mockMarkRequest = jest.fn();
+const mockUnmarkRequest = jest.fn();
 
 const mockTitleData = () => ({
   id: 42,
@@ -177,7 +178,12 @@ jest.mock('@workspace/api-client-react', () => {
     useGetMyRecommendations: () => useQuery({ queryKey: recsKey(), queryFn: () => [] }),
     useGetSimilarTitles: () => ({ data: [] }),
     useGetTitleSafety: () => ({ data: null, isLoading: false }),
-    useMarkEpisodeWatched: (options: { mutation: { onSuccess: () => void } }) =>
+    useMarkEpisodeWatched: (options: {
+      mutation: {
+        onMutate?: () => unknown;
+        onSuccess: (...args: any[]) => void;
+      };
+    }) =>
       useMutation({
         mutationFn: async ({ episodeId, data }: { episodeId: number; data: { includePrevious?: boolean } }) => {
           await mockMarkRequest({ episodeId, data });
@@ -193,9 +199,24 @@ jest.mock('@workspace/api-client-react', () => {
           }
           return { ok: true };
         },
+        onMutate: options.mutation.onMutate,
         onSuccess: options.mutation.onSuccess,
       }),
-    useUnmarkEpisodeWatched: () => ({ mutate: jest.fn(), isPending: false }),
+    useUnmarkEpisodeWatched: (options: {
+      mutation: {
+        onMutate?: () => unknown;
+        onSuccess: (...args: any[]) => void;
+      };
+    }) =>
+      useMutation({
+        mutationFn: async ({ episodeId }: { episodeId: number }) => {
+          await mockUnmarkRequest({ episodeId });
+          mockWatched.delete(episodeId);
+          return { ok: true };
+        },
+        onMutate: options.mutation.onMutate,
+        onSuccess: options.mutation.onSuccess,
+      }),
     useAddToWatchlist: () => ({ mutate: jest.fn(), isPending: false }),
     useRemoveFromWatchlist: () => ({ mutate: jest.fn(), isPending: false }),
     useMarkTitleWatched: () => ({ mutate: jest.fn(), isPending: false }),
@@ -367,6 +388,46 @@ it('moves the last watched show out of Up Next and into Caught Up after a title-
     expect(mockWatched.has(202)).toBe(true);
     expect(screen.getByTestId('filtered-shows-up-next').props.children).toBe('');
     expect(screen.getByTestId('filtered-shows-caught-up').props.children).toBe('42');
+  });
+
+  await act(async () => screen.unmount());
+  client.clear();
+});
+
+it('moves a show from Caught Up back into Up Next after a title-detail unmark', async () => {
+  mockWatched.clear();
+  [101, 102, 201, 202].forEach((episodeId) => mockWatched.add(episodeId));
+  mockUnmarkRequest.mockReset();
+  mockUnmarkRequest.mockResolvedValue({ ok: true });
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const screen = await render(
+    <QueryClientProvider client={client}>
+      <TitleDetailScreen />
+      <FilteredShowsObserver status="up-next" />
+      <FilteredShowsObserver status="caught-up" />
+    </QueryClientProvider>,
+  );
+
+  await waitFor(() => {
+    expect(screen.getByTestId('season-2')).toBeTruthy();
+    expect(screen.getByTestId('filtered-shows-up-next').props.children).toBe('');
+    expect(screen.getByTestId('filtered-shows-caught-up').props.children).toBe('42');
+  });
+  await fireEvent.press(screen.getByTestId('season-2'));
+  await waitFor(() => expect(screen.getByTestId('episode-check-202')).toBeEnabled());
+
+  await fireEvent.press(screen.getByTestId('episode-check-202'));
+  await waitFor(() => {
+    expect(mockUnmarkRequest).toHaveBeenCalledWith({ episodeId: 202 });
+    expect(mockWatched.has(202)).toBe(false);
+    expect(screen.getByTestId('filtered-shows-up-next').props.children).toBe('42');
+    expect(screen.getByTestId('filtered-shows-caught-up').props.children).toBe('');
   });
 
   await act(async () => screen.unmount());

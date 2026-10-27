@@ -689,10 +689,12 @@ function SeasonAccordion({
   titleId,
   season,
   isSignedIn,
+  userId,
 }: {
   titleId: number;
   season: SeasonSummary;
   isSignedIn: boolean;
+  userId: string | null | undefined;
 }) {
   const c = useColors();
   const [expanded, setExpanded] = useState(false);
@@ -701,18 +703,44 @@ function SeasonAccordion({
     query: { enabled: expanded } as any,
   });
 
-  const invalidate = () => {
+  const invalidate = (accountId: string) => {
     queryClient.invalidateQueries({
       queryKey: getGetSeasonQueryKey(titleId, season.seasonNumber),
     });
-    queryClient.invalidateQueries({ queryKey: getGetTitleQueryKey(titleId) });
-    queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getGetMyInProgressShowsQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetTitleQueryKey(titleId), 'account', accountId],
+      exact: true,
+    });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyShowsQueryKey(), 'account', accountId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyInProgressShowsQueryKey(), 'account', accountId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyRecommendationsQueryKey(), 'account', accountId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyRecentActivityQueryKey(), 'account', accountId],
+    });
   };
-  const mark = useMarkEpisodeWatched({ mutation: { onSuccess: invalidate } });
-  const unmark = useUnmarkEpisodeWatched({ mutation: { onSuccess: invalidate } });
+  const accountScopedMutation = {
+    onMutate: () => ({ accountId: userId }),
+    onSuccess: (_data: unknown, _variables: unknown, mutationContext: unknown) => {
+      if (
+        !userId ||
+        !mutationContext ||
+        typeof mutationContext !== 'object' ||
+        !('accountId' in mutationContext) ||
+        mutationContext.accountId !== userId
+      ) {
+        return;
+      }
+      invalidate(userId);
+    },
+  };
+  const mark = useMarkEpisodeWatched({ mutation: accountScopedMutation });
+  const unmark = useUnmarkEpisodeWatched({ mutation: accountScopedMutation });
 
   return (
     <View style={[styles.seasonCard, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -1115,6 +1143,7 @@ export default function TitleDetailScreen() {
                 titleId={titleId}
                 season={s}
                 isSignedIn={!!isSignedIn}
+                userId={userId}
               />
             ))}
           </View>
