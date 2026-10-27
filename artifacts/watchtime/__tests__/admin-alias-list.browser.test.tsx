@@ -185,6 +185,91 @@ it("hides previous alias rows while the new search is waiting for its debounce",
   }
 });
 
+it("keeps a filtered later alias page unchanged when removal is cancelled", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174000";
+  const pageCursor = `${snapshotId}:50:0`;
+  window.history.replaceState(
+    {},
+    "",
+    `/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=2&aliasCursor=${pageCursor}`,
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    return new Response(JSON.stringify({
+      items: [{
+        id: 151,
+        titleId: 101,
+        titleName: "The Lighthouse",
+        titleType: "movie",
+        titleYear: 2019,
+        alias: "Lighthouse final page alias",
+        language: "fr",
+        sourceName: "Editorial",
+        sourceUrl: null,
+        providerCitations: [],
+        isEditorial: true,
+        collision: false,
+        collisionTitleCount: 1,
+        updatedAt: "2026-09-16T00:00:00.000Z",
+      }],
+      total: 51,
+      limit: 50,
+      offset: 50,
+      nextCursor: null,
+      previousCursor: `${snapshotId}:0`,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 51 matching aliases");
+    await expect.element(page.getByText("Lighthouse final page alias")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Previous aliases" })).toBeEnabled();
+    const initialUrl = location.search;
+
+    await userEvent.click(page.getByRole("button", { name: "Remove" }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Remove “Lighthouse final page alias” from The Lighthouse? This cannot be undone.",
+    );
+    expect(deleteAliasMutate).not.toHaveBeenCalled();
+    expect(requests).toHaveLength(1);
+    await expect.element(page.getByText("Lighthouse final page alias")).toBeVisible();
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 51 matching aliases");
+    await expect.element(page.getByRole("button", { name: "Previous aliases" })).toBeEnabled();
+    expect(location.search).toBe(initialUrl);
+
+    const params = new URLSearchParams(location.search);
+    expect(params.get("q")).toBe("Lighthouse");
+    expect(params.get("ownership")).toBe("editorial");
+    expect(params.get("region")).toBe("GB");
+    expect(params.get("aliasPage")).toBe("2");
+    expect(params.get("aliasCursor")).toBe(pageCursor);
+    expect(requests[0]?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests[0]?.searchParams.get("ownership")).toBe("editorial");
+    expect(requests[0]?.searchParams.get("cursor")).toBe(pageCursor);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    confirmSpy.mockRestore();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("starts a fresh filtered alias page after deleting the last alias on a later page", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const snapshotId = "123e4567-e89b-12d3-a456-426614174000";
