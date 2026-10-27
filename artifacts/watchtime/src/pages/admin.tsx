@@ -1417,31 +1417,37 @@ function ContentTab({
     return () => clearTimeout(t);
   }, [q]);
 
+  const contentQueryParams = {
+    ...(malformedRefreshTimestampAllRegions ? {} : { region: ratingRegion }),
+    ...(debouncedQ ? { q: debouncedQ } : {}),
+    ...(malformedRefreshTimestamp ? { malformedRefreshTimestamp: true } : {}),
+    ...(malformedRegionalClassification
+      ? { malformedRegionalClassification: true }
+      : {}),
+    ...(malformedRefreshTimestampProvider
+      ? { malformedRefreshTimestampProvider }
+      : {}),
+    ...(malformedRefreshTimestampAllRegions
+      ? { malformedRefreshTimestampAllRegions: true }
+      : {}),
+    ...(mappingProvider ? { mappingProvider } : {}),
+    ...(mappingStatus !== "all" ? { mappingStatus } : {}),
+    ...(hasContentFilters ? { offset: contentOffset } : {}),
+  };
   const {
     data: content,
     isLoading,
     isError: contentError,
     isFetching: contentFetching,
     refetch: retryContent,
-  } = useSearchAdminContent(
-    {
-      ...(malformedRefreshTimestampAllRegions ? {} : { region: ratingRegion }),
-      ...(debouncedQ ? { q: debouncedQ } : {}),
-      ...(malformedRefreshTimestamp ? { malformedRefreshTimestamp: true } : {}),
-      ...(malformedRegionalClassification
-        ? { malformedRegionalClassification: true }
+  } = useSearchAdminContent(contentQueryParams, {
+    query: {
+      queryKey: getSearchAdminContentQueryKey(contentQueryParams),
+      ...(malformedRefreshTimestamp
+        ? { refetchInterval: 30_000, refetchOnWindowFocus: true }
         : {}),
-      ...(malformedRefreshTimestampProvider
-        ? { malformedRefreshTimestampProvider }
-        : {}),
-      ...(malformedRefreshTimestampAllRegions
-        ? { malformedRefreshTimestampAllRegions: true }
-        : {}),
-      ...(mappingProvider ? { mappingProvider } : {}),
-      ...(mappingStatus !== "all" ? { mappingStatus } : {}),
-      ...(hasContentFilters ? { offset: contentOffset } : {}),
     },
-  );
+  });
   const visibleContent = content?.slice(0, contentPageSize) ?? [];
   const hasNextContentPage = hasContentFilters &&
     (content?.length ?? 0) > contentPageSize;

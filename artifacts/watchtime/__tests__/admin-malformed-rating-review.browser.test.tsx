@@ -7,6 +7,11 @@ import { getSearchAdminContentQueryKey } from "@workspace/api-client-react";
 
 const mocks = vi.hoisted(() => ({
   refreshMutate: vi.fn(),
+  searchResults: [] as ReturnType<typeof malformedRating>[],
+  searchEnabled: false,
+  refetchIntervalOverride: undefined as number | undefined,
+  configuredRefetchInterval: undefined as number | undefined,
+  configuredRefetchOnWindowFocus: undefined as boolean | undefined,
 }));
 
 vi.mock("@workspace/api-client-react", async (importOriginal) => {
@@ -23,8 +28,16 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
       isFetching: false,
       refetch: vi.fn(),
     }),
-    useSearchAdminContent: (params: Parameters<typeof api.useSearchAdminContent>[0]) =>
-      useQuery({
+    useSearchAdminContent: (
+      params: Parameters<typeof api.useSearchAdminContent>[0],
+      options?: Parameters<typeof api.useSearchAdminContent>[1],
+    ) => {
+      mocks.configuredRefetchInterval = options?.query?.refetchInterval as
+        | number
+        | undefined;
+      mocks.configuredRefetchOnWindowFocus =
+        options?.query?.refetchOnWindowFocus;
+      return useQuery({
         queryKey: api.getSearchAdminContentQueryKey(params),
         queryFn: async () => params?.malformedRegionalClassification
           ? [{
@@ -48,9 +61,14 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
                 sourceUrl: "https://provider.example/ratings/902",
               },
             }]
-          : [],
-        enabled: false,
-      }),
+          : mocks.searchResults,
+        enabled: mocks.searchEnabled,
+        ...options?.query,
+        ...(mocks.refetchIntervalOverride === undefined
+          ? {}
+          : { refetchInterval: mocks.refetchIntervalOverride }),
+      });
+    },
     useListAdminContentAliases: () => ({
       data: { items: [], total: 0, limit: 50, offset: 0 },
       isLoading: false,
@@ -83,8 +101,10 @@ it("shows raw provider and classification details for an unclassified malformed 
     "/admin?tab=content&malformedRegionalClassification=true&malformedRefreshTimestampProvider=Fixture+Provider",
   );
   const params = {
+    region: "US" as const,
     malformedRegionalClassification: true,
     malformedRefreshTimestampProvider: "Fixture Provider",
+    offset: 0,
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(
@@ -129,7 +149,11 @@ it("shows raw provider and classification details for an unclassified malformed 
     window.history.replaceState({}, "", previousUrl);
   }
 });
-function malformedRating(id: number, name: string) {
+function malformedRating(
+  id: number,
+  name: string,
+  sourceName = "Wikidata",
+) {
   return {
     id,
     name,
@@ -140,7 +164,7 @@ function malformedRating(id: number, name: string) {
       countryName: "United States",
       system: "MPAA",
       label: "PG-13",
-      sourceName: "Wikidata",
+      sourceName,
       recordId: id,
       lastRefreshedAt: null,
       sourceUrl: null,
@@ -204,6 +228,70 @@ it("removes a repaired last result immediately and returns to the previous revie
     container.remove();
     client.clear();
     mocks.refreshMutate.mockReset();
+    mocks.searchResults = [];
+    mocks.searchEnabled = false;
+    mocks.refetchIntervalOverride = undefined;
+    mocks.configuredRefetchInterval = undefined;
+    mocks.configuredRefetchOnWindowFocus = undefined;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("refreshes an open review after another admin repairs a rating", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&malformedRefreshTimestamp=true&offset=0",
+  );
+  mocks.searchResults = [
+    malformedRating(1101, "Repaired title"),
+    malformedRating(1102, "Unrelated Wikidata title"),
+    malformedRating(1103, "Unrelated provider title", "Does the Dog Die?"),
+  ];
+  mocks.searchEnabled = true;
+  mocks.refetchIntervalOverride = 25;
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Repaired title", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Unrelated Wikidata title", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Unrelated provider title", { exact: true })).toBeVisible();
+    expect(mocks.configuredRefetchInterval).toBe(30_000);
+    expect(mocks.configuredRefetchOnWindowFocus).toBe(true);
+
+    // Simulate the API response after a different admin repairs this title.
+    mocks.searchResults = [
+      malformedRating(1102, "Unrelated Wikidata title"),
+      malformedRating(1103, "Unrelated provider title", "Does the Dog Die?"),
+    ];
+
+    await expect.element(page.getByText("Repaired title", { exact: true }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText("Unrelated Wikidata title", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Unrelated provider title", { exact: true })).toBeVisible();
+    expect(client.getQueryData(
+      getSearchAdminContentQueryKey({
+        region: "US",
+        malformedRefreshTimestamp: true,
+        offset: 0,
+      }),
+    )).toEqual(mocks.searchResults);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.searchResults = [];
+    mocks.searchEnabled = false;
+    mocks.refetchIntervalOverride = undefined;
+    mocks.configuredRefetchInterval = undefined;
+    mocks.configuredRefetchOnWindowFocus = undefined;
     window.history.replaceState({}, "", previousUrl);
   }
 });
@@ -277,6 +365,11 @@ it("keeps a failed Wikidata refresh visible with its region and allows another a
     container.remove();
     client.clear();
     mocks.refreshMutate.mockReset();
+    mocks.searchResults = [];
+    mocks.searchEnabled = false;
+    mocks.refetchIntervalOverride = undefined;
+    mocks.configuredRefetchInterval = undefined;
+    mocks.configuredRefetchOnWindowFocus = undefined;
     window.history.replaceState({}, "", previousUrl);
   }
 });
