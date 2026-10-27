@@ -282,6 +282,7 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeTruthy());
   await expectEpisodeScopedFailures(shows, client);
   await checkPendingMarksAfterOpeningHistory(shows, client);
+  await checkPendingMarksAfterLeavingScreen(shows, client);
   // Restore this journey's baseline without remounting the Expo screen.
   mockWatched.clear();
   mockWatched.add(101);
@@ -565,6 +566,127 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
     client.clear();
   }
 });
+
+async function checkPendingMarksAfterLeavingScreen(
+  shows: Awaited<ReturnType<typeof render>>,
+  client: QueryClient,
+) {
+  const api = require('@workspace/api-client-react');
+  const activityKey = [
+    ...api.getGetMyRecentActivityQueryKey(), 'account', 'checkmarks-user',
+  ];
+  // Reset the preceding journey while consumers are still mounted.
+  mockWatched.clear();
+  mockWatched.add(101);
+  mockWatched.add(102);
+  await act(async () => {
+    await Promise.all([
+      client.invalidateQueries({ queryKey: api.getGetMyShowsQueryKey() }),
+      client.invalidateQueries({ queryKey: activityKey }),
+    ]);
+  });
+  await waitFor(() => {
+    expect(shows.getByTestId('mark-watched-201')).toBeEnabled();
+    expect(client.getQueryData(activityKey)).toEqual([]);
+  });
+
+  for (const succeeds of [false, true]) {
+    const request = deferredMarkResponse();
+    mockMarkRequest.mockImplementationOnce(() => request.promise);
+    const showQueries = client.getQueryCache().findAll({
+      queryKey: api.getGetMyShowsQueryKey(),
+    });
+    const activityQuery = client.getQueryCache().find({
+      queryKey: activityKey, exact: true,
+    })!;
+    const queries = [...showQueries, activityQuery];
+    expect(showQueries.length).toBeGreaterThan(0);
+    for (const query of queries) {
+      expect(query.queryKey).toEqual(expect.arrayContaining(['account', 'checkmarks-user']));
+      expect(query.options).toEqual(expect.objectContaining({ staleTime: Infinity }));
+      expect(query.state.isInvalidated).toBe(false);
+    }
+    const initialShowsFetches = api.getMyShows.mock.calls.length;
+    const initialHistoryFetches = mockRecentActivityFetch.mock.calls.length;
+    const savedShows = showQueries.map((query) => query.state.data);
+    try {
+      await fireEvent.press(shows.getByTestId('mark-watched-201'));
+      await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeDisabled());
+      const mutation = client.getMutationCache().getAll().at(-1)!;
+      expect(mutation.state.status).toBe('pending');
+      expect(mutation.state.variables).toEqual({
+        episodeId: 201, data: { includePrevious: true },
+      });
+
+      // Remove the whole route, not just ShowRow or the internal TV Shows tab.
+      // Keeping only the provider preserves the real client and pending mutation.
+      await shows.rerender(
+        <QueryClientProvider client={client}>
+          <Text testID="away-from-my-shows">Another screen</Text>
+        </QueryClientProvider>,
+      );
+      expect(shows.getByTestId('away-from-my-shows')).toBeTruthy();
+      expect(shows.queryByTestId('tab-shows')).toBeNull();
+      expect(shows.queryByTestId('tab-history')).toBeNull();
+      expect(shows.queryByTestId('show-row-42')).toBeNull();
+      expect(queries.every((query) => query.getObserversCount() === 0)).toBe(true);
+      expect(mutation.state.status).toBe('pending');
+
+      await act(async () => {
+        if (succeeds) request.resolve({ ok: true });
+        else request.reject(new Error('Offline after leaving My Shows'));
+      });
+      await waitFor(() => {
+        expect(mutation.state.status).toBe(succeeds ? 'success' : 'error');
+      });
+      // Nothing can refetch while the originating screen and all consumers are gone.
+      expect(api.getMyShows).toHaveBeenCalledTimes(initialShowsFetches);
+      expect(mockRecentActivityFetch).toHaveBeenCalledTimes(initialHistoryFetches);
+      expect(client.getQueryData(activityKey)).toEqual([]);
+      expect(showQueries.map((query) => query.state.data)).toEqual(savedShows);
+      expect([...mockWatched]).toEqual(succeeds ? [101, 102, 201] : [101, 102]);
+      for (const query of queries) {
+        expect(query.state.isInvalidated).toBe(succeeds);
+      }
+
+      // Only now mount the destination consumers, with the same infinitely fresh cache.
+      await shows.rerender(
+        <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
+      );
+      await waitFor(() => {
+        const row = within(shows.getByTestId('show-row-42'));
+        expect(row.getByText(succeeds ? '3 / 4 episodes' : '2 / 4 episodes')).toBeTruthy();
+        expect(row.getByText(succeeds ? 'S2 E2 · Fourth' : 'S2 E1 · Third')).toBeTruthy();
+        expect(row.getByTestId(`mark-watched-${succeeds ? 202 : 201}`)).toBeEnabled();
+        expect(row.queryByTestId(`mark-watched-${succeeds ? 201 : 202}`)).toBeNull();
+      });
+      await fireEvent.press(shows.getByTestId('tab-history'));
+      if (succeeds) {
+        await waitFor(() => {
+          expect(within(shows.getByTestId('history-item-42')).getByText('S2E1')).toBeTruthy();
+        });
+        expect(client.getQueryData(activityKey)).toEqual([
+          expect.objectContaining({ titleId: 42, kind: 'episode', episodeLabel: 'S2E1' }),
+        ]);
+        expect(api.getMyShows.mock.calls.length).toBeGreaterThan(initialShowsFetches);
+        expect(mockRecentActivityFetch.mock.calls.length).toBeGreaterThan(initialHistoryFetches);
+      } else {
+        expect(shows.queryByTestId('history-item-42')).toBeNull();
+        expect(client.getQueryData(activityKey)).toEqual([]);
+        expect(api.getMyShows).toHaveBeenCalledTimes(initialShowsFetches);
+        expect(mockRecentActivityFetch).toHaveBeenCalledTimes(initialHistoryFetches);
+      }
+      await fireEvent.press(shows.getByTestId('tab-shows'));
+      await waitFor(() => {
+        expect(shows.getByTestId(`mark-watched-${succeeds ? 202 : 201}`)).toBeEnabled();
+      });
+    } finally {
+      // Release the request even when an assertion fails; the outer journey
+      // unmounts all renders and clears the client.
+      await act(async () => request.resolve({ ok: true }));
+    }
+  }
+}
 
 async function checkPendingMarksAfterOpeningHistory(
   shows: Awaited<ReturnType<typeof render>>,
