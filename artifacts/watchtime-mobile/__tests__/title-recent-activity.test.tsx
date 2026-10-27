@@ -680,4 +680,32 @@ it.each([
   mockTitleIsMovie = false;
 });
 
+it('switches between TV Shows and Movies without reusing the list layout', async () => {
+  mockTitleIsMovie = false;
+  mockMovieWatched = false;
+  mockWatched = false;
+  jest.clearAllMocks();
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const screen = await render(
+    <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
+  );
+
+  try {
+    await waitFor(() => expect(screen.getByTestId('show-row-42')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('tab-movies'));
+    await waitFor(() => expect(screen.getByText('No movies watched yet')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('tab-shows'));
+    await waitFor(() => expect(screen.getByTestId('show-row-42')).toBeTruthy());
+  } finally {
+    await act(async () => screen.unmount());
+    client.clear();
+  }
+});
+
 afterEach(cleanup);

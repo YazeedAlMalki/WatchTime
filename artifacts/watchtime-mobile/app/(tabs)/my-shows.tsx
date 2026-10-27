@@ -555,6 +555,7 @@ export default function MyShowsScreen() {
         <ErrorState onRetry={onRetry} />
       ) : activeTab === 'shows' ? (
         <FlatList
+          key="shows"
           data={filteredShows}
           keyExtractor={(s) => String(s.title.id)}
           keyboardShouldPersistTaps="handled"
@@ -591,6 +592,7 @@ export default function MyShowsScreen() {
         />
       ) : activeTab === 'movies' ? (
         <FlatList
+          key="movies"
           data={allMovies}
           keyExtractor={(m) => String(m.id)}
           numColumns={3}
@@ -618,6 +620,7 @@ export default function MyShowsScreen() {
       ) : (
         /* History */
         <FlatList
+          key="history"
           data={history.data ?? []}
           keyExtractor={(item, idx) => `${item.titleId}-${idx}`}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: bottomPad, gap: 10 }}
