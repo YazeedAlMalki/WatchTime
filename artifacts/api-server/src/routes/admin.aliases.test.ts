@@ -1048,6 +1048,29 @@ describe("admin title aliases", () => {
         });
       expect(await db.select().from(aliasReviewSnapshotsTable)
         .where(eq(aliasReviewSnapshotsTable.id, snapshotId))).toHaveLength(0);
+
+      const evictedSnapshotPage = await request(restartedApp)
+        .get("/api/admin/content-aliases")
+        .query({ q: "Restart Snapshot", ownership: "editorial", limit: 1 })
+        .expect(200);
+      const evictedSnapshotId = evictedSnapshotPage.body.nextCursor.split(":")[0];
+      await db.delete(aliasReviewSnapshotsTable)
+        .where(eq(aliasReviewSnapshotsTable.id, evictedSnapshotId));
+
+      const expiredAfterEviction = await request(restartedApp)
+        .get("/api/admin/content-aliases")
+        .query({
+          q: "Restart Snapshot",
+          ownership: "editorial",
+          limit: 1,
+          cursor: evictedSnapshotPage.body.nextCursor,
+        });
+      expect(expiredAfterEviction.status).toBe(409);
+      expect(expiredAfterEviction.body).toEqual({
+        error: "This alias review snapshot expired. Restart the search.",
+      });
+      expect(await db.select().from(aliasReviewSnapshotsTable)
+        .where(eq(aliasReviewSnapshotsTable.id, evictedSnapshotId))).toHaveLength(0);
     } finally {
       vi.doUnmock("@workspace/db");
       vi.resetModules();
