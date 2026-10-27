@@ -2727,7 +2727,15 @@ export function AliasReview({
   const qc = useQueryClient();
   const { toast } = useToast();
   const linkedRowRef = React.useRef<HTMLTableRowElement>(null);
+  const aliasLoadAlertRef = React.useRef<HTMLDivElement>(null);
   const loadExplanation = getAliasReviewLoadExplanation(loadError);
+  const aliasLoadAlertTitleId = React.useId();
+  const aliasLoadAlertDescriptionId = React.useId();
+  React.useEffect(() => {
+    if (loadExplanation) {
+      aliasLoadAlertRef.current?.focus();
+    }
+  }, [loadExplanation]);
   const [isExporting, setIsExporting] = useState(false);
   const [pendingPreviousAliasPage, setPendingPreviousAliasPage] = useState<{
     page: number;
@@ -3648,9 +3656,18 @@ export function AliasReview({
       ) : isLoading ? (
         <div className="h-24 animate-pulse bg-secondary/30 rounded-2xl" />
       ) : isError && !linkedAlias && !savedAliasPreview ? (
-        <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
-          <p className="font-medium text-foreground">Could not load alternate titles.</p>
-          <p className="mt-1 text-sm text-muted-foreground">
+        <div
+          ref={aliasLoadAlertRef}
+          role="alert"
+          tabIndex={-1}
+          aria-labelledby={aliasLoadAlertTitleId}
+          aria-describedby={aliasLoadAlertDescriptionId}
+          className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5"
+        >
+          <p id={aliasLoadAlertTitleId} className="font-medium text-foreground">
+            Could not load alternate titles.
+          </p>
+          <p id={aliasLoadAlertDescriptionId} className="mt-1 text-sm text-muted-foreground">
             {loadExplanation ?? "The alternate-title request failed. Try again to review these aliases."}
           </p>
           {hasAliasCursor && (

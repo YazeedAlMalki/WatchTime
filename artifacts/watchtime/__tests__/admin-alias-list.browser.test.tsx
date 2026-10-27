@@ -1004,14 +1004,25 @@ it("restarts an expired alias page with fresh results instead of mixing snapshot
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
     await expect.element(page.getByText("Old snapshot result")).toBeVisible();
-    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    const nextAliasesButton = page.getByRole("button", { name: "Next aliases" });
+    nextAliasesButton.element().focus();
+    await userEvent.keyboard("{Enter}");
 
     const expiryAlert = page.getByRole("alert");
     await expect.element(expiryAlert).toHaveTextContent("The saved review's result snapshot changed or expired.");
+    await expect.element(expiryAlert).toHaveAccessibleName("Could not load alternate titles.");
+    await expect.element(expiryAlert).toHaveAccessibleDescription(
+      "The saved review's result snapshot changed or expired. Restart the review to load current results.",
+    );
+    await expect.element(expiryAlert).toHaveFocus();
     await expect.element(page.getByText("Old snapshot result")).not.toBeInTheDocument();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBe(oldSnapshotCursor);
 
-    await userEvent.click(page.getByRole("button", { name: "Restart alternate-title review" }));
+    const restartButton = page.getByRole("button", { name: "Restart alternate-title review" });
+    await expect.element(restartButton).toHaveAccessibleName("Restart alternate-title review");
+    await userEvent.tab();
+    await expect.element(restartButton).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
     await expect.element(page.getByText("Current snapshot result")).toBeVisible();
     await expect.element(page.getByText("Old snapshot result")).not.toBeInTheDocument();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
