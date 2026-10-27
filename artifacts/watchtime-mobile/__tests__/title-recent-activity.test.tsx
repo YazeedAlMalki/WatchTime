@@ -666,6 +666,83 @@ it.each([
   mockTitleIsMovie = false;
 });
 
+it('keeps a watched movie in Movies and History after a failed unwatch and refreshes both after retry', async () => {
+  mockTitleIsMovie = true;
+  mockMovieWatched = true;
+  mockWatched = false;
+  jest.clearAllMocks();
+  const failure = new Error('Offline');
+  mockUnmarkTitleRequest.mockRejectedValueOnce(failure).mockResolvedValueOnce({ ok: true });
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const { getGetMyMoviesQueryKey, getGetMyRecentActivityQueryKey } =
+    require('@workspace/api-client-react');
+  const moviesKey = [...getGetMyMoviesQueryKey(), 'account', 'activity-user', 'infinite'];
+  const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
+  const cachedMovies = { pages: [[mockMovie]], pageParams: [undefined] };
+  const cachedActivity = mockActivity();
+  client.setQueryData(moviesKey, cachedMovies);
+  client.setQueryData(activityKey, cachedActivity);
+
+  const screens = await render(
+    <QueryClientProvider client={client}>
+      <View testID="mounted-my-shows"><MyShowsScreen /></View>
+      <View testID="open-title-detail"><TitleDetailScreen /></View>
+    </QueryClientProvider>,
+  );
+  try {
+    const shows = within(screens.getByTestId('mounted-my-shows'));
+    const detail = within(screens.getByTestId('open-title-detail'));
+    await fireEvent.press(shows.getByTestId('tab-history'));
+    await waitFor(() => expect(shows.getByTestId('history-item-42')).toBeTruthy());
+    expect(shows.getByText('Example Movie')).toBeTruthy();
+
+    await fireEvent.press(detail.getByTestId('watched-toggle'));
+    await waitFor(() => {
+      expect(mockUnmarkTitleRequest).toHaveBeenCalledTimes(1);
+      expect(client.getMutationCache().getAll()).toHaveLength(1);
+      expect(client.getMutationCache().getAll()[0].state.status).toBe('error');
+      expect(detail.getByTestId('watched-toggle')).toBeEnabled();
+    });
+    expect(client.getMutationCache().getAll()[0].state.error).toBe(failure);
+    expect(mockMovieWatched).toBe(true);
+    expect(shows.getByTestId('history-item-42')).toBeTruthy();
+    expect(client.getQueryData(moviesKey)).toEqual(cachedMovies);
+    expect(client.getQueryData(activityKey)).toEqual(cachedActivity);
+    expect(client.getQueryState(moviesKey)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(activityKey)?.isInvalidated).toBe(false);
+    expect(mockMovieFetch).not.toHaveBeenCalled();
+    expect(mockActivityFetch).not.toHaveBeenCalled();
+    expect(detail.getByText('Watched')).toBeTruthy();
+    expect(detail.getByTestId('watched-toggle')).toBeEnabled();
+
+    // The same watched control remains available to retry after the rejection.
+    await act(async () => {
+      await fireEvent.press(detail.getByTestId('watched-toggle'));
+    });
+    await waitFor(() => {
+      expect(mockUnmarkTitleRequest).toHaveBeenCalledTimes(2);
+      expect(mockMovieWatched).toBe(false);
+      expect(mockMovieFetch).toHaveBeenCalledTimes(1);
+      expect(mockActivityFetch).toHaveBeenCalledTimes(1);
+      expect(client.getQueryData(moviesKey)).toEqual({ pages: [[]], pageParams: [undefined] });
+      expect(client.getQueryData(activityKey)).toEqual([]);
+      expect(shows.queryByTestId('history-item-42')).toBeNull();
+      expect(shows.getByText('No recent activity')).toBeTruthy();
+    });
+  } finally {
+    await act(async () => screens.unmount());
+    client.clear();
+    mockTitleIsMovie = false;
+    mockMovieWatched = false;
+  }
+});
+
 it.each([
   { action: 'marking', initiallyWatched: false, expectedName: 'Watched Recommendation' },
   { action: 'unmarking', initiallyWatched: true, expectedName: 'Unwatched Recommendation' },
