@@ -716,6 +716,114 @@ it('keeps settled and late Home mark errors tied to the failed episode as the sa
   }
 });
 
+it('refreshes the same Home card after an old mark succeeds with a different next episode displayed', async () => {
+  mockWatched.clear();
+  mockMarkRequest.mockReset();
+  mockRecommendationFetch.mockClear();
+  mockRouter.push.mockClear();
+  let finishOldRequest!: () => void;
+  mockMarkRequest.mockImplementationOnce(() => new Promise<void>((resolve) => {
+    finishOldRequest = resolve;
+  }));
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const showsKey = mockApi.getGetMyShowsQueryKey();
+  const recommendationsKey = mockApi.getGetMyRecommendationsQueryKey();
+  const inactiveKeys = [
+    mockApi.getGetTitleQueryKey(42),
+    ...mockSeasons.map((season) => mockApi.getGetSeasonQueryKey(42, season.seasonNumber)),
+    mockApi.getGetMyRecentActivityQueryKey(),
+  ];
+  client.setQueryData(inactiveKeys[0], mockTitleData());
+  mockSeasons.forEach((season, index) => {
+    client.setQueryData(inactiveKeys[index + 1], mockSeasonData(season.seasonNumber));
+  });
+  client.setQueryData(inactiveKeys[inactiveKeys.length - 1], []);
+  const invalidate = jest.spyOn(client, 'invalidateQueries');
+  const home = await render(
+    <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+  );
+
+  try {
+    const card = await home.findByTestId('upnext-42');
+    await waitFor(() => {
+      expect(home.getByTestId('mark-watched-201')).toBeEnabled();
+      expect(home.getByTestId('poster-card-901')).toBeTruthy();
+      expect(mockRecommendationFetch).toHaveBeenCalledTimes(1);
+    });
+    invalidate.mockClear();
+    await fireEvent.press(home.getByTestId('mark-watched-201'), { stopPropagation: jest.fn() });
+    await waitFor(() => {
+      expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+      expect(home.getByText('Saving…')).toBeTruthy();
+      expect(home.getByTestId('mark-watched-201')).toBeDisabled();
+    });
+    expect(mockMarkRequest).toHaveBeenLastCalledWith({
+      episodeId: 201, data: { includePrevious: true },
+    });
+
+    // Replace the query result, not the screen: the old mutation must finish
+    // while this exact card's observer is displaying a different episode.
+    await act(async () => {
+      client.setQueryData(showsKey, [{
+        ...mockTrackedShow(),
+        nextEpisode: mockEpisodes[0],
+      }]);
+    });
+    await waitFor(() => {
+      expect(home.getByTestId('upnext-42')).toBe(card);
+      expect(home.getByText('S1 · E1 — Pilot')).toBeTruthy();
+      expect(home.getByTestId('mark-watched-101')).toBeDisabled();
+      expect(home.getByText('Saving…')).toBeTruthy();
+    });
+    expect(home.queryByTestId('mark-watched-201')).toBeNull();
+    expect(home.getByText('0/4 episodes')).toBeTruthy();
+    expect(mockWatched.size).toBe(0);
+    expect(invalidate).not.toHaveBeenCalled();
+    for (const key of inactiveKeys) {
+      expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+    }
+
+    await act(async () => finishOldRequest());
+    await waitFor(() => {
+      expect(client.getMutationCache().getAll()[0].state.status).toBe('success');
+      expect([...mockWatched].sort()).toEqual([101, 102, 201]);
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: showsKey });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: recommendationsKey });
+      for (const key of inactiveKeys) {
+        expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+      }
+      expect(home.getByTestId('upnext-42')).toBe(card);
+      expect(home.getByText('S2 · E2 — Fourth')).toBeTruthy();
+      expect(home.getByText('3/4 episodes')).toBeTruthy();
+      expect(home.getByTestId('mark-watched-202')).toBeEnabled();
+      expect(home.getByRole('button', { name: 'Mark episode as watched' })).toBeEnabled();
+      expect(home.getByText('Watched')).toBeTruthy();
+      expect(home.getByTestId('icon-check')).toBeTruthy();
+      expect(home.getByTestId('poster-card-902')).toBeTruthy();
+      expect(mockRecommendationFetch).toHaveBeenCalledTimes(2);
+      expect(client.getQueryData(showsKey)).toEqual([mockTrackedShow()]);
+    });
+    expect(home.queryByTestId('mark-watched-101')).toBeNull();
+    expect(home.queryByTestId('poster-card-901')).toBeNull();
+    expect(home.queryByText('Saving…')).toBeNull();
+    expect(home.queryByRole('alert')).toBeNull();
+    expect(home.queryByRole('button', { name: 'Retry marking episode as watched' })).toBeNull();
+    expect(home.queryByText('Retry')).toBeNull();
+    expect(home.queryByTestId('icon-refresh-cw')).toBeNull();
+    expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => home.unmount());
+    invalidate.mockRestore();
+    client.clear();
+  }
+});
+
 it('keeps a Home retry visible when refreshed metadata and progress still identify the failed episode', async () => {
   mockWatched.clear();
   mockMarkRequest.mockReset();
