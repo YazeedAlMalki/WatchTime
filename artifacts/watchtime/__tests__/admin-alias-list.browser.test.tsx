@@ -383,6 +383,101 @@ it("restores the saved alias page and keeps its cursor with the saved filters", 
   }
 });
 
+it("keeps previous-page navigation available during a slow next-page request", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174000";
+  const nextCursor = `${snapshotId}:50:0`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=GB&q=Lighthouse");
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  let resolveSecondPage!: (response: Response) => void;
+  let markSecondPageRequestStarted!: () => void;
+  const secondPageResponse = new Promise<Response>((resolve) => {
+    resolveSecondPage = resolve;
+  });
+  const secondPageRequestStarted = new Promise<void>((resolve) => {
+    markSecondPageRequestStarted = resolve;
+  });
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    if (url.searchParams.get("cursor") === nextCursor) {
+      markSecondPageRequestStarted();
+      return secondPageResponse;
+    }
+    return new Response(JSON.stringify({
+      items: [makeAlias(1, "Lighthouse first page alias")],
+      total: 2,
+      limit: 50,
+      offset: 0,
+      nextCursor,
+      previousCursor: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Lighthouse first page alias")).toBeVisible();
+    const pageNavigation = page.getByRole("navigation", { name: "Alternate title pages" });
+    await expect.element(pageNavigation.getByText("Page 1 · 2 matching aliases")).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await secondPageRequestStarted;
+    await expect.element(page.getByText("Loading alternate titles for page 2…")).toBeVisible();
+    const previousButton = page.getByRole("button", { name: "Previous aliases" });
+    await expect.element(previousButton).toBeEnabled();
+    await userEvent.click(previousButton);
+
+    await expect.element(pageNavigation.getByText("Page 1 · 2 matching aliases")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse first page alias")).toBeVisible();
+    await expect.element(page.getByText("Loading alternate titles for page 2…")).not.toBeInTheDocument();
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBeNull();
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBeNull();
+
+    resolveSecondPage(new Response(JSON.stringify({
+      items: [makeAlias(2, "Lighthouse second page alias")],
+      total: 2,
+      limit: 50,
+      offset: 50,
+      nextCursor: null,
+      previousCursor: `${snapshotId}:0`,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await expect.element(page.getByText("Lighthouse first page alias")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse second page alias")).not.toBeInTheDocument();
+    await expect.element(pageNavigation.getByText("Page 1 · 2 matching aliases")).toBeVisible();
+    expect(requests.some((request) => request.searchParams.get("cursor") === nextCursor)).toBe(true);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("moves backward through several restored alias pages without losing filters", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const snapshotId = "123e4567-e89b-12d3-a456-426614174000";

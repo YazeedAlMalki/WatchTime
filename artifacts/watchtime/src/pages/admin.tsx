@@ -2229,6 +2229,7 @@ function ContentTab({
         getToken={getToken}
         aliasTotal={aliasesPage?.total}
         aliasPage={aliasPage}
+        currentAliasCursor={aliasCursor}
         nextAliasCursor={aliasesPage?.nextCursor}
         previousAliasCursor={aliasesPage?.previousCursor}
         onAliasPageChange={onAliasPageChange}
@@ -2277,6 +2278,7 @@ export function AliasReview({
   getToken = async () => null,
   aliasTotal = aliases?.length ?? 0,
   aliasPage = 1,
+  currentAliasCursor = null,
   nextAliasCursor,
   previousAliasCursor,
   onAliasPageChange = () => {},
@@ -2302,6 +2304,7 @@ export function AliasReview({
   getToken?: () => Promise<string | null>;
   aliasTotal?: number;
   aliasPage?: number;
+  currentAliasCursor?: string | null;
   nextAliasCursor?: string | null;
   previousAliasCursor?: string | null;
   onAliasPageChange?: (page: number, cursor: string | null) => void;
@@ -2327,6 +2330,12 @@ export function AliasReview({
   const linkedRowRef = React.useRef<HTMLTableRowElement>(null);
   const loadExplanation = getAliasReviewLoadExplanation(loadError);
   const [isExporting, setIsExporting] = useState(false);
+  const [pendingPreviousAliasPage, setPendingPreviousAliasPage] = useState<{
+    page: number;
+    cursor: string | null;
+    q: string;
+    ownership: ListAdminContentAliasesOwnership | "all";
+  } | null>(null);
   const [savedAliasPreviewState, setSavedAliasPreviewState] = useState<{
     alias: AdminContentAlias;
     q: string;
@@ -2495,6 +2504,14 @@ export function AliasReview({
         }
       : alias;
   });
+  const hasPendingPreviousAliasPage =
+    isFetching &&
+    aliases === undefined &&
+    pendingPreviousAliasPage?.page === aliasPage &&
+    pendingPreviousAliasPage.q === q.trim() &&
+    pendingPreviousAliasPage.ownership === ownership;
+  const canNavigateToPreviousAliasPage =
+    previousAliasCursor != null || hasPendingPreviousAliasPage;
   type ReviewRefreshRequest = "aliases" | "catalog" | "collisions";
   const [refreshError, setRefreshError] = useState<
     ReviewRefreshRequest[] | null
@@ -3493,9 +3510,15 @@ export function AliasReview({
               onClick={() => {
                 if (previousAliasCursor != null) {
                   onAliasPageChange(Math.max(1, aliasPage - 1), previousAliasCursor);
+                } else if (hasPendingPreviousAliasPage && pendingPreviousAliasPage) {
+                  setPendingPreviousAliasPage(null);
+                  onAliasPageChange(
+                    Math.max(1, aliasPage - 1),
+                    pendingPreviousAliasPage.cursor,
+                  );
                 }
               }}
-              disabled={previousAliasCursor == null}
+              disabled={!canNavigateToPreviousAliasPage}
             >
               Previous aliases
             </Button>
@@ -3505,6 +3528,12 @@ export function AliasReview({
               size="sm"
               onClick={() => {
                 if (nextAliasCursor != null) {
+                  setPendingPreviousAliasPage({
+                    page: aliasPage + 1,
+                    cursor: aliasPage === 1 ? null : currentAliasCursor,
+                    q: q.trim(),
+                    ownership,
+                  });
                   onAliasPageChange(aliasPage + 1, nextAliasCursor);
                 }
               }}
