@@ -2047,6 +2047,138 @@ describe("real catalog sync", () => {
     },
   );
 
+  it("preserves a newer schedule when an older five-minute retry succeeds, then resumes weekly scheduling", async () => {
+    const originalItems = [...sourceItems];
+    const originalInsert = db.insert.bind(db);
+    const enqueueFailure = new Error("Initial scheduled enqueue failed");
+    let releaseRetry!: () => void;
+    const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    const insertEmptyRun = async () => {
+      const runs = await originalInsert(catalogSyncRunsTable).values({
+        trigger: "scheduled",
+        status: "queued",
+        totalItems: 0,
+      }).returning();
+      catalogRunIds.push(...runs.map(({ id }) => id));
+      return runs;
+    };
+    const retryReturning = vi.fn(async () => {
+      await retryGate;
+      return insertEmptyRun();
+    });
+    const newerReturning = vi.fn(insertEmptyRun);
+    const fetchMock = vi.fn(async () => {
+      throw new Error("Provider requests must not run during an empty catalog refresh");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const retryDelay = 5 * 60 * 1000;
+    const newerDelay = WEEK_MS / 2;
+    // Pool and recovery timers are unrelated to refresh ownership.
+    const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+      delay === WEEK_MS || delay === newerDelay || delay === retryDelay
+        ? [{
+            fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+            delay,
+            timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+          }]
+        : []);
+    const clearedRefreshTimers = () => clearTimeoutSpy.mock.calls
+      .map(([timer]) => timer)
+      .filter((timer) => refreshTimers().some((refresh) => refresh.timer === timer));
+
+    try {
+      sourceItems.splice(0, sourceItems.length);
+      await scheduleCatalogRefresh(WEEK_MS);
+      const first = refreshTimers()[0];
+      const insertSpy = vi.spyOn(db, "insert").mockReturnValueOnce({
+        values: () => ({ returning: vi.fn().mockRejectedValue(enqueueFailure) }),
+      } as unknown as ReturnType<typeof db.insert>).mockReturnValueOnce({
+        values: () => ({ returning: retryReturning }),
+      } as unknown as ReturnType<typeof db.insert>).mockReturnValueOnce({
+        values: () => ({ returning: newerReturning }),
+      } as unknown as ReturnType<typeof db.insert>);
+
+      first.fire();
+      await vi.waitFor(() => {
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, retryDelay]);
+      });
+      const retry = refreshTimers()[1];
+      expect(clearedRefreshTimers()).toEqual([first.timer]);
+      retry.fire();
+      expect(retryReturning).toHaveBeenCalledOnce();
+
+      // Transfer ownership while enqueueing, before the retry's success
+      // continuation can decide whether to install a weekly successor.
+      await scheduleCatalogRefresh(newerDelay);
+      const newer = refreshTimers()[2];
+      expect(newer.timer).not.toBe(retry.timer);
+      expect(clearedRefreshTimers()).toEqual([first.timer, retry.timer]);
+      expect(refreshTimers().map(({ delay }) => delay))
+        .toEqual([WEEK_MS, retryDelay, newerDelay]);
+      expect(newerReturning).not.toHaveBeenCalled();
+
+      releaseRetry();
+      const [retryRun] = await retryReturning.mock.results[0].value;
+      await waitForCatalogRun(retryRun.id, (run) => run.status === "succeeded");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(refreshTimers().map(({ delay }) => delay))
+        .toEqual([WEEK_MS, retryDelay, newerDelay]);
+      expect(clearedRefreshTimers()).toEqual([first.timer, retry.timer]);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(newer.timer);
+      expect(insertSpy).toHaveBeenCalledTimes(2);
+
+      newer.fire();
+      expect(newerReturning).toHaveBeenCalledOnce();
+      await vi.waitFor(() => {
+        expect(refreshTimers().map(({ delay }) => delay))
+          .toEqual([WEEK_MS, retryDelay, newerDelay, WEEK_MS]);
+      });
+      const [newerRun] = await newerReturning.mock.results[0].value;
+      // Successor recovery can acquire the catalog lock before the worker.
+      await waitForCatalogRun(newerRun.id, (run) =>
+        run.status === "succeeded" || run.status === "skipped");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const next = refreshTimers()[3];
+      expect(next.timer).not.toBe(newer.timer);
+      expect(refreshTimers().map(({ delay }) => delay))
+        .toEqual([WEEK_MS, retryDelay, newerDelay, WEEK_MS]);
+      expect(clearedRefreshTimers()).toEqual([first.timer, retry.timer, newer.timer]);
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(next.timer);
+      expect(insertSpy.mock.calls).toEqual(Array.from({ length: 3 }, () => [catalogSyncRunsTable]));
+      expect(retryReturning).toHaveBeenCalledOnce();
+      expect(newerReturning).toHaveBeenCalledOnce();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(errorSpy.mock.calls.filter(([, message]) =>
+        message === "unable to start scheduled catalog refresh")).toEqual([
+        [{ err: enqueueFailure }, "unable to start scheduled catalog refresh"],
+      ]);
+      expect(errorSpy).not.toHaveBeenCalledWith(
+        expect.anything(), "unable to reschedule catalog refresh",
+      );
+    } finally {
+      releaseRetry();
+      try {
+        for (const returning of [retryReturning, newerReturning]) {
+          for (const { value } of returning.mock.results) {
+            const [run] = await value;
+            await waitForCatalogRun(run.id, (result) =>
+              result.status === "succeeded" || result.status === "skipped");
+          }
+        }
+      } finally {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+        sourceItems.splice(0, sourceItems.length, ...originalItems);
+        vi.restoreAllMocks();
+      }
+    }
+  });
+
   it("preserves the newest of two replacements when an older scheduled start succeeds", async () => {
     const originalItems = [...sourceItems];
     const originalInsert = db.insert.bind(db);
