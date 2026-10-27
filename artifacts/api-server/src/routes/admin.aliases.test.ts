@@ -1450,20 +1450,69 @@ describe("admin title aliases", () => {
     }
   });
 
-  it("keeps the export count and rows on one snapshot when aliases change during the download", async () => {
+  it("keeps collision warnings on the export snapshot when aliases change during the download", async () => {
+    const [exportTitle] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "Mid-download export fixture",
+      year: 2022,
+    }).returning({ id: titlesTable.id });
+    createdTitleIds.push(exportTitle.id);
     const aliases = await db.insert(titleAliasesTable).values(
       Array.from({ length: 501 }, (_, index) => ({
-        titleId: createdTitleIds[0],
-        alias: `Mid-download export ${String(index).padStart(4, "0")}`,
-        normalizedAlias: `middownloadexport${String(index).padStart(4, "0")}`,
+        titleId: exportTitle.id,
+        alias: index === 500
+          ? "Snapshot collision target"
+          : `Mid-download export ${String(index).padStart(4, "0")}`,
+        normalizedAlias: index === 500
+          ? "snapshotcollisiontarget"
+          : `middownloadexport${String(index).padStart(4, "0")}`,
         language: "en",
         sourceName: "Concurrent export test",
-        sourceUrl: `https://example.test/${"p".repeat(600)}`,
+        sourceUrl: "https://example.test/concurrent-export",
         isEditorial: true,
       })),
     ).returning({ id: titleAliasesTable.id });
+    const [collisionPeer] = await db.insert(titleAliasesTable).values({
+      titleId: createdTitleIds[1],
+      alias: "Collision peer outside export filter",
+      normalizedAlias: "snapshotcollisiontarget",
+      language: "en",
+      sourceName: "Concurrent export test",
+      isEditorial: true,
+    }).returning({ id: titleAliasesTable.id });
 
-    let changedAliasesDuringExport = false;
+    let firstBatchBlocked = false;
+    let heldWrite: { response: ServerResponse; args: any[] } | undefined;
+    const originalWrite = ServerResponse.prototype.write;
+    let resolveFirstBatchBlocked!: () => void;
+    const firstBatchBlockedPromise = new Promise<void>((resolve) => {
+      resolveFirstBatchBlocked = resolve;
+    });
+    const releaseHeldWrite = () => {
+      if (!heldWrite) return;
+      const { response, args } = heldWrite;
+      heldWrite = undefined;
+      originalWrite.apply(response, args as any);
+      response.emit("drain");
+    };
+    const writeSpy = vi.spyOn(ServerResponse.prototype, "write").mockImplementation(function (
+      this: ServerResponse,
+      ...args: any[]
+    ) {
+      const chunk = args[0];
+      if (
+        !firstBatchBlocked
+        && typeof chunk === "string"
+        && chunk.startsWith(`\r\n"${aliases[499].id}",`)
+      ) {
+        firstBatchBlocked = true;
+        heldWrite = { response: this, args };
+        resolveFirstBatchBlocked();
+        return false;
+      }
+      return originalWrite.apply(this, args as any);
+    } as any);
+
     let exportCount: string | undefined;
     let csvText = "";
     let statusCode: number | undefined;
@@ -1476,7 +1525,7 @@ describe("admin title aliases", () => {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Test server did not bind to a TCP port");
 
-      await new Promise<void>((resolve, reject) => {
+      const responseFinished = new Promise<void>((resolve, reject) => {
         const exportRequest = httpGet({
           hostname: "127.0.0.1",
           port: address.port,
@@ -1489,36 +1538,6 @@ describe("admin title aliases", () => {
           exportCount = Array.isArray(countHeader) ? countHeader[0] : countHeader;
           response.on("data", (chunk: Buffer) => {
             chunks.push(chunk);
-            if (mutationStarted) return;
-            mutationStarted = true;
-            response.pause();
-            void (async () => {
-              await db.delete(titleAliasesTable)
-                .where(eq(titleAliasesTable.id, aliases[500].id));
-              await db.insert(titleAliasesTable).values([
-                {
-                  titleId: createdTitleIds[0],
-                  alias: "Mid-download export inserted first",
-                  normalizedAlias: "middownloadexportinsertedfirst",
-                  language: "en",
-                  sourceName: "Concurrent export test",
-                  isEditorial: true,
-                },
-                {
-                  titleId: createdTitleIds[0],
-                  alias: "Mid-download export inserted second",
-                  normalizedAlias: "middownloadexportinsertedsecond",
-                  language: "en",
-                  sourceName: "Concurrent export test",
-                  isEditorial: true,
-                },
-              ]);
-              changedAliasesDuringExport = true;
-              response.resume();
-            })().catch((error) => {
-              response.resume();
-              reject(error);
-            });
           });
           response.on("end", () => {
             csvText = Buffer.concat(chunks).toString("utf8");
@@ -1528,7 +1547,18 @@ describe("admin title aliases", () => {
         });
         exportRequest.on("error", reject);
       });
+
+      await firstBatchBlockedPromise;
+      await db.delete(titleAliasesTable).where(eq(titleAliasesTable.id, collisionPeer.id));
+      const remainingCollisionPeers = await db.select({ id: titleAliasesTable.id })
+        .from(titleAliasesTable)
+        .where(eq(titleAliasesTable.normalizedAlias, "snapshotcollisiontarget"));
+      expect(remainingCollisionPeers).toHaveLength(1);
+      releaseHeldWrite();
+      await responseFinished;
     } finally {
+      releaseHeldWrite();
+      writeSpy.mockRestore();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());
       });
@@ -1538,11 +1568,13 @@ describe("admin title aliases", () => {
     const exportedIds = lines.slice(1)
       .map((line) => Number(line.split(",", 1)[0].slice(1, -1)));
     expect(statusCode).toBe(200);
-    expect(changedAliasesDuringExport).toBe(true);
+    expect(firstBatchBlocked).toBe(true);
     expect(exportCount).toBe("501");
     expect(exportedIds).toEqual(aliases.map(({ id }) => id));
     expect(lines).toHaveLength(502);
-    expect(csvText).not.toContain("Mid-download export inserted");
+    const collisionTargetRow = lines.slice(1).find((line) => line.includes('"Snapshot collision target"'));
+    expect(collisionTargetRow?.split(",").slice(11, 13)).toEqual(['"Yes"', '"2"']);
+    expect(csvText).not.toContain("Collision peer outside export filter");
   });
 
   it("rejects an unknown alias ownership filter", async () => {
