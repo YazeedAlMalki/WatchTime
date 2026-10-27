@@ -269,6 +269,64 @@ describe("admin Content review timestamp filter", () => {
     expect(afterRepair.body.map((item: any) => item.name)).not.toContain(`${fixturePrefix}-us-broken`);
   });
 
+  it("excludes malformed episode ratings from title-level timestamp reviews", async () => {
+    const fixturePrefix = "episode-timestamp-review-fixture";
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-episode-only`, type: "tv", popularity: 2 },
+      { name: `${fixturePrefix}-title-rating`, type: "tv", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    const records = await db.insert(safetyRecordsTable).values([
+      {
+        titleId: titles[0].id,
+        sourceName: "Wikidata",
+        status: "available",
+        isCommunity: false,
+        url: `https://www.wikidata.org/wiki/Q${fixturePrefix}-episode-only`,
+        seasonNumber: 1,
+        episodeNumber: 1,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{ category: "MPAA", label: "R", score: null, maxScore: null, description: null }],
+      },
+      {
+        titleId: titles[1].id,
+        sourceName: "Wikidata",
+        status: "available",
+        isCommunity: false,
+        url: `https://www.wikidata.org/wiki/Q${fixturePrefix}-title-rating`,
+        updatedAt: new Date("2026-10-02T00:00:00.000Z"),
+        items: [{ category: "MPAA", label: "PG", score: null, maxScore: null, description: null }],
+      },
+      {
+        titleId: titles[1].id,
+        sourceName: "Wikidata",
+        status: "available",
+        isCommunity: false,
+        url: `https://www.wikidata.org/wiki/Q${fixturePrefix}-episode-rating`,
+        seasonNumber: 1,
+        episodeNumber: 2,
+        updatedAt: new Date("2026-10-03T00:00:00.000Z"),
+        items: [{ category: "MPAA", label: "R", score: null, maxScore: null, description: null }],
+      },
+    ]).returning({ id: safetyRecordsTable.id });
+    await markMalformedTimestamp([records[0].id, records[2].id]);
+
+    const standardReview = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US`)
+      .expect(200);
+    expect(standardReview.body.find((item: any) => item.id === titles[1].id).selectedRating).toMatchObject({
+      recordId: records[1].id,
+      label: "PG",
+      refreshTimestampMalformed: false,
+    });
+
+    const malformedReview = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true`)
+      .expect(200);
+    expect(malformedReview.body).toEqual([]);
+  });
+
   it("matches finite out-of-range timestamps and preserves resolver ordering at the JavaScript date limit", async () => {
     const fixturePrefix = "timestamp-date-range-fixture";
     const titles = await db.insert(titlesTable).values([

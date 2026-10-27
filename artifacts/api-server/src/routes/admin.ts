@@ -818,6 +818,8 @@ router.get("/content", async (req, res) => {
         ${mappingStatus ? sql`AND mapping.status = ${mappingStatus}` : sql``}
       )`
     : sql``;
+  const titleLevelSafetyRecordSql =
+    sql`rating.season_number IS NULL AND rating.episode_number IS NULL`;
   if (malformedRegionalClassification) {
     const supportedSystems = sql.join(
       RATING_REGIONS.map(({ system }) => sql`${system}`),
@@ -864,8 +866,7 @@ router.get("/content", async (req, res) => {
         rating.url AS "sourceUrl"
       FROM safety_records AS rating
       INNER JOIN titles AS title ON title.id = rating.title_id
-      WHERE rating.season_number IS NULL
-        AND rating.episode_number IS NULL
+      WHERE ${titleLevelSafetyRecordSql}
         AND rating.status = 'available'
         AND rating.is_community = false
         AND (
@@ -946,8 +947,7 @@ router.get("/content", async (req, res) => {
           ELSE NULL
         END AS timestamp_ms
       ) AS refresh
-      WHERE rating.season_number IS NULL
-        AND rating.episode_number IS NULL
+      WHERE ${titleLevelSafetyRecordSql}
         AND rating.status = 'available'
         AND rating.is_community = false
         AND rating.source_name = ${malformedRefreshTimestampProvider || "Wikidata"}
