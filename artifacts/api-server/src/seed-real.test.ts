@@ -1133,6 +1133,91 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("keeps one weekly successor pending when enqueue repeatedly succeeds but recovery repeatedly fails", async () => {
+    const originalItems = [...sourceItems];
+    const fetchMock = vi.fn(() => {
+      throw new Error("Provider requests must not run while testing recovery scheduling");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const retryDelay = 5 * 60 * 1000;
+    const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+      delay === WEEK_MS || delay === retryDelay
+        ? [{
+            fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+            delay,
+            timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+          }]
+        : []);
+    const pendingRefreshTimers = () => refreshTimers().filter(({ timer }) =>
+      !clearTimeoutSpy.mock.calls.some(([cleared]) => cleared === timer));
+
+    try {
+      sourceItems.splice(0, sourceItems.length);
+      await scheduleCatalogRefresh(WEEK_MS);
+      expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS]);
+      warnSpy.mockClear();
+
+      const insertSpy = vi.spyOn(db, "insert");
+      const transactionSpy = vi.spyOn(db, "transaction");
+      // A worker that does not acquire its run still launches detached pruning.
+      // Keep both paths out of the database and drain them before restoring mocks.
+      const pruned = vi.fn(async () => []);
+      const cleanupSpy = vi.spyOn(db, "delete").mockReturnValue({
+        where: () => ({ returning: pruned }),
+      } as unknown as ReturnType<typeof db.delete>);
+      const recoveryFailures: Error[] = [];
+
+      for (let cycle = 1; cycle <= 3; cycle++) {
+        const recoveryFailure = new Error(`Successor recovery unavailable in cycle ${cycle}`);
+        recoveryFailures.push(recoveryFailure);
+        transactionSpy
+          .mockResolvedValueOnce(false)
+          .mockRejectedValueOnce(recoveryFailure);
+
+        const current = pendingRefreshTimers()[0];
+        // Expire only this refresh timer, without advancing database timeouts.
+        clearTimeout(current.timer);
+        current.fire();
+        await vi.waitFor(() => {
+          expect(refreshTimers()).toHaveLength(cycle + 1);
+          expect(pruned).toHaveBeenCalledTimes(cycle);
+        });
+        // Drain detached cleanup and the scheduler's catch/finally continuations.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        const [run] = await db.select().from(catalogSyncRunsTable)
+          .orderBy(desc(catalogSyncRunsTable.id)).limit(1);
+        catalogRunIds.push(run.id);
+        expect(run).toMatchObject({ trigger: "scheduled", status: "queued", totalItems: 0 });
+        expect(new Set(catalogRunIds.slice(-cycle)).size).toBe(cycle);
+        expect(insertSpy).toHaveBeenCalledTimes(cycle);
+        expect(insertSpy).toHaveBeenLastCalledWith(catalogSyncRunsTable);
+        expect(transactionSpy).toHaveBeenCalledTimes(cycle * 2);
+        expect(cleanupSpy).toHaveBeenCalledTimes(cycle);
+        expect(cleanupSpy).toHaveBeenLastCalledWith(catalogSyncRunsTable);
+        expect(warnSpy.mock.calls).toEqual(recoveryFailures.map((err) => [
+          { err }, "unable to recover interrupted catalog refreshes",
+        ]));
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual(
+          Array(cycle + 1).fill(WEEK_MS),
+        );
+        expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === retryDelay)).toBe(false);
+        expect(pendingRefreshTimers()).toEqual([refreshTimers()[cycle]]);
+      }
+    } finally {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+      cleanupSchedulerTimers();
+      sourceItems.splice(0, sourceItems.length, ...originalItems);
+    }
+  });
+
   it("keeps one five-minute retry pending when enqueue and recovery repeatedly fail", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
