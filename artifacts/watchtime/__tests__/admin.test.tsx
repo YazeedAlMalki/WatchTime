@@ -160,8 +160,11 @@ describe("admin moderation queue page recovery", () => {
   });
 
   async function settle(assertion: () => void) {
-    await act(async () => {
-      await vi.waitFor(assertion);
+    await vi.waitFor(async () => {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assertion();
     });
   }
 

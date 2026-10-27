@@ -154,6 +154,34 @@ it("keeps the public menu usable on a short screen with enlarged text", async ()
   expect(dialog.open).toBe(false);
 });
 
+it("closes the scrolled public menu with Escape and restores trigger focus", async () => {
+  await page.viewport(320, 320);
+  document.body.append(container);
+  root = createRoot(container);
+  root.render(<PublicNavbar />);
+
+  const trigger = page.getByRole("button", { name: "Open navigation" });
+  await expect.element(trigger).toBeVisible();
+  enlargeNavigationText();
+  await userEvent.click(trigger);
+
+  const dialog = container.querySelector("dialog");
+  if (!dialog) throw new Error("Public navigation dialog did not render");
+
+  await userEvent.tab();
+  await expect.element(page.getByTestId("link-public-browse")).toHaveFocus();
+  await userEvent.tab();
+  await expect.element(page.getByTestId("link-public-stats")).toHaveFocus();
+  await userEvent.tab();
+  await expect.element(page.getByTestId("link-public-sign-in")).toHaveFocus();
+  expect(dialog.scrollTop).toBeGreaterThan(0);
+
+  await userEvent.keyboard("{Escape}");
+  expect(dialog.open).toBe(false);
+  await expect.element(trigger).toHaveFocus();
+  await expect.element(trigger).toHaveAttribute("aria-expanded", "false");
+});
+
 it("keeps the public menu usable after rotating to a shorter viewport", async () => {
   await page.viewport(320, 640);
   document.body.append(container);
