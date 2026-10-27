@@ -75,7 +75,7 @@ export default function MyShowsPage() {
   });
   const inProgressQuery = useInfiniteQuery({
     queryKey: [...getGetMyInProgressShowsQueryKey(), "infinite"],
-    enabled: !!isSignedIn && showFilter === "all" && !debouncedShowSearch,
+    enabled: !!isSignedIn && showFilter === "all" && !showSearch.trim(),
     initialPageParam: undefined as number | undefined,
     queryFn: ({ pageParam, signal }) =>
       getMyInProgressShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
@@ -90,7 +90,7 @@ export default function MyShowsPage() {
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.collectionCursor : undefined,
   });
-  const useMergedInProgress = showFilter === "all" && !debouncedShowSearch;
+  const useMergedInProgress = showFilter === "all" && !showSearch.trim();
   const shows = useMergedInProgress
     ? mergeTrackedShows(showsQuery.data?.pages.flat() ?? [], inProgressQuery.data?.pages.flat() ?? [])
     : showsQuery.data?.pages.flat() ?? [];
@@ -99,7 +99,7 @@ export default function MyShowsPage() {
     (showFilter === "up-next" && show.nextEpisode !== null) ||
     (showFilter === "caught-up" && show.nextEpisode === null)
   );
-  const hasShowCriteria = showFilter !== "all" || !!debouncedShowSearch;
+  const hasShowCriteria = showFilter !== "all" || !!showSearch.trim();
   const movies = moviesQuery.data?.pages.flat() ?? [];
   const showsLoading = showsQuery.isLoading || showSearch.trim() !== debouncedShowSearch;
   const moviesLoading = moviesQuery.isLoading;
@@ -220,6 +220,14 @@ export default function MyShowsPage() {
                     <div className="flex-1 p-6 flex flex-col justify-between gap-4">
                       <div>
                         <Link href={`/title/${show.title.id}`} className="font-display font-bold text-xl hover:text-primary transition-colors">{show.title.name}</Link>
+                        {show.matchedAlternateTitle && (
+                          <p
+                            data-testid={`text-matched-alternate-title-${show.title.id}`}
+                            className="mt-1 text-sm text-muted-foreground"
+                          >
+                            Matched: {show.matchedAlternateTitle}
+                          </p>
+                        )}
                         <div className="flex items-center gap-4 mt-4">
                           <Progress value={progress} className="h-2 flex-1 bg-secondary" />
                           <span className="text-sm font-bold text-muted-foreground whitespace-nowrap">{show.watchedEpisodes} / {show.totalEpisodes}</span>

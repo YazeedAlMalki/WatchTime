@@ -334,3 +334,73 @@ it("loads the search and progress filter from a direct My Shows link", async () 
     client.clear();
   }
 });
+
+it("shows the matched alternate title beneath the canonical title without merging in-progress shows", async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const alternateMatch = {
+    title: { id: 43, name: "Canonical Show Name", genres: [] },
+    matchedAlternateTitle: "Local Show Name",
+    watchedEpisodes: 2,
+    totalEpisodes: 2,
+    nextEpisode: null,
+  };
+  const canonicalMatch = {
+    title: { id: 42, name: "Regular Canonical Show", genres: [] },
+    matchedAlternateTitle: null,
+    watchedEpisodes: 1,
+    totalEpisodes: 2,
+    nextEpisode: { id: 42, seasonNumber: 1, episodeNumber: 2, name: "Next Episode" },
+  };
+  const inProgressOnlyShow = {
+    title: { id: 44, name: "In-Progress Feed Only", genres: [] },
+    matchedAlternateTitle: null,
+    watchedEpisodes: 1,
+    totalEpisodes: 2,
+    nextEpisode: { id: 44, seasonNumber: 1, episodeNumber: 2, name: "Next Episode" },
+  };
+  api.getMyShows.mockImplementation(async (params: GetMyShowsParams = {}) => (
+    params.q ? [alternateMatch] : [canonicalMatch]
+  ));
+  api.getMyInProgressShows.mockResolvedValue([inProgressOnlyShow]);
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={client}><MyShowsPage /></QueryClientProvider>,
+    ));
+    await until(() => {
+      expect(container.textContent).toContain("Regular Canonical Show");
+      expect(container.textContent).toContain("In-Progress Feed Only");
+    });
+    expect(container.textContent).not.toContain("Matched:");
+
+    const searchInput = container.querySelector<HTMLInputElement>('[data-testid="input-search-shows"]')!;
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(searchInput, "Local Show Name");
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await until(() => {
+      expect(api.getMyShows).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "Local Show Name" }),
+        expect.anything(),
+      );
+      expect(container.textContent).toContain("Canonical Show Name");
+      expect(container.textContent).toContain("Matched: Local Show Name");
+      expect(container.querySelector('[data-testid="text-matched-alternate-title-43"]')).not.toBeNull();
+      expect(Array.from(container.querySelectorAll('a[href="/title/43"]'))
+        .some((link) => link.textContent === "Canonical Show Name")).toBe(true);
+      expect(container.textContent).not.toContain("In-Progress Feed Only");
+    });
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    client.clear();
+  }
+});
