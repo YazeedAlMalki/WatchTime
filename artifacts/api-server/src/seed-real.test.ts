@@ -1191,6 +1191,88 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("returns to weekly timing after enqueue and recovery recover", async () => {
+    const originalItems = [...sourceItems];
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn(() => {
+      throw new Error("Provider requests must not run during an enqueue retry");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const retryDelay = 5 * 60 * 1000;
+    const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+      delay === WEEK_MS || delay === retryDelay
+        ? [{
+            fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+            delay,
+            timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+          }]
+        : []);
+    const pendingRefreshTimers = () => refreshTimers().filter(({ timer }) =>
+      !clearTimeoutSpy.mock.calls.some(([cleared]) => cleared === timer));
+
+    try {
+      sourceItems.splice(0, sourceItems.length);
+      await scheduleCatalogRefresh(WEEK_MS);
+      expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS]);
+      const pendingTimers = vi.getTimerCount();
+
+      const enqueueFailure = new Error("Database unavailable while enqueueing");
+      const recoveryFailure = new Error("Database unavailable while recovering");
+      const insertSpy = vi.spyOn(db, "insert").mockImplementationOnce(() => {
+        throw enqueueFailure;
+      });
+      vi.spyOn(pool, "connect").mockRejectedValueOnce(recoveryFailure);
+      const first = refreshTimers()[0];
+      clearTimeout(first.timer);
+      first.fire();
+
+      await vi.waitFor(() => {
+        expect(refreshTimers()).toHaveLength(2);
+      });
+      expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, retryDelay]);
+      expect(pendingRefreshTimers()).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(pendingTimers);
+      expect(insertSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
+        { err: recoveryFailure }, "unable to recover interrupted catalog refreshes",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const retry = refreshTimers()[1];
+      vi.spyOn(db, "transaction").mockResolvedValueOnce(false);
+      const cleanupSpy = vi.spyOn(db, "delete").mockReturnValueOnce({
+        where: () => ({ returning: async () => [] }),
+      } as unknown as ReturnType<typeof db.delete>);
+      clearTimeout(retry.timer);
+      retry.fire();
+      await vi.waitFor(() => {
+        expect(refreshTimers()).toHaveLength(3);
+      });
+      const [successfulRun] = await db.select().from(catalogSyncRunsTable)
+        .orderBy(desc(catalogSyncRunsTable.id)).limit(1);
+      catalogRunIds.push(successfulRun.id);
+      expect(successfulRun.trigger).toBe("scheduled");
+      await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+
+      expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, retryDelay, WEEK_MS]);
+      expect(pendingRefreshTimers()).toHaveLength(1);
+      expect(pendingRefreshTimers()[0].delay).toBe(WEEK_MS);
+      expect(insertSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
+        { err: recoveryFailure }, "unable to recover interrupted catalog refreshes",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+      sourceItems.splice(0, sourceItems.length, ...originalItems);
+    }
+  });
+
   it("records a detached worker failure without replacing its weekly successor or retrying enqueue", async () => {
     const originalItems = [...sourceItems];
     let releaseFetch!: () => void;

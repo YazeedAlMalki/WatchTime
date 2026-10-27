@@ -13,3 +13,9 @@ Scheduler cases also need ready database connections when run alone; a full-file
 **Why:** Successor recovery and detached worker startup overlap. Opening connections during that overlap changes lock-acquisition order, and opening them under fake clocks introduces unrelated timeout counts.
 
 **How to apply:** Establish the needed real connections before installing fake clocks. Assert against captured refresh timers, not the pool's total timer count, and verify scheduler cases in separate test processes as well as together.
+
+When a scheduling test successfully enqueues an empty run, its detached worker still opens database connections and starts history cleanup. Those timers can race later tests even though no provider requests run.
+
+**Why:** A timer-transition test passed in isolation but the detached empty worker added or cleared pool timers during subsequent scheduler assertions.
+
+**How to apply:** In tests focused only on scheduling, stub the worker's startup transaction and history cleanup, then wait for cleanup to finish before restoring fake timers.
