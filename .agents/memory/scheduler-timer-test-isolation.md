@@ -25,3 +25,9 @@ Hold enqueueing, not provider fetching, when testing ownership of a pending sche
 **Why:** Catalog work runs separately from the start promise. A blocked provider request can leave the worker running after the scheduler's success continuation has already completed, so it does not reliably exercise the intended race.
 
 **How to apply:** Gate the run insertion's returned promise, install the competing schedules, then release the insertion and check which timers were created and cancelled.
+
+Successful enqueue does not guarantee a successful detached worker when successor recovery runs concurrently; the worker may legitimately skip.
+
+**Why:** Successor recovery and the worker compete for the same nonblocking catalog advisory lock. A scheduler-only test that requires worker success can pass alone and fail in a full-file run.
+
+**How to apply:** For enqueue-success timer races, wait for the real worker to finish as succeeded or skipped, while independently asserting successor creation, ownership, and absence of retry timers.

@@ -1695,6 +1695,159 @@ describe("real catalog sync", () => {
     },
   );
 
+  it.each([
+    { failurePoint: "recovery", rejectionOrder: [0, 1] },
+    { failurePoint: "recovery", rejectionOrder: [1, 0] },
+    { failurePoint: "latest-run read", rejectionOrder: [0, 1] },
+    { failurePoint: "latest-run read", rejectionOrder: [1, 0] },
+  ] as const)(
+    "preserves one weekly successor when two pending $failurePoint replacements reject in order $rejectionOrder",
+    async ({ failurePoint, rejectionOrder }) => {
+      const originalItems = [...sourceItems];
+      const [run] = await db.insert(catalogSyncRunsTable).values({
+        trigger: "scheduled",
+        status: "queued",
+        totalItems: 0,
+      }).returning();
+      catalogRunIds.push(run.id);
+      let resolveStart!: (runs: typeof run[]) => void;
+      const startGate = new Promise<typeof run[]>((resolve) => { resolveStart = resolve; });
+      const returning = vi.fn(() => startGate);
+      const replacements = [0, 1].map((index) => {
+        let reject!: (error: Error) => void;
+        const gate = new Promise<never>((_resolve, rejectGate) => { reject = rejectGate; });
+        let markEntered!: () => void;
+        const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+        return {
+          gate, reject, entered, markEntered,
+          failure: new Error(`Late replacement ${index} ${failurePoint} failure`),
+          settled: false,
+          outcome: undefined as Promise<unknown> | undefined,
+        };
+      });
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const retryDelay = 5 * 60 * 1000;
+      const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+        delay === WEEK_MS || delay === retryDelay
+          ? [{
+              fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+              delay,
+              timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+            }]
+          : []);
+
+      try {
+        sourceItems.splice(0, sourceItems.length);
+        await scheduleCatalogRefresh(WEEK_MS);
+        const first = refreshTimers()[0];
+        expect(first).toBeDefined();
+        const insertSpy = vi.spyOn(db, "insert").mockReturnValueOnce({
+          values: () => ({ returning }),
+        } as unknown as ReturnType<typeof db.insert>);
+        first.fire();
+        expect(returning).toHaveBeenCalledOnce();
+
+        if (failurePoint === "recovery") {
+          const originalConnect = pool.connect.bind(pool);
+          let heldRecoveries = 0;
+          vi.spyOn(pool, "connect").mockImplementation(((callback?: Parameters<typeof pool.connect>[0]) => {
+            // Only the two replacement recoveries are held. Callback-based
+            // worker queries and the successor's recovery use real connections.
+            if (callback) return originalConnect(callback);
+            const replacement = replacements[heldRecoveries++];
+            if (!replacement) return originalConnect();
+            replacement.markEntered();
+            return replacement.gate;
+          }) as typeof pool.connect);
+        }
+
+        for (const replacement of replacements) {
+          if (failurePoint === "latest-run read") {
+            // Consume one mock per initialization before starting the next;
+            // all worker selects and the successor recovery remain real.
+            vi.spyOn(db, "select").mockReturnValueOnce({
+              from: () => ({
+                where: () => ({
+                  orderBy: () => ({
+                    limit: () => {
+                      replacement.markEntered();
+                      return replacement.gate;
+                    },
+                  }),
+                }),
+              }),
+            } as unknown as ReturnType<typeof db.select>);
+          }
+          replacement.outcome = scheduleCatalogRefresh().then(
+            () => { replacement.settled = true; },
+            (error: unknown) => { replacement.settled = true; return error; },
+          );
+          await replacement.entered;
+        }
+        expect(replacements.map(({ settled }) => settled)).toEqual([false, false]);
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS]);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(first.timer);
+
+        resolveStart([run]);
+        await vi.waitFor(() => {
+          expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS]);
+        });
+        // Enqueue succeeded regardless of which real connection acquires the
+        // catalog lock first. Successor recovery may make the worker skip.
+        await waitForCatalogRun(run.id, (result) =>
+          result.status === "succeeded" || result.status === "skipped");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const successor = refreshTimers()[1];
+        expect(successor.timer).not.toBe(first.timer);
+        expect(replacements.map(({ settled }) => settled)).toEqual([false, false]);
+        expect(clearTimeoutSpy.mock.calls.filter(([timer]) => timer === first.timer)).toHaveLength(1);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(successor.timer);
+
+        for (const [position, index] of rejectionOrder.entries()) {
+          const replacement = replacements[index];
+          replacement.reject(replacement.failure);
+          expect(await replacement.outcome).toBe(replacement.failure);
+          await new Promise<void>((resolve) => setImmediate(resolve));
+
+          expect(replacements.filter(({ settled }) => settled)).toHaveLength(position + 1);
+          expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS]);
+          expect(refreshTimers()[1].timer).toBe(successor.timer);
+          // Exactly one refresh timer remains: the original was cleared, and
+          // neither late failure cancels or duplicates the installed successor.
+          expect(refreshTimers().filter(({ timer }) =>
+            !clearTimeoutSpy.mock.calls.some(([cleared]) => cleared === timer),
+          ).map(({ timer }) => timer)).toEqual([successor.timer]);
+          expect(clearTimeoutSpy).not.toHaveBeenCalledWith(successor.timer);
+          expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === retryDelay)).toHaveLength(0);
+        }
+        expect(insertSpy).toHaveBeenCalledOnce();
+        expect(errorSpy).not.toHaveBeenCalledWith(
+          expect.anything(), "unable to start scheduled catalog refresh",
+        );
+        expect(errorSpy).not.toHaveBeenCalledWith(
+          expect.anything(), "unable to reschedule catalog refresh",
+        );
+      } finally {
+        for (const replacement of replacements) replacement.reject(replacement.failure);
+        await Promise.all(replacements.map(({ outcome, gate }) => outcome ?? gate.catch(() => {})));
+        resolveStart([run]);
+        try {
+          if (returning.mock.calls.length) {
+            await waitForCatalogRun(run.id, (result) =>
+              result.status === "succeeded" || result.status === "skipped");
+          }
+        } finally {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+          sourceItems.splice(0, sourceItems.length, ...originalItems);
+          vi.restoreAllMocks();
+        }
+      }
+    },
+  );
+
   it("preserves the newest of two replacements when an older scheduled start succeeds", async () => {
     const originalItems = [...sourceItems];
     const originalInsert = db.insert.bind(db);
