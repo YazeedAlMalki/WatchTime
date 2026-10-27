@@ -61,7 +61,7 @@ vi.mock("../middlewares/clerkProxyMiddleware", () => ({
 // ─── Import after mocks ───────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../app";
-import { db, usersTable, adminAuditLogTable } from "@workspace/db";
+import { db, pool, usersTable, adminAuditLogTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 
 // ─── Setup / teardown ────────────────────────────────────────────────────────
@@ -588,6 +588,134 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
     } finally {
       writeSpy.mockRestore();
       exportRequest?.destroy();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
+  it("stops querying batches and removes backpressure listeners after client cancellation", async () => {
+    const initialIds = [...streamExportRowIds].sort((a, b) => b - a);
+    const firstBatchLastId = initialIds[499];
+    const batchQueries: string[] = [];
+    const originalConnect = pool.connect.bind(pool);
+    const connectSpy = vi.spyOn(pool, "connect").mockImplementation(((callback?: any) => {
+      if (callback) return originalConnect(callback);
+      return originalConnect().then((client) => {
+        const originalQuery = client.query.bind(client) as (...args: any[]) => Promise<any>;
+        const originalRelease = client.release.bind(client);
+        client.query = ((...args: any[]) => {
+          const statement = args[0] as string | { text?: string };
+          const queryText = typeof statement === "string" ? statement : statement.text ?? "";
+          if (
+            queryText.includes("admin_audit_log")
+            && /\border by\b/i.test(queryText)
+            && /\blimit\b/i.test(queryText)
+          ) {
+            batchQueries.push(queryText);
+          }
+          return originalQuery(...args);
+        }) as typeof client.query;
+        client.release = ((...args: any[]) => {
+          client.query = originalQuery as typeof client.query;
+          client.release = originalRelease as typeof client.release;
+          return originalRelease(...args);
+        }) as typeof client.release;
+        return client;
+      });
+    }) as typeof pool.connect);
+
+    const originalWrite = ServerResponse.prototype.write;
+    let forcedBackpressure = false;
+    let serverResponse: ServerResponse | undefined;
+    let initialDrainListeners: Function[] = [];
+    let initialCloseListeners: Function[] = [];
+    let backpressureListenersObserved = false;
+    let releaseBackpressure!: () => void;
+    const backpressureStarted = new Promise<void>((resolve) => {
+      releaseBackpressure = resolve;
+    });
+    let resolveServerClose!: () => void;
+    const serverClosed = new Promise<void>((resolve) => {
+      resolveServerClose = resolve;
+    });
+    const writeSpy = vi.spyOn(ServerResponse.prototype, "write").mockImplementation(function (
+      this: ServerResponse,
+      ...args: any[]
+    ) {
+      const chunk = args[0];
+      if (
+        !forcedBackpressure
+        && typeof chunk === "string"
+        && chunk.startsWith(`"${firstBatchLastId}",`)
+      ) {
+        forcedBackpressure = true;
+        serverResponse = this;
+        initialDrainListeners = this.listeners("drain");
+        initialCloseListeners = this.listeners("close");
+        this.once("close", resolveServerClose);
+        const result = originalWrite.apply(this, args as any);
+        releaseBackpressure();
+        return false;
+      }
+      return originalWrite.apply(this, args as any);
+    } as any);
+
+    const server = app.listen(0, "127.0.0.1");
+    let exportRequest: ReturnType<typeof httpGet> | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("listening", resolve);
+        server.once("error", reject);
+      });
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not bind to a TCP port");
+      }
+
+      const filters = new URLSearchParams({
+        action: STREAM_EXPORT_ACTION,
+        adminEmail: STREAM_ADMIN_EMAIL,
+        entityType: "content",
+        dateFrom: EXPORT_DAY_START.toISOString(),
+        dateTo: EXPORT_DAY_END.toISOString(),
+      });
+      const clientClosed = new Promise<void>((resolve) => {
+        exportRequest = httpGet({
+          hostname: "127.0.0.1",
+          port: address.port,
+          path: `/api/admin/audit-log/export?${filters.toString()}`,
+        }, (response) => {
+          response.on("data", (chunk: Buffer) => {
+            if (chunk.toString().includes(`"${firstBatchLastId}",`)) {
+              backpressureListenersObserved =
+                (serverResponse?.listenerCount("drain") ?? 0) > initialDrainListeners.length
+                && (serverResponse?.listenerCount("close") ?? 0) > initialCloseListeners.length + 1;
+              exportRequest?.destroy();
+            }
+          });
+          response.once("aborted", resolve);
+        });
+        exportRequest.on("error", () => resolve());
+        exportRequest.end();
+      });
+
+      await Promise.all([backpressureStarted, clientClosed, serverClosed]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(forcedBackpressure).toBe(true);
+      expect(backpressureListenersObserved).toBe(true);
+      expect(batchQueries).toHaveLength(1);
+      expect(serverResponse?.listeners("drain").every((listener) =>
+        initialDrainListeners.includes(listener as (...args: any[]) => void),
+      )).toBe(true);
+      expect(serverResponse?.listeners("close").every((listener) =>
+        initialCloseListeners.includes(listener as (...args: any[]) => void),
+      )).toBe(true);
+    } finally {
+      exportRequest?.destroy();
+      writeSpy.mockRestore();
+      connectSpy.mockRestore();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());
       });
