@@ -3281,11 +3281,10 @@ export function AliasReview({
         },
         onError: async (error) => {
           const description = errorDescription(error);
-          const isNetworkFailure = error instanceof TypeError;
           const isStaleRemoval = description.includes(
             "changed while you were reviewing it",
           );
-          if (isStaleRemoval || isNetworkFailure) {
+          if (isStaleRemoval) {
             await refreshAliasViews();
           }
           toast({
