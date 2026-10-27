@@ -3510,6 +3510,9 @@ export function AliasReview({
                           ) : (
                             <span key={citation.provider}>
                               {citation.sourceName}
+                              <span className="ml-1 text-xs italic text-orange-700/80 dark:text-orange-300/80">
+                                No source link
+                              </span>
                             </span>
                           ),
                         )}
@@ -3783,8 +3786,14 @@ export function AliasReview({
                               {citation.sourceName}
                             </a>
                           ) : (
-                            <span key={citation.provider} className="text-muted-foreground">
+                            <span
+                              key={citation.provider}
+                              className="text-muted-foreground"
+                            >
                               {citation.sourceName}
+                              <span className="ml-1 text-xs italic">
+                                No source link
+                              </span>
                             </span>
                           )
                         ))}

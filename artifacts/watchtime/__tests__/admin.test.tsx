@@ -496,6 +496,41 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).not.toContain("2 titles");
   });
 
+  it("identifies provider citations that do not have a source link", () => {
+    const providerAlias: AdminContentAlias = {
+      ...initialAlias,
+      isEditorial: false,
+      providerCitations: [
+        {
+          provider: "tvmaze",
+          sourceName: "TVMaze",
+          sourceUrl: "https://example.test/tvmaze",
+        },
+        {
+          provider: "wikipedia",
+          sourceName: "EN Wikipedia",
+        },
+      ],
+    };
+    render([providerAlias]);
+
+    const sourceCell = Array.from(container.querySelectorAll("tbody tr"))
+      .find((row) => row.textContent?.includes(providerAlias.alias))
+      ?.querySelectorAll("td")[3];
+    expect(sourceCell?.textContent).toContain("TVMaze");
+    expect(sourceCell?.textContent).toContain("EN Wikipedia");
+    expect(sourceCell?.textContent).toContain("No source link");
+    expect(
+      sourceCell?.querySelector('a[href="https://example.test/tvmaze"]')
+        ?.textContent,
+    ).toBe("TVMaze");
+    expect(
+      Array.from(sourceCell?.querySelectorAll("a") ?? []).map(
+        (link) => link.textContent,
+      ),
+    ).toEqual(["TVMaze"]);
+  });
+
   it("asks before discarding an unfinished edit when another alias is opened", () => {
     const secondAlias: AdminContentAlias = {
       ...initialAlias,
@@ -1070,6 +1105,10 @@ describe("admin alternate-title review", () => {
           sourceName: "EN Wikipedia",
           sourceUrl: "https://example.test/wikipedia",
         },
+        {
+          provider: "unlinked-source",
+          sourceName: "Unlinked provider",
+        },
       ],
     };
     mocks.updateMutation.mutate.mockImplementation(
@@ -1112,6 +1151,8 @@ describe("admin alternate-title review", () => {
       ?.querySelector("dd");
     expect(sourceSection?.textContent).toContain("TVMaze");
     expect(sourceSection?.textContent).toContain("EN Wikipedia");
+    expect(sourceSection?.textContent).toContain("Unlinked provider");
+    expect(sourceSection?.textContent).toContain("No source link");
     expect(
       Array.from(sourceSection?.querySelectorAll("a") ?? []).map((link) => [
         link.textContent,
@@ -1121,6 +1162,7 @@ describe("admin alternate-title review", () => {
       ["TVMaze", "https://example.test/tvmaze"],
       ["EN Wikipedia", "https://example.test/wikipedia"],
     ]);
+    expect(sourceSection?.querySelectorAll("a")).toHaveLength(2);
   });
 
   it("keeps stale correction details available while another alias is edited", async () => {
