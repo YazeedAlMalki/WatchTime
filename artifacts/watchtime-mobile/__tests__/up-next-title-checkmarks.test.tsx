@@ -533,6 +533,107 @@ it.each([
   },
 );
 
+it.each([101, 201])(
+  'keeps Home card marks independent when episode %s finishes first',
+  async (firstToFinish) => {
+    mockWatched.clear();
+    mockMarkRequest.mockReset();
+    const finishes = new Map<number, () => void>();
+    mockMarkRequest.mockImplementation(({ episodeId }: { episodeId: number }) =>
+      new Promise<void>((resolve) => { finishes.set(episodeId, resolve); }),
+    );
+    const shows = [
+      { ...mockTrackedShow(), nextEpisode: mockEpisodes[0] },
+      {
+        ...mockTrackedShow(),
+        title: { id: 43, name: 'Another Show' },
+        nextEpisode: mockEpisodes[2],
+      },
+    ];
+    // Keep both cards mounted, including during success-triggered refetches.
+    // This test isolates mutation ownership, not next-episode advancement.
+    const showsHook = jest.spyOn(mockApi, 'useGetMyShows').mockImplementation(() => useQuery({
+      queryKey: mockApi.getGetMyShowsQueryKey(),
+      queryFn: async () => shows,
+    }));
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+        mutations: { gcTime: Infinity, retry: false },
+      },
+    });
+    try {
+      const home = await render(
+        <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+      );
+      const firstCard = await home.findByTestId('upnext-42');
+      const secondCard = await home.findByTestId('upnext-43');
+      const button = (episodeId: number) => home.getByTestId(`mark-watched-${episodeId}`);
+      const stopPropagation = jest.fn();
+
+      expect(button(101)).toBeEnabled();
+      expect(button(201)).toBeEnabled();
+      await fireEvent.press(button(101), { stopPropagation });
+      await waitFor(() => {
+        expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+        expect(button(101)).toBeDisabled();
+        expect(button(201)).toBeEnabled();
+        expect(home.getAllByText('Saving…')).toHaveLength(1);
+      });
+      expect(mockMarkRequest).toHaveBeenNthCalledWith(1, {
+        episodeId: 101, data: { includePrevious: true },
+      });
+
+      await fireEvent.press(button(201), { stopPropagation });
+      await waitFor(() => {
+        expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+        expect(button(101)).toBeDisabled();
+        expect(button(201)).toBeDisabled();
+        expect(home.getAllByText('Saving…')).toHaveLength(2);
+      });
+      expect(mockMarkRequest).toHaveBeenNthCalledWith(2, {
+        episodeId: 201, data: { includePrevious: true },
+      });
+      for (let tap = 0; tap < 3; tap += 1) {
+        await fireEvent.press(button(101), { stopPropagation });
+        await fireEvent.press(button(201), { stopPropagation });
+      }
+      expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+      expect(client.getMutationCache().getAll()).toHaveLength(2);
+
+      const stillPending = firstToFinish === 101 ? 201 : 101;
+      await act(async () => { finishes.get(firstToFinish)!(); });
+      await waitFor(() => {
+        expect(button(firstToFinish)).toBeEnabled();
+        expect(button(stillPending)).toBeDisabled();
+        expect(home.getAllByText('Saving…')).toHaveLength(1);
+        expect(client.isMutating()).toBe(1);
+        expect(client.isFetching()).toBe(0);
+      });
+      expect(home.getByTestId('upnext-42')).toBe(firstCard);
+      expect(home.getByTestId('upnext-43')).toBe(secondCard);
+      await fireEvent.press(button(stillPending), { stopPropagation });
+      expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+      expect(button(stillPending)).toBeDisabled();
+
+      await act(async () => { finishes.get(stillPending)!(); });
+      await waitFor(() => {
+        expect(button(101)).toBeEnabled();
+        expect(button(201)).toBeEnabled();
+        expect(home.queryByText('Saving…')).toBeNull();
+        expect(client.isMutating()).toBe(0);
+      });
+      expect(mockMarkRequest).toHaveBeenCalledTimes(2);
+    } finally {
+      await cleanup();
+      client.clear();
+      showsHook.mockRestore();
+      mockMarkRequest.mockReset();
+      mockWatched.clear();
+    }
+  },
+);
+
 it('keeps settled and late Home mark errors tied to the failed episode as the same card updates', async () => {
   mockWatched.clear();
   mockMarkRequest.mockReset();
