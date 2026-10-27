@@ -1569,6 +1569,120 @@ describe("real catalog sync", () => {
   );
 
   it.each(["recovery", "latest-run read"] as const)(
+    "preserves an installed five-minute retry when pending replacement %s rejects late",
+    async (failurePoint) => {
+      let rejectStart!: (error: Error) => void;
+      const startGate = new Promise<never>((_resolve, reject) => { rejectStart = reject; });
+      const returning = vi.fn(() => startGate);
+      let rejectReplacement!: (error: Error) => void;
+      const replacementGate = new Promise<never>((_resolve, reject) => { rejectReplacement = reject; });
+      let markReplacementEntered!: () => void;
+      const replacementEntered = new Promise<void>((resolve) => { markReplacementEntered = resolve; });
+      const replacementFailure = new Error(`Late replacement ${failurePoint} failure`);
+      const enqueueFailure = new Error("Original scheduled enqueue failed");
+      let replacementSettled = false;
+      let replacementOutcome: Promise<unknown> | undefined;
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const retryDelay = 5 * 60 * 1000;
+      const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+        delay === WEEK_MS || delay === retryDelay
+          ? [{
+              fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+              delay,
+              timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+            }]
+          : []);
+
+      try {
+        await scheduleCatalogRefresh(WEEK_MS);
+        const first = refreshTimers()[0];
+        expect(first).toBeDefined();
+        const insertSpy = vi.spyOn(db, "insert").mockReturnValueOnce({
+          values: () => ({ returning }),
+        } as unknown as ReturnType<typeof db.insert>);
+        first.fire();
+        expect(returning).toHaveBeenCalledOnce();
+
+        if (failurePoint === "recovery") {
+          const originalConnect = pool.connect.bind(pool);
+          let heldRecovery = false;
+          vi.spyOn(pool, "connect").mockImplementation(((callback?: Parameters<typeof pool.connect>[0]) => {
+            // Leave callback-based queries and the retry's recovery free to
+            // finish while holding only the replacement's connection.
+            if (callback) return originalConnect(callback);
+            if (heldRecovery) return originalConnect();
+            heldRecovery = true;
+            markReplacementEntered();
+            return replacementGate;
+          }) as typeof pool.connect);
+        } else {
+          vi.spyOn(db, "select").mockReturnValueOnce({
+            from: () => ({
+              where: () => ({
+                orderBy: () => ({
+                  limit: () => {
+                    markReplacementEntered();
+                    return replacementGate;
+                  },
+                }),
+              }),
+            }),
+          } as unknown as ReturnType<typeof db.select>);
+        }
+        replacementOutcome = scheduleCatalogRefresh().then(
+          () => { replacementSettled = true; },
+          (error: unknown) => { replacementSettled = true; return error; },
+        );
+        await replacementEntered;
+        expect(replacementSettled).toBe(false);
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS]);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(first.timer);
+
+        // Install the retry before allowing the replacement to fail.
+        rejectStart(enqueueFailure);
+        await vi.waitFor(() => {
+          expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, retryDelay]);
+        });
+        const retry = refreshTimers()[1];
+        expect(retry.timer).not.toBe(first.timer);
+        expect(replacementSettled).toBe(false);
+        expect(clearTimeoutSpy.mock.calls.filter(([timer]) => timer === first.timer)).toHaveLength(1);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(retry.timer);
+        const clearsBeforeRejection = clearTimeoutSpy.mock.calls.length;
+
+        rejectReplacement(replacementFailure);
+        expect(await replacementOutcome).toBe(replacementFailure);
+        // Drain continuations so a duplicate retry or weekly successor is visible.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, retryDelay]);
+        expect(refreshTimers()[1].timer).toBe(retry.timer);
+        expect(clearTimeoutSpy).toHaveBeenCalledTimes(clearsBeforeRejection);
+        expect(clearTimeoutSpy).not.toHaveBeenCalledWith(retry.timer);
+        expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === WEEK_MS)).toHaveLength(1);
+        expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === retryDelay)).toHaveLength(1);
+        expect(insertSpy).toHaveBeenCalledOnce();
+        expect(returning).toHaveBeenCalledOnce();
+        expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+          { err: enqueueFailure }, "unable to start scheduled catalog refresh",
+        );
+        expect(errorSpy).not.toHaveBeenCalledWith(
+          expect.anything(), "unable to reschedule catalog refresh",
+        );
+      } finally {
+        rejectReplacement(replacementFailure);
+        await replacementOutcome;
+        rejectStart(enqueueFailure);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it.each(["recovery", "latest-run read"] as const)(
     "preserves an installed weekly successor when pending replacement %s rejects late",
     async (failurePoint) => {
       const originalItems = [...sourceItems];
