@@ -1218,6 +1218,104 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("switches a weekly successor to one five-minute retry when a later enqueue fails after a recovery outage", async () => {
+    const originalItems = [...sourceItems];
+    const fetchMock = vi.fn(() => {
+      throw new Error("Provider requests must not run while testing recovery scheduling");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const retryDelay = 5 * 60 * 1000;
+    const refreshTimers = () => setTimeoutSpy.mock.calls.flatMap(([, delay], index) =>
+      delay === WEEK_MS || delay === retryDelay
+        ? [{
+            fire: setTimeoutSpy.mock.calls[index][0] as () => void,
+            delay,
+            timer: setTimeoutSpy.mock.results[index]?.value as NodeJS.Timeout,
+          }]
+        : []);
+    const pendingRefreshTimers = () => refreshTimers().filter(({ timer }) =>
+      !clearTimeoutSpy.mock.calls.some(([cleared]) => cleared === timer));
+
+    try {
+      sourceItems.splice(0, sourceItems.length);
+      await scheduleCatalogRefresh(WEEK_MS);
+      expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS]);
+      warnSpy.mockClear();
+
+      const recoveryFailure = new Error("Successor recovery unavailable");
+      const transactionSpy = vi.spyOn(db, "transaction")
+        // The successful enqueue's detached worker does not acquire its run.
+        .mockResolvedValueOnce(false)
+        .mockRejectedValueOnce(recoveryFailure)
+        .mockRejectedValueOnce(recoveryFailure);
+      const pruned = vi.fn(async () => []);
+      vi.spyOn(db, "delete").mockReturnValue({
+        where: () => ({ returning: pruned }),
+      } as unknown as ReturnType<typeof db.delete>);
+      const insertSpy = vi.spyOn(db, "insert");
+      const first = refreshTimers()[0];
+      clearTimeout(first.timer);
+      first.fire();
+
+      await vi.waitFor(() => {
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS]);
+        expect(pruned).toHaveBeenCalledOnce();
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const [run] = await db.select().from(catalogSyncRunsTable)
+        .orderBy(desc(catalogSyncRunsTable.id)).limit(1);
+      catalogRunIds.push(run.id);
+      expect(run).toMatchObject({ trigger: "scheduled", status: "queued", totalItems: 0 });
+      expect(insertSpy).toHaveBeenCalledExactlyOnceWith(catalogSyncRunsTable);
+      expect(transactionSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
+        { err: recoveryFailure }, "unable to recover interrupted catalog refreshes",
+      );
+      expect(errorSpy).not.toHaveBeenCalled();
+      const weekly = refreshTimers()[1];
+      expect(pendingRefreshTimers()).toEqual([weekly]);
+
+      const enqueueFailure = new Error("Later scheduled enqueue unavailable");
+      const returning = vi.fn().mockRejectedValue(enqueueFailure);
+      insertSpy.mockReturnValueOnce({
+        values: () => ({ returning }),
+      } as unknown as ReturnType<typeof db.insert>);
+      // Fire the successor of this same schedule, without reinitializing it.
+      clearTimeout(weekly.timer);
+      weekly.fire();
+      await vi.waitFor(() => {
+        expect(refreshTimers().map(({ delay }) => delay)).toEqual([WEEK_MS, WEEK_MS, retryDelay]);
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const retry = refreshTimers()[2];
+      expect(pendingRefreshTimers()).toEqual([retry]);
+      expect(retry.timer).not.toBe(weekly.timer);
+      expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === retryDelay)).toHaveLength(1);
+      expect(insertSpy).toHaveBeenCalledTimes(2);
+      expect(insertSpy).toHaveBeenLastCalledWith(catalogSyncRunsTable);
+      expect(returning).toHaveBeenCalledOnce();
+      expect(transactionSpy).toHaveBeenCalledTimes(3);
+      expect(pruned).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenLastCalledWith(
+        { err: recoveryFailure }, "unable to recover interrupted catalog refreshes",
+      );
+      expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+        { err: enqueueFailure }, "unable to start scheduled catalog refresh",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      scheduledTimers.push(...refreshTimers().map(({ timer }) => timer));
+      sourceItems.splice(0, sourceItems.length, ...originalItems);
+      cleanupSchedulerTimers();
+    }
+  });
+
   it("keeps one five-minute retry pending when enqueue and recovery repeatedly fail", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
