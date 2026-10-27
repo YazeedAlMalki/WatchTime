@@ -22,16 +22,39 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OptimizedImage } from "@/components/ui/optimized-image";
 import { useUser } from "@clerk/react";
 import { Input } from "@/components/ui/input";
+import { useLocation, useSearch } from "wouter";
 
 const PAGE_SIZE = 24;
 
 type ShowFilter = "all" | "up-next" | "caught-up";
 
+function parseShowFilter(value: string | null): ShowFilter {
+  return value === "up-next" || value === "caught-up" ? value : "all";
+}
+
+function myShowsUrl(search: string, q: string, status: ShowFilter): string {
+  const params = new URLSearchParams(search);
+  if (q) params.set("q", q);
+  else params.delete("q");
+  if (status === "all") params.delete("status");
+  else params.set("status", status);
+
+  const query = params.toString();
+  return query ? `/my-shows?${query}` : "/my-shows";
+}
+
 export default function MyShowsPage() {
   const { isSignedIn } = useUser();
-  const [showSearch, setShowSearch] = useState("");
-  const [debouncedShowSearch, setDebouncedShowSearch] = useState("");
-  const [showFilter, setShowFilter] = useState<ShowFilter>("all");
+  const search = useSearch();
+  const [, setLocation] = useLocation();
+  const searchParams = new URLSearchParams(search);
+  const showSearch = searchParams.get("q") ?? "";
+  const showFilter = parseShowFilter(searchParams.get("status"));
+  const [debouncedShowSearch, setDebouncedShowSearch] = useState(() => showSearch.trim());
+
+  const updateShowFilters = (q = showSearch, status = showFilter) => {
+    setLocation(myShowsUrl(search, q, status), { replace: true });
+  };
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedShowSearch(showSearch.trim()), 350);
@@ -122,7 +145,7 @@ export default function MyShowsPage() {
                 aria-label="Search tracked shows"
                 placeholder="Search my shows…"
                 value={showSearch}
-                onChange={(event) => setShowSearch(event.target.value)}
+                onChange={(event) => updateShowFilters(event.target.value)}
                 maxLength={100}
                 className="pl-9"
               />
@@ -140,7 +163,7 @@ export default function MyShowsPage() {
                   aria-pressed={showFilter === key}
                   variant={showFilter === key ? "secondary" : "outline"}
                   className="rounded-full"
-                  onClick={() => setShowFilter(key)}
+                  onClick={() => updateShowFilters(showSearch, key)}
                 >
                   {label}
                 </Button>
@@ -162,10 +185,7 @@ export default function MyShowsPage() {
                   variant="outline"
                   data-testid="button-clear-show-filters"
                   className="mt-4 rounded-full"
-                  onClick={() => {
-                    setShowSearch("");
-                    setShowFilter("all");
-                  }}
+                  onClick={() => updateShowFilters("", "all")}
                 >
                   Clear search and filters
                 </Button>

@@ -2,6 +2,8 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Route, Router, Switch } from "wouter";
+import { memoryLocation } from "wouter/memory-location";
 import type { GetMyShowsParams } from "@workspace/api-client-react";
 import MyShowsPage from "../src/pages/my-shows";
 
@@ -30,11 +32,14 @@ const trackedShow = (id: number, name: string, inProgress = true) => ({
     ? { id: id * 10, seasonNumber: 1, episodeNumber: 2, name: "Next Episode" }
     : null,
 });
-
-vi.mock("wouter", () => ({
-  Link: ({ children, href }: { children: React.ReactNode; href: string }) =>
-    <a href={href}>{children}</a>,
-}));
+vi.mock("wouter", async (importOriginal) => {
+  const original = await importOriginal<typeof import("wouter")>();
+  return {
+    ...original,
+    Link: ({ children, href }: { children: React.ReactNode; href: string }) =>
+      <a href={href}>{children}</a>,
+  };
+});
 vi.mock("@clerk/react", () => ({ useUser: () => ({ isSignedIn: true }) }));
 vi.mock("@workspace/api-client-react", async (importOriginal) => {
   const original = await importOriginal<typeof import("@workspace/api-client-react")>();
@@ -67,11 +72,13 @@ afterEach(() => {
 it("filters by server status and combines the selected status with search", async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   api.getMyShows.mockImplementation(async (params: GetMyShowsParams = {}) => {
+    if (params.q) return [];
     if (params.status === "up-next") return [unfinishedShow];
     if (params.status === "caught-up") return [caughtUpShow];
     return [unfinishedShow, caughtUpShow];
   });
   api.getMyInProgressShows.mockResolvedValue([unfinishedShow]);
+  const location = memoryLocation({ path: "/my-shows", record: true });
 
   const client = new QueryClient({
     defaultOptions: { queries: { staleTime: Infinity, retry: false } },
@@ -82,7 +89,14 @@ it("filters by server status and combines the selected status with search", asyn
 
   try {
     await act(async () => root.render(
-      <QueryClientProvider client={client}><MyShowsPage /></QueryClientProvider>,
+      <Router hook={location.hook}>
+        <QueryClientProvider client={client}>
+          <Switch>
+            <Route path="/my-shows"><MyShowsPage /></Route>
+            <Route path="/title/:id"><p>Title detail</p></Route>
+          </Switch>
+        </QueryClientProvider>
+      </Router>,
     ));
     await until(() => expect(container.textContent).toContain("Unfinished Show"));
 
@@ -108,6 +122,19 @@ it("filters by server status and combines the selected status with search", asyn
       );
       expect(container.textContent).toContain("Caught Up Show");
       expect(container.textContent).not.toContain("Unfinished Show");
+      expect(location.history?.at(-1)).toBe("/my-shows?status=caught-up");
+    });
+
+    const previousMyShowsUrl = location.history?.at(-1);
+    await act(async () => {
+      location.navigate("/title/2");
+    });
+    expect(container.textContent).toContain("Title detail");
+    await act(async () => {
+      location.navigate(previousMyShowsUrl!);
+    });
+    await until(() => {
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="filter-shows-caught-up"]')?.getAttribute("aria-pressed")).toBe("true");
     });
 
     const searchInput = container.querySelector<HTMLInputElement>('[data-testid="input-search-shows"]')!;
@@ -121,7 +148,17 @@ it("filters by server status and combines the selected status with search", asyn
         expect.objectContaining({ status: "caught-up", q: "Completion" }),
         expect.anything(),
       );
-      expect(container.textContent).toContain("Caught Up Show");
+      expect(container.textContent).toContain("No shows match your search and filters.");
+      expect(location.history?.at(-1)).toBe("/my-shows?status=caught-up&q=Completion");
+    });
+
+    await act(async () => {
+      (container.querySelector('[data-testid="button-clear-show-filters"]') as HTMLButtonElement).click();
+    });
+    await until(() => {
+      expect(container.querySelector<HTMLInputElement>('[data-testid="input-search-shows"]')?.value).toBe("");
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="filter-shows-all"]')?.getAttribute("aria-pressed")).toBe("true");
+      expect(location.history?.at(-1)).toBe("/my-shows");
     });
   } finally {
     await act(async () => root.unmount());
@@ -157,6 +194,7 @@ it("keeps filtered search criteria across pages and resets results when criteria
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
+  const location = memoryLocation({ path: "/my-shows", record: true });
   const getShowNames = () =>
     Array.from(container.querySelectorAll<HTMLAnchorElement>('a[href^="/title/"]'))
       .map((link) => link.textContent?.trim())
@@ -164,7 +202,9 @@ it("keeps filtered search criteria across pages and resets results when criteria
 
   try {
     await act(async () => root.render(
-      <QueryClientProvider client={client}><MyShowsPage /></QueryClientProvider>,
+      <Router hook={location.hook}>
+        <QueryClientProvider client={client}><MyShowsPage /></QueryClientProvider>
+      </Router>,
     ));
 
     await act(async () => {
@@ -246,6 +286,48 @@ it("keeps filtered search criteria across pages and resets results when criteria
       }),
       expect.anything(),
     );
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    client.clear();
+  }
+});
+
+it("loads the search and progress filter from a direct My Shows link", async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  api.getMyShows.mockResolvedValue([unfinishedShow]);
+  api.getMyInProgressShows.mockResolvedValue([unfinishedShow]);
+  const location = memoryLocation({
+    path: "/my-shows?q=unfinished&status=up-next",
+    record: true,
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+
+  try {
+    await act(async () => root.render(
+      <Router hook={location.hook}>
+        <QueryClientProvider client={client}>
+          <Switch>
+            <Route path="/my-shows"><MyShowsPage /></Route>
+            <Route path="/title/:id"><p>Title detail</p></Route>
+          </Switch>
+        </QueryClientProvider>
+      </Router>,
+    ));
+    await until(() => {
+      expect(container.querySelector<HTMLInputElement>('[data-testid="input-search-shows"]')?.value).toBe("unfinished");
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="filter-shows-up-next"]')?.getAttribute("aria-pressed")).toBe("true");
+      expect(api.getMyShows).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "unfinished", status: "up-next" }),
+        expect.anything(),
+      );
+      expect(container.textContent).toContain("Unfinished Show");
+    });
   } finally {
     await act(async () => root.unmount());
     container.remove();

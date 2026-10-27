@@ -48,6 +48,8 @@ const inProgress = () => server.watched ? shows() : [];
 
 vi.mock("wouter", () => ({
   useParams: () => ({ id: "42" }),
+  useSearch: () => "",
+  useLocation: () => ["/my-shows", () => {}],
   Link: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }));
 vi.mock("@clerk/react", () => ({
