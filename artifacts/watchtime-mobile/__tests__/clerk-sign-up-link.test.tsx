@@ -753,6 +753,76 @@ describe('Clerk sign-up switch to sign-in', () => {
     },
   );
 
+  it.each(['success', 'returned error', 'rejected promise'])(
+    'blocks duplicate resends while Clerk stays idle and allows another send after %s',
+    async (outcome) => {
+      mockUseLocalSearchParams.mockReturnValue({});
+      let resolveSend!: (value: { error: null | { message: string } }) => void;
+      let rejectSend!: (reason: Error) => void;
+      const pendingSend = new Promise<{ error: null | { message: string } }>((resolve, reject) => {
+        resolveSend = resolve;
+        rejectSend = reject;
+      });
+      const sendEmailCode = jest.fn()
+        .mockReturnValueOnce(pendingSend)
+        .mockResolvedValueOnce({ error: null });
+      mockUseSignUp.mockReturnValue({
+        signUp: {
+          status: 'missing_requirements',
+          unverifiedFields: ['email_address'],
+          missingFields: [],
+          verifications: { sendEmailCode },
+        },
+        errors: { fields: {} },
+        // Exercise the local resend guard, not Clerk's fetch-status guard.
+        fetchStatus: 'idle',
+      });
+
+      const screen = await render(<SignUpScreen />);
+      expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+      let firstSend!: Promise<void>;
+      await act(async () => {
+        firstSend = getPressHandler(screen, 'resend-code-button')();
+      });
+
+      expect(screen.getByTestId('resend-code-button')).toBeDisabled();
+      expect(screen.getByText('Sending…')).toBeTruthy();
+      expect(sendEmailCode).toHaveBeenCalledTimes(1);
+      await fireEvent.press(screen.getByTestId('resend-code-button'));
+      expect(sendEmailCode).toHaveBeenCalledTimes(1);
+      // Bypass native disabled behavior to exercise handleResend itself.
+      await act(async () => {
+        await getPressHandler(screen, 'resend-code-button')();
+      });
+      expect(sendEmailCode).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('resend-code-status')).toBeNull();
+
+      await act(async () => {
+        if (outcome === 'rejected promise') {
+          rejectSend(new Error('Email service unavailable.'));
+        } else {
+          resolveSend({ error: outcome === 'returned error' ? { message: 'Please try again.' } : null });
+        }
+        await firstSend;
+      });
+
+      expect(sendEmailCode).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+      expect(screen.getByTestId('resend-code-status').props.children).toBe(
+        outcome === 'success'
+          ? 'A new code is on its way. Check your email.'
+          : 'Could not send a new code. Please try again.',
+      );
+      await fireEvent.press(screen.getByTestId('resend-code-button'));
+      expect(sendEmailCode).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+      expect(screen.getByTestId('resend-code-status').props.children)
+        .toBe('A new code is on its way. Check your email.');
+      expect(screen.getByTestId('code-input')).toBeTruthy();
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+    },
+  );
+
   it('reports a failed resend and lets the user retry without leaving verification', async () => {
     mockUseLocalSearchParams.mockReturnValue({});
     const sendEmailCode = jest.fn()
