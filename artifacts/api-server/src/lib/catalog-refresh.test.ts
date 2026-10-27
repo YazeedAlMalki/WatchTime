@@ -1676,6 +1676,124 @@ describe("catalog refresh recovery", () => {
     }
   });
 
+  it("recovers newly abandoned runs independently as two workers release their leases separately", async () => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const staleAt = new Date(cutoff.getTime() - 1_000);
+    const runs = await db.insert(catalogSyncRunsTable).values([
+      { trigger: "manual", status: "queued", createdAt: staleAt },
+      { trigger: "manual", status: "running", createdAt: staleAt, startedAt: staleAt },
+      { trigger: "manual", status: "running", createdAt: staleAt, startedAt: staleAt },
+      { trigger: "manual", status: "succeeded", createdAt: staleAt, startedAt: staleAt, finishedAt: staleAt },
+    ]).returning();
+    const runIds = runs.map((run) => run.id);
+    createdRunIds.push(...runIds);
+    const items = await db.insert(catalogSyncItemsTable).values(runs.flatMap((run) =>
+      (["queued", "running", "succeeded", "failed"] as const).map((status) => ({
+        runId: run.id,
+        itemKey: `staggered-ownership-${run.id}-${status}`,
+        title: `Staggered ownership ${status}`,
+        provider: "TVMaze",
+        status,
+        startedAt: status === "queued" ? null : staleAt,
+        finishedAt: status === "succeeded" || status === "failed" ? staleAt : null,
+        error: status === "failed" ? "Saved provider failure" : null,
+      })),
+    )).returning();
+    const readRuns = () => db.select().from(catalogSyncRunsTable)
+      .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id);
+    const readItems = () => db.select().from(catalogSyncItemsTable)
+      .where(inArray(catalogSyncItemsTable.runId, runIds)).orderBy(catalogSyncItemsTable.id);
+    let previousRuns = await readRuns();
+    let previousItems = await readItems();
+    const assertRecoveryPass = async (newlyAbandonedIndex: number) => {
+      // Different wall-clock times ensure a repeated timestamp write cannot
+      // accidentally compare equal to the result saved by the preceding pass.
+      const previousFinishedAt = Math.max(
+        ...previousRuns.map((run) => run.finishedAt?.getTime() ?? 0),
+        ...previousItems.map((item) => item.finishedAt?.getTime() ?? 0),
+      );
+      await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(previousFinishedAt));
+      const passStartedAt = Date.now();
+      await recoverInterruptedRuns(cutoff);
+      const actualRuns = await readRuns();
+      const actualItems = await readItems();
+      const newlyAbandonedRun = runs[newlyAbandonedIndex];
+      const explanation = newlyAbandonedRun.status === "queued"
+        ? "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles"
+        : "Catalog refresh was interrupted by a server restart";
+      expect(actualRuns).toHaveLength(runs.length);
+      for (const [index, previous] of previousRuns.entries()) {
+        if (previous.id === newlyAbandonedRun.id) {
+          expect(actualRuns[index]).toEqual({
+            ...previous,
+            status: "failed", processedItems: 4, failedItems: 3,
+            error: explanation, finishedAt: expect.any(Date),
+          });
+          expect(actualRuns[index].finishedAt!.getTime()).toBeGreaterThanOrEqual(passStartedAt);
+        } else {
+          // Includes both still-owned work and already recovered diagnostics,
+          // counters and timestamps, plus the previously completed run.
+          expect(actualRuns[index]).toEqual(previous);
+        }
+      }
+      expect(actualItems).toHaveLength(items.length);
+      for (const [index, previous] of previousItems.entries()) {
+        if (previous.runId === newlyAbandonedRun.id && ["queued", "running"].includes(previous.status)) {
+          expect(actualItems[index]).toEqual({
+            ...previous, status: "failed", error: explanation, finishedAt: expect.any(Date),
+          });
+          expect(actualItems[index].finishedAt!.getTime()).toBeGreaterThanOrEqual(passStartedAt);
+        } else {
+          expect(actualItems[index]).toEqual(previous);
+        }
+      }
+      previousRuns = actualRuns;
+      previousItems = actualItems;
+    };
+
+    // Both owners must remain checked out: returning either session to the
+    // pool could let recovery reentrantly acquire that session's worker lease.
+    const firstOwner = await pool.connect();
+    try {
+      const secondOwner = await pool.connect();
+      try {
+        expect(firstOwner).not.toBe(secondOwner);
+        await firstOwner.query(
+          "select pg_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1)", [runs[0].id],
+        );
+        await secondOwner.query(
+          "select pg_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1)", [runs[1].id],
+        );
+
+        await assertRecoveryPass(2);
+
+        const firstUnlock = await firstOwner.query<{ unlocked: boolean }>(
+          "select pg_advisory_unlock(hashtext('watchtime:catalog-refresh-worker'), $1) as unlocked", [runs[0].id],
+        );
+        expect(firstUnlock.rows[0].unlocked).toBe(true);
+        await assertRecoveryPass(0);
+
+        const secondUnlock = await secondOwner.query<{ unlocked: boolean }>(
+          "select pg_advisory_unlock(hashtext('watchtime:catalog-refresh-worker'), $1) as unlocked", [runs[1].id],
+        );
+        expect(secondUnlock.rows[0].unlocked).toBe(true);
+        await assertRecoveryPass(1);
+      } finally {
+        try {
+          await secondOwner.query("select pg_advisory_unlock_all()");
+        } finally {
+          secondOwner.release();
+        }
+      }
+    } finally {
+      try {
+        await firstOwner.query("select pg_advisory_unlock_all()");
+      } finally {
+        firstOwner.release();
+      }
+    }
+  });
+
   it.each(["queued", "running"] as const)("recovers abandoned runs and unfinished items while a %s run is owned by another worker", async (ownedStatus) => {
     const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
     const staleAt = new Date(cutoff.getTime() - 1_000);
