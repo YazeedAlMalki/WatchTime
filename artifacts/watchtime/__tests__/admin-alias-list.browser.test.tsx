@@ -513,6 +513,88 @@ it("restores a shared alias ownership filter and clears it without losing search
   }
 });
 
+it("keeps ownership and region when clearing alias search from a later page", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const pageCursor = "123e4567-e89b-12d3-a456-426614174000:50:0";
+  window.history.replaceState(
+    {},
+    "",
+    `/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=2&aliasCursor=${pageCursor}`,
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const isLaterPage = url.searchParams.get("cursor") !== null;
+    return new Response(JSON.stringify({
+      items: [isLaterPage
+        ? makeAlias(151, "Lighthouse later-page alias")
+        : makeAlias(1, "Editorial first-page alias")],
+      total: isLaterPage ? 51 : 50,
+      limit: 50,
+      offset: isLaterPage ? 50 : 0,
+      ...(isLaterPage ? { previousCursor: "123e4567-e89b-12d3-a456-426614174000:0" } : {}),
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 51 matching aliases");
+    await expect.element(page.getByText("Lighthouse later-page alias")).toBeVisible();
+
+    const search = page.getByPlaceholder("Search titles…");
+    await userEvent.clear(search);
+
+    await expect.element(page.getByText("Editorial first-page alias")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse later-page alias")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("combobox", { name: "Alias ownership" })).toHaveTextContent("Editorial");
+    await expect.element(page.getByRole("combobox", { name: "Review Wikidata region" })).toHaveTextContent("GB");
+    const params = new URLSearchParams(location.search);
+    expect(params.get("q")).toBeNull();
+    expect(params.get("aliasPage")).toBeNull();
+    expect(params.get("aliasCursor")).toBeNull();
+    expect(params.get("ownership")).toBe("editorial");
+    expect(params.get("region")).toBe("GB");
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests[0]?.searchParams.get("ownership")).toBe("editorial");
+    expect(requests[0]?.searchParams.get("cursor")).toBe(pageCursor);
+    expect(requests[1]?.searchParams.get("q")).toBeNull();
+    expect(requests[1]?.searchParams.get("ownership")).toBe("editorial");
+    expect(requests[1]?.searchParams.get("cursor")).toBeNull();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("restores the saved alias page and keeps its cursor with the saved filters", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState(

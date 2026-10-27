@@ -1397,6 +1397,7 @@ function ContentTab({
     }
   };
   const [debouncedQ, setDebouncedQ] = useState(q);
+  const aliasSearchTerm = q.trim() ? debouncedQ : "";
   const contentPageSize = 50;
   const aliasPageSize = 50;
   const hasContentFilters =
@@ -1459,7 +1460,7 @@ function ContentTab({
     isFetching: aliasesFetching,
     refetch: retryAliases,
   } = useListAdminContentAliases({
-      ...(debouncedQ ? { q: debouncedQ } : {}),
+      ...(aliasSearchTerm ? { q: aliasSearchTerm } : {}),
       ...(aliasOwnership !== "all" ? { ownership: aliasOwnership } : {}),
       limit: aliasPageSize,
       ...(aliasCursor ? { cursor: aliasCursor } : {}),
@@ -2621,7 +2622,7 @@ function ContentTab({
       )}
       <AliasReview
         aliases={aliasesPage?.items}
-        q={debouncedQ}
+        q={aliasSearchTerm}
         searchTerm={q}
         searchPending={q.trim() !== debouncedQ.trim()}
         getToken={getToken}
