@@ -80,11 +80,15 @@ jest.mock('@expo/vector-icons', () => ({
   },
 }));
 jest.mock('@/components/ui', () => {
-  const { Text } = require('react-native');
+  const { Text, Pressable } = require('react-native');
   return {
     SectionHeader: ({ title }: { title: string }) => <Text>{title}</Text>,
     EmptyState: ({ title }: { title: string }) => <Text>{title}</Text>,
-    ErrorState: () => null,
+    ErrorState: ({ onRetry }: { onRetry: () => void }) => (
+      <Pressable accessibilityRole="button" accessibilityLabel="Retry" onPress={onRetry}>
+        <Text>Retry</Text>
+      </Pressable>
+    ),
     Loading: () => null,
     PosterCard: ({ title }: { title: { id: number; name: string } }) => (
       <Text testID={`poster-${title.id}`}>{title.name}</Text>
@@ -209,7 +213,7 @@ jest.mock('@workspace/api-client-react', () => {
     }) => useQuery({
       ...options.query,
       queryFn: async () => {
-        mockActivityFetch();
+        await mockActivityFetch();
         return mockActivity();
       },
     }),
@@ -297,6 +301,88 @@ it('updates already-open History after marking and unmarking an episode in title
     expect(shows.queryByTestId('shows-search-input')).toBeNull();
   } finally {
     await act(async () => screens.unmount());
+    client.clear();
+  }
+});
+
+it('recovers open History after an activity reload fails without repeating the saved episode change', async () => {
+  mockTitleIsMovie = false;
+  mockMovieWatched = false;
+  mockWatched = false;
+  jest.clearAllMocks();
+  const failure = new Error('Activity is temporarily unavailable');
+  mockActivityFetch.mockRejectedValueOnce(failure).mockResolvedValueOnce(undefined);
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
+  client.setQueryData(activityKey, []);
+  const screens = await render(
+    <QueryClientProvider client={client}>
+      <View testID="mounted-my-shows"><MyShowsScreen /></View>
+      <View testID="open-title-detail"><TitleDetailScreen /></View>
+    </QueryClientProvider>,
+  );
+  try {
+    const shows = within(screens.getByTestId('mounted-my-shows'));
+    const detail = within(screens.getByTestId('open-title-detail'));
+    await fireEvent.press(shows.getByTestId('tab-history'));
+    await waitFor(() => expect(shows.getByText('No recent activity')).toBeTruthy());
+    const activityQuery = client.getQueryCache().find({ queryKey: activityKey, exact: true });
+    expect(activityQuery?.getObserversCount()).toBe(1);
+    expect(mockActivityFetch).not.toHaveBeenCalled();
+
+    await fireEvent.press(detail.getByTestId('season-1'));
+    await waitFor(() => expect(detail.getByTestId('episode-check-101')).toBeEnabled());
+    await fireEvent.press(detail.getByTestId('episode-check-101'));
+    await waitFor(() => {
+      expect(client.getQueryState(activityKey)?.status).toBe('error');
+      expect(client.getQueryState(activityKey)?.fetchStatus).toBe('idle');
+      expect(shows.getByRole('button', { name: 'Retry' })).toBeTruthy();
+      expect(detail.getByTestId('episode-check-101')).toBeEnabled();
+      expect(within(detail.getByTestId('episode-check-101')).getByTestId('icon-check')).toBeTruthy();
+      expect(detail.getByText('1/2 watched')).toBeTruthy();
+    });
+    expect(mockWatched).toBe(true);
+    expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+    expect(mockMarkRequest).toHaveBeenCalledWith({ episodeId: 101, data: {} });
+    expect(mockUnmarkRequest).not.toHaveBeenCalled();
+    expect(mockActivityFetch).toHaveBeenCalledTimes(1);
+    expect(client.getQueryState(activityKey)?.error).toBe(failure);
+    expect(client.getQueryData(activityKey)).toEqual([]);
+    expect(shows.queryByTestId('history-item-42')).toBeNull();
+    const mutations = client.getMutationCache().getAll();
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0].state.status).toBe('success');
+
+    // Retry only the failed read through the still-mounted History screen.
+    await fireEvent.press(shows.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(mockActivityFetch).toHaveBeenCalledTimes(2);
+      expect(client.getQueryState(activityKey)?.status).toBe('success');
+      expect(client.getQueryState(activityKey)?.fetchStatus).toBe('idle');
+      expect(shows.getByTestId('history-item-42')).toBeTruthy();
+      expect(shows.getByText('S1E1 — Pilot')).toBeTruthy();
+    });
+    expect(client.getQueryCache().find({ queryKey: activityKey, exact: true })).toBe(activityQuery);
+    expect(activityQuery?.getObserversCount()).toBe(1);
+    expect(client.getQueryData(activityKey)).toEqual(mockActivity());
+    expect(client.getQueryState(activityKey)?.error).toBeNull();
+    expect(shows.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(shows.queryByText('No recent activity')).toBeNull();
+    expect(detail.getByText('1/2 watched')).toBeTruthy();
+    expect(within(detail.getByTestId('episode-check-101')).getByTestId('icon-check')).toBeTruthy();
+    expect(mockMarkRequest).toHaveBeenCalledTimes(1);
+    expect(mockUnmarkRequest).not.toHaveBeenCalled();
+    expect(client.getMutationCache().getAll()).toEqual(mutations);
+    expect(mutations[0].state.status).toBe('success');
+  } finally {
+    await act(async () => screens.unmount());
+    mockActivityFetch.mockReset();
     client.clear();
   }
 });
