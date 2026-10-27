@@ -387,6 +387,83 @@ it('recovers open History after an activity reload fails without repeating the s
   }
 });
 
+it('updates already-open History after marking and unmarking a movie in title detail', async () => {
+  mockTitleIsMovie = true;
+  mockMovieWatched = false;
+  mockWatched = false;
+  jest.clearAllMocks();
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
+  client.setQueryData(activityKey, []);
+
+  const screens = await render(
+    <QueryClientProvider client={client}>
+      <View testID="mounted-my-shows"><MyShowsScreen /></View>
+      <View testID="open-title-detail"><TitleDetailScreen /></View>
+    </QueryClientProvider>,
+  );
+  try {
+    const shows = within(screens.getByTestId('mounted-my-shows'));
+    const detail = within(screens.getByTestId('open-title-detail'));
+    await fireEvent.press(shows.getByTestId('tab-history'));
+    await waitFor(() => {
+      expect(shows.getByText('No recent activity')).toBeTruthy();
+      expect(detail.getByText('Mark watched')).toBeTruthy();
+      expect(detail.getByTestId('watched-toggle')).toBeEnabled();
+    });
+    expect(shows.queryByTestId('history-item-42')).toBeNull();
+    const activityQuery = client.getQueryCache().find({ queryKey: activityKey, exact: true });
+    expect(activityQuery?.getObserversCount()).toBe(1);
+    expect(activityQuery?.isStale()).toBe(false);
+    expect(mockActivityFetch).not.toHaveBeenCalled();
+
+    await fireEvent.press(detail.getByTestId('watched-toggle'));
+    await waitFor(() => {
+      expect(mockMarkTitleRequest).toHaveBeenCalledTimes(1);
+      expect(mockActivityFetch).toHaveBeenCalledTimes(1);
+      const row = within(shows.getByTestId('history-item-42'));
+      expect(row.getByText('Example Movie')).toBeTruthy();
+      expect(row.getByText('movie')).toBeTruthy();
+      expect(shows.queryByText('No recent activity')).toBeNull();
+      // Wait for the refreshed detail flag before pressing the same toggle.
+      expect(detail.getByText('Watched')).toBeTruthy();
+      expect(detail.getByTestId('watched-toggle')).toBeEnabled();
+    });
+    expect(mockUnmarkTitleRequest).not.toHaveBeenCalled();
+    expect(client.getQueryData(activityKey)).toEqual(mockActivity());
+
+    await fireEvent.press(detail.getByTestId('watched-toggle'));
+    await waitFor(() => {
+      expect(mockUnmarkTitleRequest).toHaveBeenCalledTimes(1);
+      expect(mockActivityFetch).toHaveBeenCalledTimes(2);
+      expect(shows.queryByTestId('history-item-42')).toBeNull();
+      expect(shows.queryByText('Example Movie')).toBeNull();
+      expect(shows.getByText('No recent activity')).toBeTruthy();
+      expect(detail.getByText('Mark watched')).toBeTruthy();
+    });
+    expect(mockMarkTitleRequest).toHaveBeenCalledTimes(1);
+    expect(mockMarkRequest).not.toHaveBeenCalled();
+    expect(mockUnmarkRequest).not.toHaveBeenCalled();
+    expect(client.getQueryData(activityKey)).toEqual([]);
+    expect(client.getQueryCache().find({ queryKey: activityKey, exact: true })).toBe(activityQuery);
+    expect(activityQuery?.getObserversCount()).toBe(1);
+    expect(activityQuery?.isStale()).toBe(false);
+    // No remount, tab change, or refresh after History was first opened.
+    expect(shows.queryByTestId('shows-search-input')).toBeNull();
+  } finally {
+    await act(async () => screens.unmount());
+    client.clear();
+    mockTitleIsMovie = false;
+    mockMovieWatched = false;
+  }
+});
+
 it.each([
   { action: 'mark', initiallyWatched: false },
   { action: 'unmark', initiallyWatched: true },
