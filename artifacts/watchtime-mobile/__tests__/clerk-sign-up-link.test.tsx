@@ -310,6 +310,67 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(mockRouterReplace).toHaveBeenCalledWith('/');
   });
 
+  it('keeps an edited code after a pending check fails and returns to the requested title on retry', async () => {
+    mockUseLocalSearchParams.mockReturnValue({ returnTo: '/title/456' });
+    let rejectVerification!: (reason: Error) => void;
+    const pendingVerification = new Promise<{ error: null }>((_resolve, reject) => {
+      rejectVerification = reject;
+    });
+    const destination = '/title/456';
+    const decorated = '/title/456?verified=1';
+    const decorateUrl = jest.fn((_url: string) => decorated);
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: ['email_address'],
+      missingFields: [],
+      verifications: {
+        verifyEmailCode: jest.fn()
+          .mockImplementationOnce(() => pendingVerification)
+          .mockImplementationOnce(async () => {
+            signUp.status = 'complete';
+            return { error: null };
+          }),
+      },
+      finalize: jest.fn(async ({ navigate }: { navigate: (args: unknown) => void }) => {
+        navigate({ session: { currentTask: null }, decorateUrl });
+      }),
+    };
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('code-input'), '000000');
+    let firstCheck!: Promise<void>;
+    await act(async () => {
+      firstCheck = getPressHandler(screen, 'verify-button')();
+    });
+
+    expect(screen.getByTestId('code-input')).toBeEnabled();
+    expect(screen.getByTestId('verify-button')).toBeDisabled();
+    await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
+    expect(screen.getByTestId('code-input').props.value).toBe('123456');
+
+    await act(async () => {
+      rejectVerification(new Error('Private provider details'));
+      await firstCheck;
+    });
+
+    expect(screen.getByTestId('code-input').props.value).toBe('123456');
+    expect(screen.getByTestId('verification-error')).toHaveTextContent(
+      'Could not verify your code. Please try again.',
+    );
+    expect(screen.getByTestId('verify-button')).toBeEnabled();
+
+    await fireEvent.press(screen.getByTestId('verify-button'));
+
+    expect(signUp.verifications.verifyEmailCode.mock.calls).toEqual([
+      [{ code: '000000' }],
+      [{ code: '123456' }],
+    ]);
+    expect(signUp.finalize).toHaveBeenCalledTimes(1);
+    expect(decorateUrl).toHaveBeenCalledWith(destination);
+    expect(mockRouterReplace).toHaveBeenCalledWith(decorated);
+  });
+
   it.each([
     { params: { returnTo: '/title/456' }, destination: '/title/456', failures: 1 },
     { params: {}, destination: '/', failures: 1 },
