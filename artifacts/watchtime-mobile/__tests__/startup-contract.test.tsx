@@ -21,6 +21,11 @@ const mockQueryEnabled = {
   recommendations: [] as boolean[],
   trending: [] as boolean[],
 };
+const mockHomeQueryKeys = {
+  shows: [] as unknown[][],
+  watchlist: [] as unknown[][],
+  recommendations: [] as unknown[][],
+};
 const mockSignedInHomeQueryState = {
   shows: { current: { data: [] as any[] | undefined, dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
   watchlist: { current: { data: [] as any[] | undefined, dataUpdatedAt: 0, isError: false, isLoading: false, isRefetching: false } },
@@ -88,7 +93,9 @@ jest.mock('@/lib/app-auth', () => ({
       isLoaded: auth.isLoaded,
       isSignedIn: !!auth.isSignedIn,
       isAuthAvailable: auth.isAuthAvailable ?? true,
-      userId: auth.userId ?? (auth.isSignedIn ? 'startup-contract-user' : null),
+      userId: Object.prototype.hasOwnProperty.call(auth, 'userId')
+        ? auth.userId
+        : (auth.isSignedIn ? 'startup-contract-user' : null),
       isDemoSignedIn: false,
       activateDemo: jest.fn(),
       clearDemo: jest.fn(),
@@ -164,14 +171,17 @@ jest.mock('@workspace/api-client-react', () => ({
   setAuthTokenGetter: (...args: any[]) => mockSetAuthTokenGetter(...args),
   useGetMyShows: (_params: any, options: any) => {
     mockQueryEnabled.shows.push(options?.query?.enabled);
+    mockHomeQueryKeys.shows.push(options?.query?.queryKey);
     return { ...mockSignedInHomeQueryState.shows.current, refetch: jest.fn() };
   },
   useGetMyWatchlist: (_params: any, options: any) => {
     mockQueryEnabled.watchlist.push(options?.query?.enabled);
+    mockHomeQueryKeys.watchlist.push(options?.query?.queryKey);
     return { ...mockSignedInHomeQueryState.watchlist.current, refetch: jest.fn() };
   },
   useGetMyRecommendations: (options: any) => {
     mockQueryEnabled.recommendations.push(options?.query?.enabled);
+    mockHomeQueryKeys.recommendations.push(options?.query?.queryKey);
     return { ...mockSignedInHomeQueryState.recommendations.current, refetch: jest.fn() };
   },
   useGetTrendingTitles: (_params: any, options: any) => {
@@ -279,6 +289,9 @@ describe('mobile startup contracts', () => {
     mockQueryEnabled.watchlist.length = 0;
     mockQueryEnabled.recommendations.length = 0;
     mockQueryEnabled.trending.length = 0;
+    mockHomeQueryKeys.shows.length = 0;
+    mockHomeQueryKeys.watchlist.length = 0;
+    mockHomeQueryKeys.recommendations.length = 0;
     mockSignedInHomeQueryState.shows.current = {
       data: [],
       dataUpdatedAt: 0,
@@ -1007,7 +1020,7 @@ describe('mobile startup contracts', () => {
     });
   });
 
-  it('keeps personal home content hidden when Clerk rechecks auth and resolves signed out', async () => {
+  it('restores the confirmed account feed after Clerk rechecks auth and signs out in place', async () => {
     mockUseAuth.mockReturnValue({
       getToken: jest.fn(),
       isLoaded: true,
@@ -1106,6 +1119,102 @@ describe('mobile startup contracts', () => {
     expect(mockQueryEnabled.watchlist).toEqual([false, true]);
     expect(mockQueryEnabled.recommendations).toEqual([false, true]);
     expect(mockQueryEnabled.trending).toEqual([true]);
+
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: false,
+      isSignedIn: true,
+      userId: 'reactivated-home-user',
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByTestId('loading')).toBeTruthy();
+    expect(screen.queryByText('Recheck tracked show')).toBeNull();
+    expect(screen.queryByText('Recheck watchlist title')).toBeNull();
+    expect(screen.queryByText('Recheck recommendation')).toBeNull();
+    expect(screen.queryByText('Public browse after recheck')).toBeNull();
+    expect(mockQueryEnabled.shows).toEqual([false, true]);
+    expect(mockQueryEnabled.watchlist).toEqual([false, true]);
+    expect(mockQueryEnabled.recommendations).toEqual([false, true]);
+
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: true,
+      userId: null,
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByTestId('loading')).toBeTruthy();
+    expect(screen.queryByText('Recheck tracked show')).toBeNull();
+    expect(screen.queryByText('Public browse after recheck')).toBeNull();
+    expect(mockQueryEnabled.shows).toEqual([false, true]);
+    expect(mockQueryEnabled.watchlist).toEqual([false, true]);
+    expect(mockQueryEnabled.recommendations).toEqual([false, true]);
+
+    mockSignedInHomeQueryState.shows.current = {
+      data: [{
+        title: { id: 925, name: 'Reactivated account tracked show' },
+        nextEpisode: {
+          id: 9251,
+          seasonNumber: 1,
+          episodeNumber: 2,
+          name: 'Reactivated account next episode',
+        },
+        watchedEpisodes: 1,
+        totalEpisodes: 8,
+      }],
+      dataUpdatedAt: 789,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.watchlist.current = {
+      data: [{ id: 926, name: 'Reactivated account watchlist title' }],
+      dataUpdatedAt: 789,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.recommendations.current = {
+      data: [{
+        reason: 'Because you watched Reactivated account tracked show',
+        titles: [{ id: 927, name: 'Reactivated account recommendation' }],
+      }],
+      dataUpdatedAt: 789,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'reactivated-home-user',
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText('Reactivated account tracked show')).toBeTruthy();
+    expect(screen.getByText(/Reactivated account next episode/)).toBeTruthy();
+    expect(screen.getByText('Reactivated account watchlist title')).toBeTruthy();
+    expect(screen.getByText('Reactivated account recommendation')).toBeTruthy();
+    expect(screen.getByText('Up Next')).toBeTruthy();
+    expect(screen.getByText('Your Watchlist')).toBeTruthy();
+    expect(screen.queryByText('Recheck tracked show')).toBeNull();
+    expect(screen.queryByText('Public browse after recheck')).toBeNull();
+    expect(mockQueryEnabled.shows.at(-1)).toBe(true);
+    expect(mockQueryEnabled.watchlist.at(-1)).toBe(true);
+    expect(mockQueryEnabled.recommendations.at(-1)).toBe(true);
+    expect(mockHomeQueryKeys.shows.at(-1)).toContain('reactivated-home-user');
+    expect(mockHomeQueryKeys.watchlist.at(-1)).toContain('reactivated-home-user');
+    expect(mockHomeQueryKeys.recommendations.at(-1)).toContain('reactivated-home-user');
 
     await act(async () => {
       screen.unmount();
