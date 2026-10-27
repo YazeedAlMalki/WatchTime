@@ -18,6 +18,7 @@ import {
   catalogSyncRunsTable,
   catalogSyncItemsTable,
   titleAliasesTable,
+  aliasReviewSnapshotsTable,
   safetySyncRunsTable,
   type SafetySyncRunResult,
 } from "@workspace/db";
@@ -869,9 +870,8 @@ const ALIAS_REVIEW_SNAPSHOT_MAX_IDS = 10_000;
 type AliasReviewSnapshot = {
   filterKey: string;
   aliasIds: number[];
-  createdAt: number;
+  expiresAt: Date;
 };
-const aliasReviewSnapshots = new Map<string, AliasReviewSnapshot>();
 
 function createAliasReviewSnapshotCursor(
   snapshotId: string,
@@ -883,19 +883,23 @@ function createAliasReviewSnapshotCursor(
     : `${snapshotId}:${offset}:${previousOffset}`;
 }
 
-function makeRoomForAliasReviewSnapshot() {
-  while (aliasReviewSnapshots.size >= ALIAS_REVIEW_SNAPSHOT_LIMIT) {
-    const oldestId = aliasReviewSnapshots.keys().next().value;
-    if (oldestId === undefined) return;
-    aliasReviewSnapshots.delete(oldestId);
-  }
+async function pruneAliasReviewSnapshots(now = new Date()) {
+  await db.delete(aliasReviewSnapshotsTable)
+    .where(lte(aliasReviewSnapshotsTable.expiresAt, now));
 }
 
-function pruneAliasReviewSnapshots(now = Date.now()) {
-  for (const [id, snapshot] of aliasReviewSnapshots) {
-    if (now - snapshot.createdAt >= ALIAS_REVIEW_SNAPSHOT_TTL_MS) {
-      aliasReviewSnapshots.delete(id);
-    }
+async function makeRoomForAliasReviewSnapshot(now = new Date()) {
+  const activeSnapshots = await db.select({ id: aliasReviewSnapshotsTable.id })
+    .from(aliasReviewSnapshotsTable)
+    .where(gt(aliasReviewSnapshotsTable.expiresAt, now))
+    .orderBy(asc(aliasReviewSnapshotsTable.expiresAt));
+  const excess = activeSnapshots.length - ALIAS_REVIEW_SNAPSHOT_LIMIT + 1;
+  if (excess > 0) {
+    await db.delete(aliasReviewSnapshotsTable)
+      .where(inArray(
+        aliasReviewSnapshotsTable.id,
+        activeSnapshots.slice(0, excess).map(({ id }) => id),
+      ));
   }
 }
 
@@ -1172,9 +1176,20 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       res.status(400).json({ error: "Invalid alias snapshot cursor" });
       return;
     }
-    pruneAliasReviewSnapshots();
+    const now = new Date();
+    await pruneAliasReviewSnapshots(now);
     const snapshotId = match[1];
-    const snapshot = aliasReviewSnapshots.get(snapshotId);
+    const [snapshotRow] = await db.select({
+      filterKey: aliasReviewSnapshotsTable.filterKey,
+      aliasIds: aliasReviewSnapshotsTable.aliasIds,
+      expiresAt: aliasReviewSnapshotsTable.expiresAt,
+    }).from(aliasReviewSnapshotsTable)
+      .where(and(
+        eq(aliasReviewSnapshotsTable.id, snapshotId),
+        gt(aliasReviewSnapshotsTable.expiresAt, now),
+      ))
+      .limit(1);
+    const snapshot: AliasReviewSnapshot | undefined = snapshotRow;
     if (!snapshot) {
       res.status(409).json({ error: "This alias review snapshot expired. Restart the search." });
       return;
@@ -1219,7 +1234,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
         )
       : null;
   } else if (snapshotMode) {
-    pruneAliasReviewSnapshots();
+    await pruneAliasReviewSnapshots();
     const orderedAliases = await db.select({ id: titleAliasesTable.id })
       .from(titleAliasesTable)
       .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
@@ -1237,13 +1252,19 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       return;
     }
     const snapshotId = randomUUID();
-    makeRoomForAliasReviewSnapshot();
+    const now = new Date();
+    await makeRoomForAliasReviewSnapshot(now);
     const snapshot = {
       filterKey,
       aliasIds: orderedAliases.map((row) => row.id),
-      createdAt: Date.now(),
+      expiresAt: new Date(now.getTime() + ALIAS_REVIEW_SNAPSHOT_TTL_MS),
     };
-    aliasReviewSnapshots.set(snapshotId, snapshot);
+    await db.insert(aliasReviewSnapshotsTable).values({
+      id: snapshotId,
+      filterKey: snapshot.filterKey,
+      aliasIds: snapshot.aliasIds,
+      expiresAt: snapshot.expiresAt,
+    });
     const nextOffset = Math.min(limit, snapshot.aliasIds.length);
     const windowIds = snapshot.aliasIds.slice(0, nextOffset);
     const liveRows = windowIds.length

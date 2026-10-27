@@ -50,6 +50,13 @@
       "when": 1793039821213,
       "tag": "0006_persist_wikidata_identity_conflicts",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793040000000,
+      "tag": "0007_persist_alias_review_snapshots",
+      "breakpoints": true
     }
   ]
 }

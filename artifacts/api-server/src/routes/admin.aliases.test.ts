@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { get as httpGet, request as httpRequest, ServerResponse } from "node:http";
 import request from "supertest";
+import express from "express";
 import {
+  aliasReviewSnapshotsTable,
   db,
   pool,
   safetyRecordsTable,
@@ -9,6 +11,7 @@ import {
   titlesTable,
   usersTable,
 } from "@workspace/db";
+import * as workspaceDb from "@workspace/db";
 import { eq, inArray, lt, sql } from "drizzle-orm";
 import { runCatalogSync, type SourceItem } from "../seed-real";
 import {
@@ -963,23 +966,90 @@ describe("admin title aliases", () => {
       .query({ q: "Shared Local Title", limit: 1 })
       .expect(200);
     expect(firstPage.body.nextCursor).toBeTruthy();
+    const snapshotId = firstPage.body.nextCursor.split(":")[0];
+    await db.update(aliasReviewSnapshotsTable)
+      .set({ expiresAt: new Date(Date.now() - 1) })
+      .where(eq(aliasReviewSnapshotsTable.id, snapshotId));
 
-    const now = Date.now();
-    const dateNow = vi.spyOn(Date, "now").mockReturnValue(now + 15 * 60 * 1000);
+    const expiredPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Shared Local Title",
+        limit: 1,
+        cursor: firstPage.body.nextCursor,
+      });
+    expect(expiredPage.status).toBe(409);
+    expect(expiredPage.body).toEqual({
+      error: "This alias review snapshot expired. Restart the search.",
+    });
+    expect(await db.select().from(aliasReviewSnapshotsTable)
+      .where(eq(aliasReviewSnapshotsTable.id, snapshotId))).toHaveLength(0);
+  });
+
+  it("resumes a saved review after the admin route is reloaded and cleans up expired snapshots", async () => {
+    const aliases = ["Restart Snapshot Alpha", "Restart Snapshot Bravo", "Restart Snapshot Charlie"];
+    const rows = await db.insert(titleAliasesTable).values(
+      aliases.map((alias) => ({
+        titleId: createdTitleIds[0],
+        alias,
+        normalizedAlias: alias.toLowerCase().replaceAll(" ", ""),
+        sourceName: "Restart snapshot test",
+        isEditorial: true,
+      })),
+    ).returning({ id: titleAliasesTable.id });
+
+    const firstPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Restart Snapshot", ownership: "editorial", limit: 1 })
+      .expect(200);
+    const snapshotId = firstPage.body.nextCursor.split(":")[0];
+    const [savedSnapshot] = await db.select().from(aliasReviewSnapshotsTable)
+      .where(eq(aliasReviewSnapshotsTable.id, snapshotId));
+    expect(savedSnapshot).toMatchObject({
+      filterKey: JSON.stringify(["Restart Snapshot", "editorial"]),
+      aliasIds: rows.map(({ id }) => id),
+    });
+    expect(savedSnapshot.expiresAt.getTime()).toBeGreaterThan(Date.now());
+
+    vi.resetModules();
+    vi.doMock("@workspace/db", () => workspaceDb);
     try {
-      const expiredPage = await request(app)
+      const restartedRouter = (await import("./admin")).default;
+      const restartedApp = express();
+      restartedApp.use("/api/admin", restartedRouter);
+
+      const secondPage = await request(restartedApp)
         .get("/api/admin/content-aliases")
         .query({
-          q: "Shared Local Title",
+          q: "Restart Snapshot",
+          ownership: "editorial",
           limit: 1,
           cursor: firstPage.body.nextCursor,
+        })
+        .expect(200);
+      expect(secondPage.body.items.map((alias: { id: number }) => alias.id))
+        .toEqual([rows[1].id]);
+
+      await db.update(aliasReviewSnapshotsTable)
+        .set({ expiresAt: new Date(Date.now() - 1) })
+        .where(eq(aliasReviewSnapshotsTable.id, snapshotId));
+      await request(restartedApp)
+        .get("/api/admin/content-aliases")
+        .query({
+          q: "Restart Snapshot",
+          ownership: "editorial",
+          limit: 1,
+          cursor: firstPage.body.nextCursor,
+        })
+        .expect(409)
+        .expect(({ body }) => {
+          expect(body.error).toBe("This alias review snapshot expired. Restart the search.");
         });
-      expect(expiredPage.status).toBe(409);
-      expect(expiredPage.body).toEqual({
-        error: "This alias review snapshot expired. Restart the search.",
-      });
+      expect(await db.select().from(aliasReviewSnapshotsTable)
+        .where(eq(aliasReviewSnapshotsTable.id, snapshotId))).toHaveLength(0);
     } finally {
-      dateNow.mockRestore();
+      vi.doUnmock("@workspace/db");
+      vi.resetModules();
     }
   });
 

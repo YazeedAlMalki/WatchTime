@@ -72,6 +72,15 @@ export const titleAliasesTable = pgTable("title_aliases", {
   index("title_aliases_title_idx").on(table.titleId),
 ]);
 
+export const aliasReviewSnapshotsTable = pgTable("alias_review_snapshots", {
+  id: text("id").primaryKey(),
+  filterKey: text("filter_key").notNull(),
+  aliasIds: integer("alias_ids").array().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => [
+  index("alias_review_snapshots_expires_at_idx").on(table.expiresAt),
+]);
+
 export const seasonsTable = pgTable("seasons", {
   id: serial("id").primaryKey(),
   titleId: integer("title_id")
