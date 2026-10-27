@@ -6,6 +6,28 @@ import { useGetSeason } from '@workspace/api-client-react';
 
 const mockRouter = { push: jest.fn(), back: jest.fn() };
 const mockWatched = new Set<number>();
+let mockUserId = 'checkmarks-user';
+const mockAccountWatched = new Map<string, Set<number>>([
+  ['checkmarks-user', mockWatched],
+]);
+const mockWatchedForAccount = (userId = mockUserId) => {
+  const watched = mockAccountWatched.get(userId);
+  if (!watched) throw new Error(`Missing watched fixture for ${userId}`);
+  return watched;
+};
+const mockActivityForAccount = (userId = mockUserId) => {
+  const watched = mockWatchedForAccount(userId);
+  return [
+    ...(watched.has(201) ? [{
+      titleId: 42, titleName: 'Example Show', posterUrl: null, kind: 'episode',
+      episodeLabel: 'S2E1', watchedAt: '2026-10-05T00:00:00.000Z',
+    }] : []),
+    ...(watched.has(301) ? [{
+      titleId: 44, titleName: 'Other Show', posterUrl: null, kind: 'episode',
+      episodeLabel: 'S1E1', watchedAt: '2026-10-04T00:00:00.000Z',
+    }] : []),
+  ];
+};
 const mockSeasons = [
   { seasonNumber: 1, name: 'Season 1', episodeCount: 2 },
   { seasonNumber: 2, name: 'Season 2', episodeCount: 2 },
@@ -30,14 +52,14 @@ const mockTitleData = () => ({
   seasons: mockSeasons.map((season) => ({
     ...season,
     watchedCount: mockEpisodes.filter(
-      (ep) => ep.seasonNumber === season.seasonNumber && mockWatched.has(ep.id),
+      (ep) => ep.seasonNumber === season.seasonNumber && mockWatchedForAccount().has(ep.id),
     ).length,
   })),
 });
 const mockSeasonData = (season: number) => ({
   episodes: mockEpisodes
     .filter((ep) => ep.seasonNumber === season)
-    .map((ep) => ({ ...ep, watched: mockWatched.has(ep.id) })),
+    .map((ep) => ({ ...ep, watched: mockWatchedForAccount().has(ep.id) })),
 });
 
 jest.mock('expo-router', () => ({
@@ -47,7 +69,7 @@ jest.mock('expo-router', () => ({
   Link: ({ children }: { children: React.ReactNode }) => children,
 }));
 jest.mock('@/lib/app-auth', () => ({
-  useAppAuth: () => ({ isLoaded: true, isSignedIn: true, userId: 'checkmarks-user' }),
+  useAppAuth: () => ({ isLoaded: true, isSignedIn: true, userId: mockUserId }),
 }));
 jest.mock('expo-image', () => ({ Image: () => null }));
 jest.mock('react-native-keyboard-controller', () => {
@@ -103,6 +125,7 @@ jest.mock('@workspace/api-client-react', () => {
     getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
     getGetTitleSafetyQueryKey: () => ['/api/safety'],
     getMyShows: jest.fn(async (params?: { q?: string; status?: string }) => {
+      const watched = mockWatchedForAccount();
       if (params?.q?.toLowerCase() === 'local title') {
         return [{
           title: { id: 43, name: 'Different Canonical Name' },
@@ -112,19 +135,19 @@ jest.mock('@workspace/api-client-react', () => {
           watchedEpisodes: 1,
         }];
       }
-      const nextEpisode = mockEpisodes.find((episode) => !mockWatched.has(episode.id)) ?? null;
+      const nextEpisode = mockEpisodes.find((episode) => !watched.has(episode.id)) ?? null;
       const shows = [{
         title: { id: 42, name: 'Example Show' },
         matchedAlternateTitle: null,
         nextEpisode: nextEpisode ? { ...nextEpisode } : null,
         totalEpisodes: 4,
-        watchedEpisodes: mockEpisodes.filter((ep) => mockWatched.has(ep.id)).length,
+        watchedEpisodes: mockEpisodes.filter((ep) => watched.has(ep.id)).length,
       }, {
         title: { id: 44, name: 'Other Show' },
         matchedAlternateTitle: null,
-        nextEpisode: mockOtherEpisodes.find((ep) => !mockWatched.has(ep.id)) ?? null,
+        nextEpisode: mockOtherEpisodes.find((ep) => !watched.has(ep.id)) ?? null,
         totalEpisodes: mockOtherEpisodes.length,
-        watchedEpisodes: mockOtherEpisodes.filter((ep) => mockWatched.has(ep.id)).length,
+        watchedEpisodes: mockOtherEpisodes.filter((ep) => watched.has(ep.id)).length,
       }];
       return shows.filter((show) => {
         if (params?.q && !show.title.name.toLowerCase().includes(params.q.toLowerCase())) return false;
@@ -141,15 +164,8 @@ jest.mock('@workspace/api-client-react', () => {
     } = {}) => useQuery({
       queryKey: options.query?.queryKey ?? ['/api/me/activity'],
       queryFn: async () => {
-        mockRecentActivityFetch();
-        return mockWatched.has(201) ? [{
-          titleId: 42,
-          titleName: 'Example Show',
-          posterUrl: null,
-          kind: 'episode',
-          episodeLabel: 'S2E1',
-          watchedAt: '2026-10-05T00:00:00.000Z',
-        }] : [];
+        mockRecentActivityFetch(mockUserId);
+        return mockActivityForAccount();
       },
       enabled: options.query?.enabled ?? true,
     }),
@@ -168,6 +184,9 @@ jest.mock('@workspace/api-client-react', () => {
     useMarkEpisodeWatched: (options: { mutation: { onSuccess: () => void } }) =>
       useMutation({
         mutationFn: async ({ episodeId, data }: { episodeId: number; data: { includePrevious?: boolean } }) => {
+          // A request belongs to the account that sent it, not the identity
+          // that happens to be active when its deferred response finishes.
+          const watched = mockWatchedForAccount();
           await mockMarkRequest({ episodeId, data });
           if (data.includePrevious) {
             const episodes = mockEpisodes.some((ep) => ep.id === episodeId)
@@ -176,9 +195,9 @@ jest.mock('@workspace/api-client-react', () => {
             episodes
               .filter((ep) => ep.seasonNumber < target.seasonNumber ||
                 (ep.seasonNumber === target.seasonNumber && ep.episodeNumber <= target.episodeNumber))
-              .forEach((ep) => mockWatched.add(ep.id));
+              .forEach((ep) => watched.add(ep.id));
           } else {
-            mockWatched.add(episodeId);
+            watched.add(episodeId);
           }
           return { ok: true };
         },
@@ -252,7 +271,7 @@ it('shows the matching alternate title beneath the canonical show title', async 
   expect(mockRouter.push).toHaveBeenCalledWith('/title/43');
 });
 
-it('isolates a failed Up Next mark from another show and refreshes caches after retry', async () => {
+it('keeps episode marks and History isolated across shows, tabs, and accounts', async () => {
   mockWatched.clear();
   mockRouter.push.mockClear();
   mockWatched.add(101);
@@ -283,6 +302,7 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
   await expectEpisodeScopedFailures(shows, client);
   await checkPendingMarksAfterOpeningHistory(shows, client);
   await checkPendingMarksAfterLeavingScreen(shows, client);
+  await checkPendingMarksAfterAccountSwitch(shows, client);
   // Restore this journey's baseline without remounting the Expo screen.
   mockWatched.clear();
   mockWatched.add(101);
@@ -566,6 +586,148 @@ it('isolates a failed Up Next mark from another show and refreshes caches after 
     client.clear();
   }
 });
+
+async function checkPendingMarksAfterAccountSwitch(
+  shows: Awaited<ReturnType<typeof render>>,
+  client: QueryClient,
+) {
+  const api = require('@workspace/api-client-react');
+  const originalUserId = mockUserId;
+  const firstAccount = 'pending-mark-account';
+  const secondAccount = 'unrelated-history-account';
+  const activityKey = (userId: string) => [
+    ...api.getGetMyRecentActivityQueryKey(), 'account', userId,
+  ];
+  const showsKey = (userId: string) => [
+    ...api.getGetMyShowsQueryKey(), 'account', userId, 'infinite',
+    { q: undefined, status: undefined },
+  ];
+  const switchAccount = async (userId: string) => {
+    mockUserId = userId;
+    await shows.rerender(
+      <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
+    );
+  };
+  const heldRequests: ReturnType<typeof deferredMarkResponse>[] = [];
+  try {
+    // Exercise both outcomes in one mounted screen and one real QueryClient.
+    // The same title exists in both accounts with deliberately different progress.
+    for (const outcome of ['error', 'success'] as const) {
+      mockAccountWatched.set(firstAccount, new Set([101, 102]));
+      mockAccountWatched.set(secondAccount, new Set([301]));
+      for (const userId of [firstAccount, secondAccount]) {
+        mockUserId = userId;
+        client.setQueryData(showsKey(userId), {
+          pages: [await api.getMyShows({})], pageParams: [undefined],
+        });
+        client.setQueryData(activityKey(userId), mockActivityForAccount(userId));
+        client.setQueryData([
+          ...api.getGetMyInProgressShowsQueryKey(), 'account', userId, 'infinite',
+        ], { pages: [[]], pageParams: [undefined] });
+        client.setQueryData([
+          ...api.getGetMyMoviesQueryKey(), 'account', userId, 'infinite',
+        ], { pages: [[]], pageParams: [undefined] });
+      }
+      await switchAccount(firstAccount);
+      await fireEvent.press(shows.getByTestId('tab-shows'));
+      await waitFor(() => {
+        expect(shows.getByTestId('mark-watched-201')).toBeEnabled();
+        expect(within(shows.getByTestId('show-row-42')).getByText('2 / 4 episodes')).toBeTruthy();
+      });
+      const secondShows = client.getQueryData(showsKey(secondAccount));
+      const secondActivity = client.getQueryData(activityKey(secondAccount));
+      for (const userId of [firstAccount, secondAccount]) {
+        for (const key of [showsKey(userId), activityKey(userId)]) {
+          const query = client.getQueryCache().find({ queryKey: key, exact: true })!;
+          expect(query.options).toEqual(expect.objectContaining({ staleTime: Infinity }));
+          expect(query.isStale()).toBe(false);
+        }
+      }
+
+      const held = deferredMarkResponse();
+      heldRequests.push(held);
+      mockMarkRequest.mockImplementationOnce(() => held.promise);
+      await fireEvent.press(shows.getByTestId('mark-watched-201'));
+      await waitFor(() => expect(shows.getByTestId('mark-watched-201')).toBeDisabled());
+      const pendingMutation = client.getMutationCache().getAll().find(
+        (mutation) => mutation.state.status === 'pending',
+      )!;
+      expect(pendingMutation.state.variables).toEqual({
+        episodeId: 201, data: { includePrevious: true },
+      });
+
+      await switchAccount(secondAccount);
+      const expectSecondProgress = () => {
+        const row = within(shows.getByTestId('show-row-42'));
+        expect(row.getByText('0 / 4 episodes')).toBeTruthy();
+        expect(row.getByText('S1 E1 · Pilot')).toBeTruthy();
+        expect(row.queryByTestId('mark-watched-201')).toBeNull();
+        expect(row.queryByTestId('mark-watched-202')).toBeNull();
+        expect(within(shows.getByTestId('show-row-44')).getByText('1 / 2 episodes')).toBeTruthy();
+        expect(shows.queryByRole('alert')).toBeNull();
+        expect(shows.queryByText('Retry')).toBeNull();
+      };
+      await waitFor(expectSecondProgress);
+      await fireEvent.press(shows.getByTestId('tab-history'));
+      const expectSecondHistory = () => {
+        expect(shows.getByTestId('history-item-44')).toBeTruthy();
+        expect(within(shows.getByTestId('history-item-44')).getByText('S1E1')).toBeTruthy();
+        expect(shows.queryByTestId('history-item-42')).toBeNull();
+        expect(shows.queryByText('S2E1')).toBeNull();
+      };
+      await waitFor(expectSecondHistory);
+      expect(pendingMutation.state.status).toBe('pending');
+      expect(client.getQueryData(showsKey(secondAccount))).toEqual(secondShows);
+      expect(client.getQueryData(activityKey(secondAccount))).toEqual(secondActivity);
+
+      await act(async () => {
+        if (outcome === 'success') held.resolve({ ok: true });
+        else held.reject(new Error('Former account mark failed'));
+      });
+      await waitFor(() => {
+        expect(pendingMutation.state.status).toBe(outcome);
+        expect(client.isFetching()).toBe(0);
+      });
+      expectSecondHistory();
+      expect(client.getQueryData(showsKey(secondAccount))).toEqual(secondShows);
+      expect(client.getQueryData(activityKey(secondAccount))).toEqual(secondActivity);
+      expect([...mockWatchedForAccount(secondAccount)]).toEqual([301]);
+      expect([...mockWatchedForAccount(firstAccount)]).toEqual(
+        outcome === 'success' ? [101, 102, 201] : [101, 102],
+      );
+      await fireEvent.press(shows.getByTestId('tab-shows'));
+      await waitFor(expectSecondProgress);
+
+      await switchAccount(firstAccount);
+      await waitFor(() => {
+        const row = within(shows.getByTestId('show-row-42'));
+        expect(row.getByText(outcome === 'success' ? '3 / 4 episodes' : '2 / 4 episodes')).toBeTruthy();
+        expect(row.getByTestId(outcome === 'success' ? 'mark-watched-202' : 'mark-watched-201'))
+          .toBeEnabled();
+        expect(row.getByText(outcome === 'success' ? 'S2 E2 · Fourth' : 'S2 E1 · Third')).toBeTruthy();
+      });
+      await fireEvent.press(shows.getByTestId('tab-history'));
+      await waitFor(() => {
+        expect(shows.queryByTestId('history-item-44')).toBeNull();
+        if (outcome === 'success') {
+          expect(within(shows.getByTestId('history-item-42')).getByText('S2E1')).toBeTruthy();
+        } else {
+          expect(shows.queryByTestId('history-item-42')).toBeNull();
+        }
+        expect(client.getQueryData(activityKey(firstAccount))).toEqual(mockActivityForAccount(firstAccount));
+      });
+    }
+  } finally {
+    // Release every deferred request even if an assertion failed mid-switch.
+    await act(async () => {
+      heldRequests.forEach((held) => held.resolve({ ok: true }));
+    });
+    await switchAccount(originalUserId);
+    await fireEvent.press(shows.getByTestId('tab-shows'));
+    mockAccountWatched.delete(firstAccount);
+    mockAccountWatched.delete(secondAccount);
+  }
+}
 
 async function checkPendingMarksAfterLeavingScreen(
   shows: Awaited<ReturnType<typeof render>>,
