@@ -2843,6 +2843,115 @@ describe("admin alternate-title review", () => {
       }
     },
   );
+  it("keeps stale correction details and retry available when a refresh retry times out", async () => {
+    const currentCorrection: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Newer Admin Correction",
+      language: "de",
+      sourceName: "Current editorial source",
+      sourceUrl: "https://example.test/newer-correction",
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: currentCorrection,
+          },
+        });
+      },
+    );
+    mocks.deleteMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.(
+          new Error(
+            "This alternate title changed while you were reviewing it. Refresh the list and review the newer correction before removing it.",
+          ),
+        );
+      },
+    );
+    render();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale draft correction",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    render([currentCorrection]);
+    setRefreshFailures(["aliases"]);
+    confirmSpy.mockReturnValue(true);
+    act(() => button(container, "Remove").click());
+    await flushEffects();
+
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain(currentCorrection.alias);
+    expect(container.textContent).toContain(currentCorrection.titleName);
+    expect(container.textContent).toContain(currentCorrection.language);
+    expect(container.textContent).toContain(currentCorrection.sourceName);
+    expect(button(container, "Retry refresh").disabled).toBe(false);
+
+    let resolveRetryRefresh!: () => void;
+    const retryRefresh = new Promise<void>((resolve) => {
+      resolveRetryRefresh = resolve;
+    });
+    mocks.queryClient.invalidateQueries.mockClear();
+    mocks.queryClient.invalidateQueries.mockReturnValue(retryRefresh);
+
+    vi.useFakeTimers();
+    act(() => button(container, "Retry refresh").click());
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+
+    expect(container.textContent).toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).toContain(
+      "A previous refresh is still pending.",
+    );
+    const conflictNotice = Array.from(
+      container.querySelectorAll('[role="alert"]'),
+    ).find((alert) =>
+      alert.textContent?.includes("A newer correction is already saved"),
+    );
+    expect(conflictNotice?.textContent).toContain(currentCorrection.alias);
+    expect(conflictNotice?.textContent).toContain(currentCorrection.titleName);
+    expect(conflictNotice?.textContent).toContain(currentCorrection.language);
+    expect(conflictNotice?.textContent).toContain(currentCorrection.sourceName);
+    expect(conflictNotice?.textContent).toContain("Current version");
+    expect(
+      conflictNotice?.querySelector(
+        `a[href="${currentCorrection.sourceUrl}"]`,
+      )?.textContent,
+    ).toBe(currentCorrection.sourceName);
+    expect(button(container, "Retry refresh").disabled).toBe(false);
+
+    await act(async () => {
+      resolveRetryRefresh();
+      await retryRefresh;
+      await Promise.resolve();
+    });
+  });
 
   it("keeps a stale-edit warning when removal fails and only collision refresh fails", async () => {
     const currentCorrection: AdminContentAlias = {
