@@ -16,6 +16,13 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     useGetMe: () => ({ data: { isAdmin: true }, isLoading: false }),
     useGetAdminDashboard: () => ({ data: undefined }),
     useListAdminIntegrations: () => ({ data: [], isLoading: false }),
+    useListAdminWikidataIdentityConflicts: () => ({
+      data: { items: [], total: 0, limit: 25, offset: 0 },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      refetch: vi.fn(),
+    }),
     useSearchAdminContent: (params: Parameters<typeof api.useSearchAdminContent>[0]) =>
       useQuery({
         queryKey: api.getSearchAdminContentQueryKey(params),
@@ -114,6 +121,79 @@ it("removes a repaired last result immediately and returns to the previous revie
     expect(client.getQueryData(getSearchAdminContentQueryKey(params))).toEqual([]);
     expect(mocks.refreshMutate).toHaveBeenCalledWith(
       { id: 999, data: { provider: "wikidata" } },
+      expect.any(Object),
+    );
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.refreshMutate.mockReset();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("keeps a failed Wikidata refresh visible with its region and allows another attempt", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&malformedRefreshTimestamp=true&offset=0",
+  );
+  mocks.refreshMutate
+    .mockImplementationOnce(
+      (_variables: unknown, options: { onSuccess?: (result: unknown) => void }) => {
+        options.onSuccess?.({
+          ok: false,
+          titleId: 1001,
+          status: "provider_unavailable",
+          error: "Wikidata is unavailable.",
+        });
+      },
+    )
+    .mockImplementationOnce(
+      (_variables: unknown, options: { onSuccess?: (result: unknown) => void }) => {
+        options.onSuccess?.({ ok: true, titleId: 1001 });
+      },
+    );
+
+  const params = {
+    region: "US" as const,
+    malformedRefreshTimestamp: true,
+    offset: 0,
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(
+    getSearchAdminContentQueryKey(params),
+    [malformedRating(1001, "Unavailable provider title")],
+  );
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Unavailable provider title", { exact: true })).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Wikidata", exact: true }));
+
+    await expect.element(
+      page.getByTestId("status-rating-refresh-failure-1001-US"),
+    ).toHaveTextContent("Refresh failed for US: Wikidata is unavailable.");
+    await expect.element(page.getByText("Unavailable provider title", { exact: true })).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Wikidata", exact: true }));
+
+    await expect.element(page.getByText("Unavailable provider title", { exact: true }))
+      .not.toBeInTheDocument();
+    expect(mocks.refreshMutate).toHaveBeenCalledTimes(2);
+    expect(mocks.refreshMutate).toHaveBeenNthCalledWith(
+      1,
+      { id: 1001, data: { provider: "wikidata" } },
+      expect.any(Object),
+    );
+    expect(mocks.refreshMutate).toHaveBeenNthCalledWith(
+      2,
+      { id: 1001, data: { provider: "wikidata" } },
       expect.any(Object),
     );
   } finally {

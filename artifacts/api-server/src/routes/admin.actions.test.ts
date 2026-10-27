@@ -141,6 +141,54 @@ describe("restored admin actions", () => {
     await request(app).post("/api/admin/content/0/refresh").expect(400);
   });
 
+  it("keeps a malformed rating in its regional review when the provider is unavailable", async () => {
+    const [record] = await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      status: "available",
+      isCommunity: false,
+      url: "https://www.wikidata.org/wiki/Qadmin-actions-unavailable",
+      updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+      items: [{ category: "MPAA", label: "PG-13", score: null, maxScore: null, description: null }],
+    }).returning({ id: safetyRecordsTable.id });
+    await db.update(safetyRecordsTable)
+      .set({ updatedAt: sql`'infinity'::timestamp` })
+      .where(eq(safetyRecordsTable.id, record.id));
+    refreshWikidataTitle.mockResolvedValueOnce({
+      ok: false,
+      titleId,
+      titleName: "Admin actions test title",
+      status: "provider_unavailable",
+      error: "Wikidata is unavailable.",
+    });
+
+    await request(app).post(`/api/admin/content/${titleId}/refresh`)
+      .send({ provider: "wikidata" })
+      .expect(200, {
+        ok: false,
+        titleId,
+        titleName: "Admin actions test title",
+        status: "provider_unavailable",
+        error: "Wikidata is unavailable.",
+      });
+
+    const review = await request(app)
+      .get(`/api/admin/content?q=Admin+actions+test+title&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata`)
+      .expect(200);
+    expect(review.body).toEqual([
+      expect.objectContaining({
+        id: titleId,
+        name: "Admin actions test title",
+        selectedRating: expect.objectContaining({
+          region: "US",
+          refreshTimestampMalformed: true,
+          sourceName: "Wikidata",
+        }),
+      }),
+    ]);
+    expect(refreshWikidataTitle).toHaveBeenCalledWith(titleId);
+  });
+
   it("paginates reports after applying status filters with a stable order", async () => {
     const createdAt = new Date("2099-01-01T00:00:00.000Z");
     const inserted = await db.insert(reportsTable).values([

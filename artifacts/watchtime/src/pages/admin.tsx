@@ -1338,6 +1338,7 @@ function ContentTab({
   const [showBatchHistory, setShowBatchHistory] = useState(false);
   const [showReviewedIdentityConflicts, setShowReviewedIdentityConflicts] = useState(false);
   const [identityConflictOffset, setIdentityConflictOffset] = useState(0);
+  const [refreshErrors, setRefreshErrors] = useState<Record<string, string>>({});
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 400);
@@ -1459,7 +1460,14 @@ function ContentTab({
     id: number,
     name: string,
     provider: "does_the_dog_die" | "wikidata" = "does_the_dog_die",
-  ) =>
+    reviewKey = `${id}-${ratingRegion}`,
+  ) => {
+    setRefreshErrors((errors) => {
+      if (!errors[reviewKey]) return errors;
+      const next = { ...errors };
+      delete next[reviewKey];
+      return next;
+    });
     refresh.mutate(
       { id, data: { provider } },
       {
@@ -1502,19 +1510,24 @@ function ContentTab({
           if (result.ok) {
             toast({ title: `Refreshed ${name}` });
           } else {
+            const message = (result as { error?: string }).error ??
+              "The provider did not complete the refresh.";
+            setRefreshErrors((errors) => ({ ...errors, [reviewKey]: message }));
             toast({
               title: "Refresh did not complete",
-              description:
-                (result as any).error ??
-                "The provider data was left unchanged.",
+              description: message,
               variant: "destructive",
             });
           }
         },
-        onError: () =>
-          toast({ title: "Refresh failed", variant: "destructive" }),
+        onError: () => {
+          const message = "The refresh request failed. You can try again.";
+          setRefreshErrors((errors) => ({ ...errors, [reviewKey]: message }));
+          toast({ title: "Refresh failed", description: message, variant: "destructive" });
+        },
       },
     );
+  };
 
   const runBatchRefresh = (resumeRun?: AdminContentRefreshBatch) => {
     const provider = resumeRun?.provider ?? batchProvider;
@@ -2317,6 +2330,16 @@ function ContentTab({
               className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center gap-4"
             >
               <div className="flex-1 min-w-0">
+                {refreshErrors[`${item.id}-${item.selectedRating?.region ?? ratingRegion}`] ? (
+                  <p
+                    className="mb-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                    role="alert"
+                    data-testid={`status-rating-refresh-failure-${item.id}-${item.selectedRating?.region ?? ratingRegion}`}
+                  >
+                    Refresh failed for {item.selectedRating?.region ?? ratingRegion}:{" "}
+                    {refreshErrors[`${item.id}-${item.selectedRating?.region ?? ratingRegion}`]}
+                  </p>
+                ) : null}
                 <div className="flex items-center gap-2 mb-2">
                   <span className="font-bold text-foreground">{item.name}</span>
                   <span className="px-2 py-0.5 rounded bg-secondary text-muted-foreground text-xs uppercase">
@@ -2394,7 +2417,14 @@ function ContentTab({
                   size="sm"
                   variant="outline"
                   className="rounded-xl gap-1.5"
-                  onClick={() => doRefresh(item.id, item.name)}
+                  onClick={() =>
+                    doRefresh(
+                      item.id,
+                      item.name,
+                      "does_the_dog_die",
+                      `${item.id}-${item.selectedRating?.region ?? ratingRegion}`,
+                    )
+                  }
                   disabled={isRefreshing}
                 >
                   <RefreshCw className="w-3.5 h-3.5" /> Refresh DDD
@@ -2403,7 +2433,14 @@ function ContentTab({
                   size="sm"
                   variant="outline"
                   className="rounded-xl gap-1.5"
-                  onClick={() => doRefresh(item.id, item.name, "wikidata")}
+                  onClick={() =>
+                    doRefresh(
+                      item.id,
+                      item.name,
+                      "wikidata",
+                      `${item.id}-${item.selectedRating?.region ?? ratingRegion}`,
+                    )
+                  }
                   disabled={isRefreshing}
                 >
                   <RefreshCw className="w-3.5 h-3.5" /> Wikidata
