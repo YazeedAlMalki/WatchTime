@@ -827,21 +827,60 @@ export default function TitleDetailScreen() {
   });
   const similar = useGetSimilarTitles(titleId);
 
-  const invalidateTitle = () => {
-    queryClient.invalidateQueries({ queryKey: getGetTitleQueryKey(titleId) });
-    queryClient.invalidateQueries({ queryKey: getGetMyWatchlistQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getGetMyShowsQueryKey() });
+  const invalidateTitle = (accountId: string) => {
+    queryClient.invalidateQueries({
+      queryKey: [...getGetTitleQueryKey(titleId), 'account', accountId],
+      exact: true,
+    });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyWatchlistQueryKey(), 'account', accountId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyShowsQueryKey(), 'account', accountId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyInProgressShowsQueryKey(), 'account', accountId],
+    });
   };
-  const invalidateWatchedTitle = () => {
-    invalidateTitle();
-    queryClient.invalidateQueries({ queryKey: getGetMyMoviesQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getGetMyRecentActivityQueryKey() });
-    queryClient.invalidateQueries({ queryKey: getGetMyRecommendationsQueryKey() });
+  const invalidateWatchedTitle = (accountId: string) => {
+    invalidateTitle(accountId);
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyMoviesQueryKey(), 'account', accountId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyRecentActivityQueryKey(), 'account', accountId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: [...getGetMyRecommendationsQueryKey(), 'account', accountId],
+    });
   };
-  const addWatchlist = useAddToWatchlist({ mutation: { onSuccess: invalidateTitle } });
-  const removeWatchlist = useRemoveFromWatchlist({ mutation: { onSuccess: invalidateTitle } });
-  const markWatched = useMarkTitleWatched({ mutation: { onSuccess: invalidateWatchedTitle } });
-  const unmarkWatched = useUnmarkTitleWatched({ mutation: { onSuccess: invalidateWatchedTitle } });
+  const accountScopedMutation = (invalidate: (accountId: string) => void) => ({
+    onMutate: () => ({ accountId: userId }),
+    onSuccess: (_data: unknown, _variables: unknown, mutationContext: unknown) => {
+      if (
+        !userId ||
+        !mutationContext ||
+        typeof mutationContext !== 'object' ||
+        !('accountId' in mutationContext) ||
+        mutationContext.accountId !== userId
+      ) {
+        return;
+      }
+      invalidate(userId);
+    },
+  });
+  const addWatchlist = useAddToWatchlist({
+    mutation: accountScopedMutation(invalidateTitle),
+  });
+  const removeWatchlist = useRemoveFromWatchlist({
+    mutation: accountScopedMutation(invalidateTitle),
+  });
+  const markWatched = useMarkTitleWatched({
+    mutation: accountScopedMutation(invalidateWatchedTitle),
+  });
+  const unmarkWatched = useUnmarkTitleWatched({
+    mutation: accountScopedMutation(invalidateWatchedTitle),
+  });
 
   if (!Number.isFinite(titleId)) return <ErrorState onRetry={() => router.back()} message="Invalid title" />;
   if (title.isLoading) return <Loading />;
