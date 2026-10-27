@@ -84,6 +84,46 @@ let adminBRowIds: number[] = [];
 let exportMatchRowIds: number[] = [];
 let streamExportRowIds: number[] = [];
 
+function parseCsvRecords(content: string): string[][] {
+  const records: string[][] = [];
+  let record: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index];
+    if (inQuotes) {
+      if (character === '"' && content[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else if (character === '"') {
+        inQuotes = false;
+      } else {
+        field += character;
+      }
+    } else if (character === '"') {
+      inQuotes = true;
+    } else if (character === ",") {
+      record.push(field);
+      field = "";
+    } else if (character === "\n") {
+      record.push(field.replace(/\r$/, ""));
+      records.push(record);
+      record = [];
+      field = "";
+    } else {
+      field += character;
+    }
+  }
+
+  if (inQuotes) throw new Error("Malformed CSV quoting");
+  if (record.length > 0 || field.length > 0) {
+    record.push(field.replace(/\r$/, ""));
+    records.push(record);
+  }
+  return records;
+}
+
 beforeAll(async () => {
   // Clear leftovers from an interrupted prior run for these test-only identities.
   await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.adminId, [ADMIN_A_ID, ADMIN_B_ID, STREAM_ADMIN_ID]));
@@ -118,7 +158,9 @@ beforeAll(async () => {
     action: EXPORT_ACTION,
     entityType: "content",
     entityId: EXPORT_MATCH_ENTITY_BASE + index,
-    details: { testBatch: "matching", index },
+    details: index === 0
+      ? { testBatch: "matching", index, note: 'comma, quote "double", and newline\ncontinued' }
+      : { testBatch: "matching", index },
     createdAt: new Date(`${EXPORT_DAY}T12:00:00.000Z`),
   }));
   const streamingExportRows = Array.from({ length: STREAM_EXPORT_COUNT }, (_, index) => ({
@@ -395,6 +437,33 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
     });
     expect(exportedIds.sort((a, b) => a - b))
       .toEqual([...exportMatchRowIds].sort((a, b) => a - b));
+  });
+
+  it("preserves commas, quotes, and line breaks in the Details column", async () => {
+    const filters = new URLSearchParams({
+      action: EXPORT_ACTION,
+      adminEmail: ADMIN_A_EMAIL,
+      entityType: "content",
+      dateFrom: EXPORT_DAY_START.toISOString(),
+      dateTo: EXPORT_DAY_END.toISOString(),
+    });
+    const res = await supertest(app)
+      .get(`/api/admin/audit-log/export?${filters.toString()}`);
+
+    expect(res.status).toBe(200);
+    const records = parseCsvRecords(res.text);
+    expect(records[0]).toEqual([
+      "ID", "Timestamp", "Admin", "Action", "Entity Type", "Entity ID", "Details",
+    ]);
+
+    const exportedRow = records.slice(1).find((record) => record[5] === String(EXPORT_MATCH_ENTITY_BASE));
+    expect(exportedRow).toBeDefined();
+    expect(exportedRow).toHaveLength(7);
+    expect(JSON.parse(exportedRow![6])).toEqual({
+      testBatch: "matching",
+      index: 0,
+      note: 'comma, quote "double", and newline\ncontinued',
+    });
   });
 
   it("streams every matching row across multiple batches in stable newest-first order", async () => {
