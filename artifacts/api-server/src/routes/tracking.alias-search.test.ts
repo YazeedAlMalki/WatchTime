@@ -79,6 +79,13 @@ beforeAll(async () => {
       isEditorial: true,
     },
     {
+      titleId: titleIds[0],
+      alias: "Canonical Alternate Name",
+      normalizedAlias: "canonicalalternatename",
+      sourceName: "Editorial test",
+      isEditorial: true,
+    },
+    {
       titleId: titleIds[1],
       alias: "Another Shared Regional Name",
       normalizedAlias: "anothersharedregionalname",
@@ -140,6 +147,7 @@ describe("tracked show search by canonical and alternate titles", () => {
       .get("/api/me/shows")
       .query({ q: "canonical" });
     expect(getShowIds(canonicalMatch)).toEqual([titleIds[0]]);
+    expect(canonicalMatch.body[0].title.name).toBe("__shared_canonical_show__");
     expect(canonicalMatch.body[0].matchedAlternateTitle).toBeNull();
 
     const specificAlternateMatch = await supertest(app)
