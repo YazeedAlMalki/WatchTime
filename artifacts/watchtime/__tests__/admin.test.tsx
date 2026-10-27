@@ -1004,6 +1004,13 @@ describe("admin alternate-title review", () => {
     };
     const corrections = [firstCorrection, latestCorrection];
     let correctionIndex = 0;
+    let failAliasListRefresh = false;
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) =>
+        failAliasListRefresh && queryKey[0] === "/api/admin/content-aliases"
+          ? Promise.reject(new Error("alias refresh unavailable"))
+          : Promise.resolve(),
+    );
     mocks.updateMutation.mutate.mockImplementation(
       (
         _variables: unknown,
@@ -1041,6 +1048,7 @@ describe("admin alternate-title review", () => {
     );
 
     act(() => button(container, "Edit current correction").click());
+    failAliasListRefresh = true;
     act(() => {
       setInput(
         container,
@@ -1070,24 +1078,50 @@ describe("admin alternate-title review", () => {
       },
       expect.any(Object),
     );
-    const warning = container.querySelector('[role="alert"]');
-    expect(warning?.textContent).toContain(latestCorrection.alias);
-    expect(warning?.textContent).toContain(latestCorrection.language);
-    expect(warning?.textContent).toContain(latestCorrection.sourceName);
-    expect(warning?.textContent).toContain(
+    const alerts = Array.from(container.querySelectorAll('[role="alert"]'));
+    const correctionWarning = alerts.find((alert) =>
+      alert.textContent?.includes("A newer correction is already saved"),
+    );
+    const refreshWarning = alerts.find((alert) =>
+      alert.textContent?.includes("Alternate-title refresh failed"),
+    );
+    expect(correctionWarning?.textContent).toContain(latestCorrection.alias);
+    expect(correctionWarning?.textContent).toContain(latestCorrection.language);
+    expect(correctionWarning?.textContent).toContain(
+      latestCorrection.sourceName,
+    );
+    expect(correctionWarning?.textContent).toContain(
       new Date(latestCorrection.updatedAt).toLocaleString(),
     );
     expect(
-      warning?.querySelector(`a[href="${latestCorrection.sourceUrl}"]`)
-        ?.textContent,
+      correctionWarning?.querySelector(
+        `a[href="${latestCorrection.sourceUrl}"]`,
+      )?.textContent,
     ).toBe(latestCorrection.sourceName);
-    expect(warning?.textContent).not.toContain(firstCorrection.alias);
-    expect(warning?.textContent).not.toContain(firstCorrection.language);
-    expect(warning?.textContent).not.toContain(firstCorrection.sourceName);
-    expect(warning?.textContent).not.toContain(
+    expect(correctionWarning?.textContent).toContain(
+      "Your draft was not saved",
+    );
+    expect(correctionWarning?.textContent).not.toContain(firstCorrection.alias);
+    expect(correctionWarning?.textContent).not.toContain(
+      firstCorrection.language,
+    );
+    expect(correctionWarning?.textContent).not.toContain(
+      firstCorrection.sourceName,
+    );
+    expect(correctionWarning?.textContent).not.toContain(
       new Date(firstCorrection.updatedAt).toLocaleString(),
     );
-    expect(warning?.textContent).not.toContain("Second stale draft");
+    expect(correctionWarning?.textContent).not.toContain("Second stale draft");
+    expect(refreshWarning?.textContent).toContain(
+      "The alternate-title list may be stale",
+    );
+    expect(refreshWarning?.textContent).toContain(
+      "Failed refresh request: alternate-title list (alias records).",
+    );
+    expect(refreshWarning?.textContent).not.toContain(
+      "Your saved correction is shown",
+    );
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(4);
   });
 
   it("shows every provider citation link when a provider-owned draft is stale", async () => {
