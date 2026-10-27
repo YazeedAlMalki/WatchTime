@@ -11,6 +11,7 @@ import express from "express";
 
 const USER_ID = "test-large-library-performance";
 const SHOW_COUNT = 400;
+const UNTRACKED_SHOW_COUNT = 5_000;
 const EPISODES_PER_SHOW = 200;
 const PAGE_SIZE = 20;
 const PROGRESS_LEVELS = [0, 20, 100, 180, EPISODES_PER_SHOW];
@@ -37,7 +38,7 @@ import {
   db, pool, usersTable, titlesTable, titleAliasesTable, episodesTable,
   watchedTitlesTable, watchedEpisodesTable, watchlistTable,
 } from "@workspace/db";
-import { eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 
 const app = express();
 app.use("/api", trackingRouter);
@@ -95,6 +96,33 @@ beforeAll(async () => {
   await db.insert(watchedTitlesTable).values(movieIds.map((titleId) => ({ userId: USER_ID, titleId })));
   await db.insert(watchlistTable).values([...titleIds, ...movieIds].map((titleId) => ({ userId: USER_ID, titleId })));
 
+  // Model a much larger, newer catalog that is mostly unrelated to the user's
+  // collection. Every untracked show has matching aliases so search cannot
+  // appear cheap merely because those rows fail the alias predicate.
+  const untrackedIds: number[] = [];
+  for (let start = 0; start < UNTRACKED_SHOW_COUNT; start += 1000) {
+    const inserted = await db.insert(titlesTable).values(
+      Array.from({ length: Math.min(1000, UNTRACKED_SHOW_COUNT - start) }, (_, index) => ({
+        name: `__large_library_untracked_${start + index}__`,
+        type: "tv" as const,
+        popularity: 0,
+      })),
+    ).returning({ id: titlesTable.id });
+    untrackedIds.push(...inserted.map((row) => row.id));
+  }
+  const untrackedAliases = untrackedIds.flatMap((titleId) => [
+    { titleId, alias: "needle", normalizedAlias: "needle", sourceName: "performance-fixture" },
+    ...Array.from({ length: ALIASES_PER_SHOW - 1 }, (_, i) => {
+      const alias = `Needle untracked ${titleId}-${i}`;
+      return {
+        titleId, alias, normalizedAlias: alias.toLowerCase(), sourceName: "performance-fixture",
+      };
+    }),
+  ]);
+  for (let i = 0; i < untrackedAliases.length; i += 1000) {
+    await db.insert(titleAliasesTable).values(untrackedAliases.slice(i, i + 1000));
+  }
+
   // Every fifth show is new, barely started, halfway, nearly done, or
   // caught up. Keep the insert chunks below PostgreSQL's parameter limit.
   for (let start = 0; start < titleIds.length; start += 20) {
@@ -116,6 +144,11 @@ beforeAll(async () => {
       await db.insert(watchedEpisodesTable).values(watched.slice(i, i + 1000));
     }
   }
+  // Preserve one show as episode-tracked without a watched-title row.
+  await db.delete(watchedTitlesTable).where(and(
+    eq(watchedTitlesTable.userId, USER_ID),
+    eq(watchedTitlesTable.titleId, titleIds[SHOW_COUNT - 4]),
+  ));
   // Prevent stale planner statistics from favoring a full scan of a newly
   // seeded table instead of the production indexes.
   await pool.query("ANALYZE titles, title_aliases, episodes, watched_titles, watched_episodes, watchlist");
@@ -155,7 +188,7 @@ const measuredPage = (limit: number, offset: number) =>
     offset === 0 ? undefined : { beforeId: offset === SHOW_COUNT ? titleIds[0] : titleIds[SHOW_COUNT - offset] });
 
 describe("large personal library", () => {
-  it("keeps alternate-title search work bounded with multiple matching aliases per show", async () => {
+  it("keeps alternate-title search scoped to tracked shows in a large catalog", async () => {
     // Keep the query shape and page behavior representative of the API search
     // while using multiple matching aliases for every tracked show.
     const searched = await measuredPageFor(
@@ -183,9 +216,11 @@ describe("large personal library", () => {
       Plan: Record<string, unknown>;
     };
     const aliasNodes: Record<string, unknown>[] = [];
+    const titleNodes: Record<string, unknown>[] = [];
     const aliasIndexes: string[] = [];
     const walk = (node: Record<string, unknown>) => {
       if (node["Relation Name"] === "title_aliases") aliasNodes.push(node);
+      if (node["Relation Name"] === "titles") titleNodes.push(node);
       if (typeof node["Index Name"] === "string" && String(node["Index Name"]).startsWith("title_aliases_")) {
         aliasIndexes.push(node["Index Name"] as string);
       }
@@ -198,14 +233,23 @@ describe("large personal library", () => {
       const loops = Number(node["Actual Loops"] ?? 0);
       return total + (rows + removed) * loops;
     }, 0);
+    const titleRowsScanned = titleNodes.reduce((total, node) => {
+      const rows = Number(node["Actual Rows"] ?? 0);
+      const removed = Number(node["Rows Removed by Filter"] ?? 0);
+      const loops = Number(node["Actual Loops"] ?? 0);
+      return total + (rows + removed) * loops;
+    }, 0);
     expect(aliasIndexes.some((name) =>
       name === "title_aliases_title_idx" || name === "title_aliases_title_normalized_idx",
     )).toBe(true);
-    // Both the match predicate and the selected display alias may read aliases;
-    // their work should scale with the returned page, not the whole collection.
+    // Alias reads may scale with the tracked collection, but must not include
+    // the aliases belonging to unrelated titles in the larger catalog.
     expect(aliasRowsScanned).toBeGreaterThan(0);
-    expect(aliasRowsScanned).toBeLessThanOrEqual(4 * PAGE_SIZE * ALIASES_PER_SHOW);
-    process.stdout.write(`Alternate-title benchmark (${SHOW_COUNT} tracked shows, ${SHOW_COUNT * ALIASES_PER_SHOW} matching aliases): ${JSON.stringify({ milliseconds: Math.round(searched.milliseconds), responseBytes: Buffer.byteLength(searched.response.text), aliasRowsScanned, aliasIndexes: [...new Set(aliasIndexes)], planMs: plan["Execution Time"] })}\n`);
+    expect(aliasRowsScanned).toBeLessThanOrEqual(4 * SHOW_COUNT * ALIASES_PER_SHOW);
+    // The plan may touch a small number of extra title rows for planner
+    // overhead, but it must not walk the 5,000 newer untracked catalog rows.
+    expect(titleRowsScanned).toBeLessThanOrEqual(2 * (SHOW_COUNT + PAGE_SIZE));
+    process.stdout.write(`Alternate-title benchmark (${SHOW_COUNT} tracked shows, ${UNTRACKED_SHOW_COUNT} newer untracked shows, ${(SHOW_COUNT + UNTRACKED_SHOW_COUNT) * ALIASES_PER_SHOW} matching aliases): ${JSON.stringify({ milliseconds: Math.round(searched.milliseconds), responseBytes: Buffer.byteLength(searched.response.text), aliasRowsScanned, titleRowsScanned, aliasIndexes: [...new Set(aliasIndexes)], planMs: plan["Execution Time"] })}\n`);
   }, 120_000);
 
   it("keeps sparse alternate-title search work bounded when most aliases do not match", async () => {

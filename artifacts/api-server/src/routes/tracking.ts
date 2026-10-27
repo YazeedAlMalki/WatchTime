@@ -20,6 +20,7 @@ import {
   ne,
   notInArray,
   arrayOverlaps,
+  getTableColumns,
   or,
   isNotNull,
   ilike,
@@ -239,6 +240,44 @@ for (const [path, inProgressOnly] of [
   ) {
     return res.status(400).json({ error: "Invalid show status" });
   }
+  const trackedTitles = db
+    .select({ titleId: watchedTitlesTable.titleId })
+    .from(watchedTitlesTable)
+    .where(eq(watchedTitlesTable.userId, userId))
+    .union(
+      db
+        .select({ titleId: watchedEpisodesTable.titleId })
+        .from(watchedEpisodesTable)
+        .where(eq(watchedEpisodesTable.userId, userId)),
+    )
+    .as("tracked_titles");
+  // The lateral lookup keeps PostgreSQL from choosing a catalog-wide title
+  // scan before applying the user's tracked-title set.
+  const trackedCatalogTitle = db
+    .select(getTableColumns(titlesTable))
+    .from(titlesTable)
+    .where(eq(titlesTable.id, trackedTitles.titleId))
+    .limit(1)
+    .as("tracked_catalog_title");
+  const trackedTitleSelection = {
+    id: trackedCatalogTitle.id,
+    type: trackedCatalogTitle.type,
+    name: trackedCatalogTitle.name,
+    overview: trackedCatalogTitle.overview,
+    posterUrl: trackedCatalogTitle.posterUrl,
+    backdropUrl: trackedCatalogTitle.backdropUrl,
+    year: trackedCatalogTitle.year,
+    genres: trackedCatalogTitle.genres,
+    altTitles: trackedCatalogTitle.altTitles,
+    imdbRating: trackedCatalogTitle.imdbRating,
+    rottenTomatoesScore: trackedCatalogTitle.rottenTomatoesScore,
+    runtimeMinutes: trackedCatalogTitle.runtimeMinutes,
+    status: trackedCatalogTitle.status,
+    popularity: trackedCatalogTitle.popularity,
+    tmdbId: trackedCatalogTitle.tmdbId,
+    imdbId: trackedCatalogTitle.imdbId,
+    createdAt: trackedCatalogTitle.createdAt,
+  };
   const searchPattern = search
     ? `%${search.replace(/[\\%_]/g, "\\$&")}%`
     : undefined;
@@ -246,9 +285,9 @@ for (const [path, inProgressOnly] of [
     ? sql<string | null>`(
         select ${titleAliasesTable.alias}
         from ${titleAliasesTable}
-        where ${titleAliasesTable.titleId} = ${titlesTable.id}
+        where ${titleAliasesTable.titleId} = ${trackedCatalogTitle.id}
           and ${titleAliasesTable.alias} ilike ${searchPattern}
-          and ${titlesTable.name} not ilike ${searchPattern}
+          and ${trackedCatalogTitle.name} not ilike ${searchPattern}
         order by
           case when lower(${titleAliasesTable.alias}) = lower(${search}) then 0 else 1 end,
           length(${titleAliasesTable.alias}),
@@ -267,18 +306,13 @@ for (const [path, inProgressOnly] of [
     .where(eq(watchedEpisodesTable.userId, userId))
     .groupBy(watchedEpisodesTable.titleId)
     .as("watched_counts");
-  const followed = db
-    .select({ titleId: watchedTitlesTable.titleId })
-    .from(watchedTitlesTable)
-    .where(eq(watchedTitlesTable.userId, userId))
-    .as("followed_titles");
   const totalEpisodes = sql<number>`(
     select count(*)::int from ${episodesTable} episode_count
-    where episode_count.title_id = ${titlesTable.id}
+    where episode_count.title_id = ${trackedCatalogTitle.id}
   )`;
   const hasUnwatchedEpisode = sql<boolean>`exists (
     select 1 from ${episodesTable} remaining
-    where remaining.title_id = ${titlesTable.id}
+    where remaining.title_id = ${trackedCatalogTitle.id}
       and not exists (
         select 1 from ${watchedEpisodesTable} watched
         where watched.user_id = ${userId} and watched.episode_id = remaining.id
@@ -286,13 +320,13 @@ for (const [path, inProgressOnly] of [
   )`;
   const rows = await db
     .select({
-      title: titlesTable,
+      title: trackedTitleSelection,
       watchedEpisodes: sql<number>`coalesce(${watchedCounts.watchedEpisodes}, 0)::int`,
       totalEpisodes,
       matchedAlternateTitle,
       nextEpisodeId: sql<number | null>`(
         select e.id from ${episodesTable} e
-        where e.title_id = ${titlesTable.id}
+        where e.title_id = ${trackedCatalogTitle.id}
           and not exists (
             select 1 from ${watchedEpisodesTable} we
             where we.user_id = ${userId} and we.episode_id = e.id
@@ -301,16 +335,14 @@ for (const [path, inProgressOnly] of [
         limit 1
       )`,
     })
-    .from(titlesTable)
-    .leftJoin(watchedCounts, eq(watchedCounts.titleId, titlesTable.id))
-    .leftJoin(followed, eq(followed.titleId, titlesTable.id))
+    .from(trackedTitles)
+    .innerJoinLateral(trackedCatalogTitle, sql`true`)
+    .leftJoin(watchedCounts, eq(watchedCounts.titleId, trackedCatalogTitle.id))
     .where(and(
-      ne(titlesTable.type, "movie"),
-      or(isNotNull(watchedCounts.titleId), isNotNull(followed.titleId)),
+      ne(trackedCatalogTitle.type, "movie"),
       searchPattern ? or(
-        ilike(titlesTable.name, searchPattern),
-        // Keep alternate matching tied to the current title. Using EXISTS here
-        // lets PostgreSQL decorrelate it into a catalog-wide alias scan.
+        ilike(trackedCatalogTitle.name, searchPattern),
+        // Keep alternate matching tied to the current tracked title.
         isNotNull(matchedAlternateTitle),
       ) : undefined,
       status === "up-next"
@@ -322,11 +354,11 @@ for (const [path, inProgressOnly] of [
         gt(watchedCounts.watchedEpisodes, 0),
         hasUnwatchedEpisode,
       ) : undefined,
-      page.beforeId === undefined ? undefined : lt(titlesTable.id, page.beforeId),
+      page.beforeId === undefined ? undefined : lt(trackedCatalogTitle.id, page.beforeId),
     ))
     // A progress-based order moves rows across the boundary when an episode is marked.
     // Immutable title IDs keep already-seen rows out of subsequent pages.
-    .orderBy(desc(titlesTable.id))
+    .orderBy(desc(trackedCatalogTitle.id))
     .limit(page.limit);
   const nextIds = rows.flatMap((row) => row.nextEpisodeId == null ? [] : [row.nextEpisodeId]);
   const nextEpisodes = nextIds.length
