@@ -22,6 +22,14 @@ const caughtUpShow = {
   totalEpisodes: 2,
   nextEpisode: null,
 };
+const trackedShow = (id: number, name: string, inProgress = true) => ({
+  title: { id, name, genres: [] },
+  watchedEpisodes: inProgress ? 1 : 2,
+  totalEpisodes: 2,
+  nextEpisode: inProgress
+    ? { id: id * 10, seasonNumber: 1, episodeNumber: 2, name: "Next Episode" }
+    : null,
+});
 
 vi.mock("wouter", () => ({
   Link: ({ children, href }: { children: React.ReactNode; href: string }) =>
@@ -115,6 +123,129 @@ it("filters by server status and combines the selected status with search", asyn
       );
       expect(container.textContent).toContain("Caught Up Show");
     });
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    client.clear();
+  }
+});
+
+it("keeps filtered search criteria across pages and resets results when criteria change", async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const firstPage = Array.from({ length: 24 }, (_, index) =>
+    trackedShow(124 - index, `Completion ${124 - index}`),
+  );
+  const secondPage = [trackedShow(100, "Completion 100"), trackedShow(99, "Completion 99")];
+  api.getMyShows.mockImplementation(async (params: GetMyShowsParams = {}) => {
+    if (params.q === "Completion" && params.status === "up-next") {
+      if (params.beforeId === undefined) return firstPage;
+      if (params.beforeId === 101) return secondPage;
+    }
+    if (params.q === "Completion" && params.status === "caught-up") {
+      return [trackedShow(50, "Completion Caught Up", false)];
+    }
+    if (params.q === "Another" && params.status === "caught-up") {
+      return [trackedShow(40, "Another Caught Up", false)];
+    }
+    return [];
+  });
+  api.getMyInProgressShows.mockResolvedValue([]);
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const getShowNames = () =>
+    Array.from(container.querySelectorAll<HTMLAnchorElement>('a[href^="/title/"]'))
+      .map((link) => link.textContent?.trim())
+      .filter((name): name is string => !!name);
+
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={client}><MyShowsPage /></QueryClientProvider>,
+    ));
+
+    await act(async () => {
+      (container.querySelector('[data-testid="filter-shows-up-next"]') as HTMLButtonElement).click();
+    });
+    const searchInput = container.querySelector<HTMLInputElement>('[data-testid="input-search-shows"]')!;
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(searchInput, "Completion");
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await until(() => {
+      expect(api.getMyShows).toHaveBeenCalledWith(
+        expect.objectContaining({
+          limit: 24,
+          beforeId: undefined,
+          status: "up-next",
+          q: "Completion",
+        }),
+        expect.anything(),
+      );
+      expect(container.textContent).toContain("Completion 101");
+    });
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll("button")).find(button =>
+        button.textContent?.includes("Load more up-next shows"),
+      ) as HTMLButtonElement).click();
+    });
+    await until(() => expect(container.textContent).toContain("Completion 99"));
+    expect(api.getMyShows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 24,
+        beforeId: 101,
+        status: "up-next",
+        q: "Completion",
+      }),
+      expect.anything(),
+    );
+    expect(getShowNames()).toEqual(
+      Array.from({ length: 24 }, (_, index) => `Completion ${124 - index}`)
+        .concat("Completion 100", "Completion 99"),
+    );
+
+    await act(async () => {
+      (container.querySelector('[data-testid="filter-shows-caught-up"]') as HTMLButtonElement).click();
+    });
+    await until(() => {
+      expect(container.textContent).toContain("Completion Caught Up");
+      expect(container.textContent).not.toContain("Completion 124");
+    });
+    expect(api.getMyShows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 24,
+        beforeId: undefined,
+        status: "caught-up",
+        q: "Completion",
+      }),
+      expect.anything(),
+    );
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(searchInput, "Another");
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.textContent).not.toContain("Completion Caught Up");
+    await until(() => {
+      expect(container.textContent).toContain("Another Caught Up");
+      expect(container.textContent).not.toContain("Completion Caught Up");
+    });
+    expect(api.getMyShows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 24,
+        beforeId: undefined,
+        status: "caught-up",
+        q: "Another",
+      }),
+      expect.anything(),
+    );
   } finally {
     await act(async () => root.unmount());
     container.remove();

@@ -78,7 +78,7 @@ export default function MyShowsPage() {
   );
   const hasShowCriteria = showFilter !== "all" || !!debouncedShowSearch;
   const movies = moviesQuery.data?.pages.flat() ?? [];
-  const showsLoading = showsQuery.isLoading;
+  const showsLoading = showsQuery.isLoading || showSearch.trim() !== debouncedShowSearch;
   const moviesLoading = moviesQuery.isLoading;
   const { data: history, isLoading: historyLoading } = useGetMyRecentActivity();
   const markWatched = useMarkEpisodeWatched();
