@@ -131,6 +131,132 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
     fetchSpy.mockRestore();
   });
 
+  it.each(feedCases.flatMap((successful, index) =>
+    (['success first', 'failure first'] as const).map((order) => ({
+      successful,
+      failed: feedCases[(index + 1) % feedCases.length],
+      untouched: feedCases[(index + 2) % feedCases.length],
+      order,
+    })),
+  ))('isolates overlapping retries for $successful.section and $failed.section ($order)',
+    async ({ successful, failed, untouched, order }) => {
+      for (const feed of feedCases) client.setQueryData(feed.key, feed.data);
+      const screen = await render(
+        <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const scrollView = screen.root!.queryAll(
+        (node) => node.props.refreshControl != null,
+        { includeSelf: true },
+      )[0];
+      await act(async () => scrollView.props.refreshControl.props.onRefresh());
+      await waitFor(() => {
+        for (const feed of feedCases) {
+          expect(screen.getByTestId(feed.warning)).toBeTruthy();
+          expect(client.getQueryState(feed.key)?.status).toBe('error');
+          expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
+        }
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      const untouchedState = client.getQueryState(untouched.key);
+      const requestCount = (path: string) =>
+        fetchSpy.mock.calls.filter(([url]) => url === path).length;
+      for (const feed of feedCases) expect(requestCount(feed.path)).toBe(1);
+
+      let resolveResponse!: (response: Response) => void;
+      let rejectResponse!: (error: Error) => void;
+      const successResponse = new Promise<Response>((resolve) => { resolveResponse = resolve; });
+      const failureResponse = new Promise<Response>((_resolve, reject) => { rejectResponse = reject; });
+      fetchSpy.mockImplementation((url) => {
+        if (url === successful.path) return successResponse;
+        if (url === failed.path) return failureResponse;
+        return Promise.reject(new Error(`Unexpected section request: ${url}`));
+      });
+
+      // Neither response is settled until both focused retries have started.
+      for (const feed of [successful, failed]) {
+        await fireEvent.press(within(screen.getByTestId(feed.warning)).getByRole('button', {
+          name: `Retry ${feed.section}`,
+        }));
+      }
+      await waitFor(() => {
+        expect(requestCount(successful.path)).toBe(2);
+        expect(requestCount(failed.path)).toBe(2);
+        expect(client.getQueryState(successful.key)?.fetchStatus).toBe('fetching');
+        expect(client.getQueryState(failed.key)?.fetchStatus).toBe('fetching');
+      });
+
+      const expectCachedSection = (feed: typeof feedCases[number]) => {
+        expect(client.getQueryData(feed.key)).toEqual(feed.data);
+        expect(screen.getByText(feed.card)).toBeTruthy();
+        expect(screen.queryByText(feed.recoveredCard)).toBeNull();
+        expect(within(screen.getByTestId(feed.warning)).getByText(
+          `Couldn't refresh ${feed.section}. Results may be out of date.`,
+        )).toBeTruthy();
+        expect(screen.queryByTestId(feed.fullError)).toBeNull();
+        expect(screen.queryByText(feed.empty)).toBeNull();
+      };
+      const expectUntouchedSection = () => {
+        expectCachedSection(untouched);
+        expect(client.getQueryState(untouched.key)).toBe(untouchedState);
+        expect(requestCount(untouched.path)).toBe(1);
+        expect(fetchSpy).toHaveBeenCalledTimes(5);
+      };
+      for (const feed of feedCases) expectCachedSection(feed);
+      expectUntouchedSection();
+
+      const retryError = new TypeError('Concurrent focused retry failed');
+      const settleSuccess = async () => {
+        await act(async () => resolveResponse(new Response(JSON.stringify(successful.recoveredData), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })));
+        await waitFor(() => {
+          expect(client.getQueryState(successful.key)?.status).toBe('success');
+          expect(client.getQueryState(successful.key)?.fetchStatus).toBe('idle');
+          expect(screen.getByText(successful.recoveredCard)).toBeTruthy();
+          expect(screen.queryByTestId(successful.warning)).toBeNull();
+        });
+      };
+      const settleFailure = async () => {
+        await act(async () => rejectResponse(retryError));
+        await waitFor(() => {
+          expect(client.getQueryState(failed.key)?.status).toBe('error');
+          expect(client.getQueryState(failed.key)?.fetchStatus).toBe('idle');
+          expect(client.getQueryState(failed.key)?.error).toBe(retryError);
+        });
+      };
+
+      if (order === 'success first') {
+        await settleSuccess();
+        // The completed section must not settle or replace the other retry.
+        expect(client.getQueryState(failed.key)?.fetchStatus).toBe('fetching');
+        expectCachedSection(failed);
+        expectUntouchedSection();
+        await settleFailure();
+      } else {
+        await settleFailure();
+        expect(client.getQueryState(successful.key)?.fetchStatus).toBe('fetching');
+        expectCachedSection(successful);
+        expectCachedSection(failed);
+        expectUntouchedSection();
+        await settleSuccess();
+      }
+
+      expect(client.getQueryData(successful.key)).toEqual(successful.recoveredData);
+      expect(screen.getByText(successful.recoveredCard)).toBeTruthy();
+      expect(screen.queryByText(successful.card)).toBeNull();
+      expect(screen.queryByText(successful.empty)).toBeNull();
+      expect(screen.queryByTestId(successful.warning)).toBeNull();
+      expect(screen.queryByTestId(successful.fullError)).toBeNull();
+      expectCachedSection(failed);
+      expectUntouchedSection();
+      expect(requestCount(successful.path)).toBe(2);
+      expect(requestCount(failed.path)).toBe(2);
+    },
+  );
+
   it.each(['cards', 'empty sections', 'empty sections recovering to cards'] as const)(
     'keeps cached %s through a failed focused retry and clears only the successfully retried warning',
     async (cachedContent) => {
