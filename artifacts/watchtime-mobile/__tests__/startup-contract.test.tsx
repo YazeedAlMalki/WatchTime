@@ -781,6 +781,87 @@ describe('mobile startup contracts', () => {
     });
   });
 
+  it('keeps a late signed-out trending response hidden after Clerk signs in', async () => {
+    const pendingTrendingResponse = (() => {
+      let resolve!: (titles: any[]) => void;
+      const promise = new Promise<any[]>((resolvePromise) => {
+        resolve = resolvePromise;
+      });
+      return { promise, resolve };
+    })();
+
+    mockUseAuth.mockReturnValue({ getToken: jest.fn(), isLoaded: true, isSignedIn: false });
+    mockTrendingQueryState.current = {
+      data: undefined,
+      dataUpdatedAt: 0,
+      isError: false,
+      isLoading: true,
+      isRefetching: false,
+    };
+    mockSignedInHomeQueryState.watchlist.current = {
+      data: [{ id: 941, name: 'Private signed-in watchlist title' }],
+      dataUpdatedAt: 123,
+      isError: false,
+      isLoading: false,
+      isRefetching: false,
+    };
+
+    const screen = await render(<HomeScreen />);
+    await act(async () => {
+      pendingFrames[0]?.(0);
+    });
+    await act(async () => {
+      pendingFrames[1]?.(0);
+    });
+
+    await waitFor(() => {
+      expect(mockQueryEnabled.trending).toEqual([false, true]);
+    });
+    expect(screen.getByText('Trending Now')).toBeTruthy();
+
+    mockUseAuth.mockReturnValue({
+      getToken: jest.fn(),
+      isLoaded: true,
+      isSignedIn: true,
+      userId: 'late-trending-response-user',
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText('Private signed-in watchlist title')).toBeTruthy();
+    expect(screen.getByText('Your Watchlist')).toBeTruthy();
+    expect(screen.queryByText('Track your shows.')).toBeNull();
+    expect(screen.queryByText('Trending Now')).toBeNull();
+
+    const lateResponseApplied = pendingTrendingResponse.promise.then((titles) => {
+      mockTrendingQueryState.current = {
+        data: titles,
+        dataUpdatedAt: 456,
+        isError: false,
+        isLoading: false,
+        isRefetching: false,
+      };
+    });
+    await act(async () => {
+      pendingTrendingResponse.resolve([{ id: 942, name: 'Late public trending title' }]);
+      await lateResponseApplied;
+    });
+    await act(async () => {
+      screen.rerender(<HomeScreen />);
+    });
+
+    expect(screen.getByText('Private signed-in watchlist title')).toBeTruthy();
+    expect(screen.getByText('Your Watchlist')).toBeTruthy();
+    expect(screen.queryByText('Late public trending title')).toBeNull();
+    expect(screen.queryByText('Trending Now')).toBeNull();
+    expect(mockQueryEnabled.trending).toEqual([false, true]);
+
+    await act(async () => {
+      screen.unmount();
+    });
+  });
+
   it('hides signed-in home content while Clerk rechecks auth, then restores it in place', async () => {
     mockUseAuth.mockReturnValue({
       getToken: jest.fn(),
