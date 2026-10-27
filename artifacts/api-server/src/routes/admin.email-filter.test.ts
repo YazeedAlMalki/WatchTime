@@ -310,6 +310,38 @@ describe("GET /api/admin/audit-log — pagination", () => {
   });
 });
 
+describe("audit-log date filters", () => {
+  it.each([
+    ["/api/admin/audit-log", "dateFrom", "not-a-date"],
+    ["/api/admin/audit-log", "dateFrom", "2026-02-30"],
+    ["/api/admin/audit-log", "dateTo", "not-a-date"],
+    ["/api/admin/audit-log", "dateTo", "2026-02-30"],
+    ["/api/admin/audit-log/export", "dateFrom", "not-a-date"],
+    ["/api/admin/audit-log/export", "dateFrom", "2026-02-30"],
+    ["/api/admin/audit-log/export", "dateTo", "not-a-date"],
+    ["/api/admin/audit-log/export", "dateTo", "2026-02-30"],
+  ])("rejects invalid $parameter value $value on $path", async (path, parameter, value) => {
+    const query = new URLSearchParams({ [parameter]: value });
+    const res = await supertest(app).get(`${path}?${query.toString()}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(`${parameter} must be a valid date`);
+  });
+
+  it.each([
+    "/api/admin/audit-log",
+    "/api/admin/audit-log/export",
+  ])("rejects repeated date filters on %s", async (path) => {
+    const query = new URLSearchParams();
+    query.append("dateFrom", EXPORT_DAY_START.toISOString());
+    query.append("dateFrom", EXPORT_DAY_END.toISOString());
+    const res = await supertest(app).get(`${path}?${query.toString()}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("dateFrom must be a valid date");
+  });
+});
+
 describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
   it("returns CSV with correct headers and only admin A rows when filtered by exact email", async () => {
     const res = await supertest(app)

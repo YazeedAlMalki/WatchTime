@@ -2071,14 +2071,72 @@ router.get("/analytics", async (_req, res) => {
   });
 });
 
+function hasValidIsoAuditCalendarDate(value: string): boolean {
+  const dateParts = /^(\d{4})-(\d{2})-(\d{2})(?:$|[Tt ])/i.exec(value);
+  if (!dateParts) return true;
+
+  const year = Number(dateParts[1]);
+  const month = Number(dateParts[2]);
+  const day = Number(dateParts[3]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const maxDay =
+    [
+      31,
+      leapYear ? 29 : 28,
+      31,
+      30,
+      31,
+      30,
+      31,
+      31,
+      30,
+      31,
+      30,
+      31,
+    ][month - 1] ?? 0;
+
+  return month >= 1 && month <= 12 && day >= 1 && day <= maxDay;
+}
+
+function parseAuditLogDateFilters(query: Record<string, unknown>): {
+  dateFrom?: Date;
+  dateTo?: Date;
+  error?: string;
+} {
+  const dates: { dateFrom?: Date; dateTo?: Date } = {};
+
+  for (const parameter of ["dateFrom", "dateTo"] as const) {
+    const value = query[parameter];
+    if (value === undefined) continue;
+    if (typeof value !== "string" || value.trim() === "") {
+      return { error: `${parameter} must be a valid date` };
+    }
+
+    const normalizedValue = value.trim();
+    const date = new Date(normalizedValue);
+    if (
+      !Number.isFinite(date.getTime()) ||
+      !hasValidIsoAuditCalendarDate(normalizedValue)
+    ) {
+      return { error: `${parameter} must be a valid date` };
+    }
+    dates[parameter] = date;
+  }
+
+  return dates;
+}
+
 /** Shared helper: build WHERE conditions from audit-log filter query params. */
-function buildAuditLogWhere(query: Record<string, string>) {
-  const { action, entityType, adminEmail, dateFrom, dateTo } = query;
+function buildAuditLogWhere(
+  query: Record<string, string>,
+  dates: { dateFrom?: Date; dateTo?: Date },
+) {
+  const { action, entityType, adminEmail } = query;
   const conds = [];
   if (action) conds.push(ilike(adminAuditLogTable.action, `%${action}%`));
   if (entityType) conds.push(eq(adminAuditLogTable.entityType, entityType));
-  if (dateFrom) conds.push(gte(adminAuditLogTable.createdAt, new Date(dateFrom)));
-  if (dateTo) conds.push(lte(adminAuditLogTable.createdAt, new Date(dateTo)));
+  if (dates.dateFrom) conds.push(gte(adminAuditLogTable.createdAt, dates.dateFrom));
+  if (dates.dateTo) conds.push(lte(adminAuditLogTable.createdAt, dates.dateTo));
   const emailCond = adminEmail ? ilike(usersTable.email, `%${adminEmail}%`) : undefined;
   const allConds = emailCond ? [...conds, emailCond] : conds;
   return allConds.length ? and(...allConds) : undefined;
@@ -2121,7 +2179,15 @@ router.get("/audit-log", async (req, res) => {
       error: `offset must be an integer from 0 to ${AUDIT_LOG_MAX_OFFSET}`,
     });
   }
-  const where = buildAuditLogWhere(req.query as Record<string, string>);
+  const dateFilters = parseAuditLogDateFilters(req.query);
+  if (dateFilters.error) {
+    res.status(400).json({ error: dateFilters.error });
+    return;
+  }
+  const where = buildAuditLogWhere(
+    req.query as Record<string, string>,
+    dateFilters,
+  );
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(adminAuditLogTable)
@@ -2153,7 +2219,15 @@ router.get("/audit-log", async (req, res) => {
 
 /** GET /admin/audit-log/export — server-side CSV download applying all active filters. */
 router.get("/audit-log/export", async (req, res) => {
-  const where = buildAuditLogWhere(req.query as Record<string, string>);
+  const dateFilters = parseAuditLogDateFilters(req.query);
+  if (dateFilters.error) {
+    res.status(400).json({ error: dateFilters.error });
+    return;
+  }
+  const where = buildAuditLogWhere(
+    req.query as Record<string, string>,
+    dateFilters,
+  );
 
   const header = ["ID", "Timestamp", "Admin", "Action", "Entity Type", "Entity ID", "Details"];
   const escapeCsvValue = (value: unknown) =>
