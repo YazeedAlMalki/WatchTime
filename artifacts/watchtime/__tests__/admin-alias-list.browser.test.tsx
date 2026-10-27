@@ -18,6 +18,11 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     ...api,
     useGetMe: () => ({ data: { isAdmin: true }, isLoading: false }),
     useGetAdminDashboard: () => ({ data: undefined }),
+    useListAdminWikidataIdentityConflicts: () => ({
+      data: { items: [], hasMore: false },
+      isLoading: false,
+      isError: false,
+    }),
     useSearchAdminContent: () => ({ data: [], isLoading: false, isError: false }),
     useRefreshAdminContent: () => ({ isPending: false, mutate: vi.fn() }),
     useRefreshAdminContentBatch: () => ({ isPending: false, mutate: vi.fn() }),
@@ -1600,7 +1605,7 @@ it("keeps alias search results matched to the latest term when an older request 
   }
 });
 
-it("returns to unfiltered first-page aliases when the search is cleared", async () => {
+it("recovers to unfiltered first-page aliases after clearing a failed search", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const snapshotId = "123e4567-e89b-12d3-a456-426614174002";
   const secondPageCursor = `${snapshotId}:50:0`;
@@ -1641,15 +1646,17 @@ it("returns to unfiltered first-page aliases when the search is cleared", async 
       : isFiltered
         ? [makeAlias(101, "Lighthouse filtered first-page alias")]
         : [makeAlias(1, "Unfiltered first-page alias")];
-    return new Response(JSON.stringify({
-      items,
-      total: isFiltered ? 51 : 80,
-      limit: 50,
-      offset: isFilteredSecondPage ? 50 : 0,
-      nextCursor: isFilteredSecondPage ? null : `${snapshotId}:50`,
-      previousCursor: isFilteredSecondPage ? `${snapshotId}:0` : null,
-    }), {
-      status: 200,
+    return new Response(JSON.stringify(isFilteredSecondPage
+      ? { error: "Unavailable" }
+      : {
+          items,
+          total: isFiltered ? 51 : 80,
+          limit: 50,
+          offset: isFilteredSecondPage ? 50 : 0,
+          nextCursor: isFilteredSecondPage ? null : `${snapshotId}:50`,
+          previousCursor: isFilteredSecondPage ? `${snapshotId}:0` : null,
+        }), {
+      status: isFilteredSecondPage ? 503 : 200,
       headers: { "Content-Type": "application/json" },
     });
   });
@@ -1660,8 +1667,8 @@ it("returns to unfiltered first-page aliases when the search is cleared", async 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByText("Page 2 · 51 matching aliases")).toBeVisible();
-    await expect.element(page.getByText("Lighthouse filtered second-page alias")).toBeVisible();
+    const alert = page.getByText("Could not load alternate titles.");
+    await expect.element(alert).toHaveTextContent("Could not load alternate titles.");
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("cursor")).toBe(secondPageCursor);
 
@@ -1670,6 +1677,7 @@ it("returns to unfiltered first-page aliases when the search is cleared", async 
     await expect.element(page.getByText("Page 1 · 80 matching aliases")).toBeVisible();
     await expect.element(page.getByText("Unfiltered first-page alias")).toBeVisible();
     await expect.element(page.getByText("Lighthouse filtered second-page alias")).not.toBeInTheDocument();
+    await expect.element(alert).not.toBeInTheDocument();
     const clearedRequest = requests.at(-1);
     expect(clearedRequest?.searchParams.has("q")).toBe(false);
     expect(clearedRequest?.searchParams.has("cursor")).toBe(false);
