@@ -334,6 +334,78 @@ describe("admin Content review timestamp filter", () => {
     }
   });
 
+  it("keeps malformed community ratings out of the official timestamp review", async () => {
+    const fixturePrefix = "timestamp-community-fixture";
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-community-only`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-official-and-community`, type: "movie", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    const rollback = new Error("Rollback legacy duplicate-rating fixtures");
+    try {
+      await db.transaction(async (tx) => {
+        // Model a legacy duplicate that predates the unique title/provider index.
+        await tx.execute(sql`DROP INDEX safety_records_title_source_unique_idx`);
+        const records = await tx.insert(safetyRecordsTable).values([
+          {
+            titleId: titles[0].id,
+            sourceName: "Wikidata",
+            status: "available",
+            isCommunity: true,
+            url: "https://community.example/ratings/community-only",
+            updatedAt: sql`'infinity'::timestamp`,
+            items: [{ category: "MPAA", label: "R", score: null, maxScore: null, description: null }],
+          },
+          {
+            titleId: titles[1].id,
+            sourceName: "Wikidata",
+            status: "available",
+            isCommunity: false,
+            url: "https://www.wikidata.org/wiki/Qofficial-community-fixture",
+            updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+            items: [{ category: "MPAA", label: "PG", score: null, maxScore: null, description: null }],
+          },
+          {
+            titleId: titles[1].id,
+            sourceName: "Wikidata",
+            status: "available",
+            isCommunity: true,
+            url: "https://community.example/ratings/official-and-community",
+            updatedAt: sql`'infinity'::timestamp`,
+            items: [{ category: "MPAA", label: "R", score: null, maxScore: null, description: null }],
+          },
+        ]).returning({ id: safetyRecordsTable.id });
+        const selectSpy = vi.spyOn(db, "select").mockImplementation(tx.select.bind(tx));
+        const executeSpy = vi.spyOn(db, "execute").mockImplementation(tx.execute.bind(tx));
+        try {
+          const review = await request(app)
+            .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true`)
+            .expect(200);
+          expect(review.body).toEqual([]);
+
+          const regular = await request(app)
+            .get(`/api/admin/content?q=${fixturePrefix}&region=US`)
+            .expect(200);
+          expect(regular.body.find((item: any) => item.id === titles[0].id)?.selectedRating)
+            .toBeNull();
+          expect(regular.body.find((item: any) => item.id === titles[1].id)?.selectedRating)
+            .toMatchObject({
+              recordId: records[1].id,
+              label: "PG",
+              refreshTimestampMalformed: false,
+            });
+        } finally {
+          selectSpy.mockRestore();
+          executeSpy.mockRestore();
+        }
+        throw rollback;
+      });
+    } catch (error) {
+      if (error !== rollback) throw error;
+    }
+  });
+
   it("continues through malformed-timestamp matches beyond the first 50 results", async () => {
     const fixturePrefix = "timestamp-pagination-fixture-20261004";
     const titles = await db.insert(titlesTable).values(
