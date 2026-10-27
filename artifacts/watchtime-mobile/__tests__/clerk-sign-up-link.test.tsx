@@ -311,20 +311,24 @@ describe('Clerk sign-up switch to sign-in', () => {
   });
 
   it.each([
-    { params: { returnTo: '/title/456' }, destination: '/title/456' },
-    { params: {}, destination: '/' },
-  ])('retries a network-interrupted code check unchanged and returns to $destination', async ({ params, destination }) => {
+    { params: { returnTo: '/title/456' }, destination: '/title/456', failures: 1 },
+    { params: {}, destination: '/', failures: 1 },
+    { params: { returnTo: '/title/456' }, destination: '/title/456', failures: 2 },
+    { params: {}, destination: '/', failures: 2 },
+  ])('retries $failures network-interrupted code checks unchanged and returns to $destination', async ({ params, destination, failures }) => {
     mockUseLocalSearchParams.mockReturnValue(params);
     const privateError = 'Private network transport details';
     let resolveRetry!: (result: { error: null }) => void;
     const retry = new Promise<{ error: null }>((resolve) => { resolveRetry = resolve; });
-    const verifyEmailCode = jest.fn()
-      .mockRejectedValueOnce(new Error(privateError))
-      .mockImplementationOnce(async () => {
-        const result = await retry;
-        signUp.status = 'complete';
-        return result;
-      });
+    const verifyEmailCode = jest.fn();
+    for (let attempt = 0; attempt < failures; attempt += 1) {
+      verifyEmailCode.mockRejectedValueOnce(new Error(privateError));
+    }
+    verifyEmailCode.mockImplementationOnce(async () => {
+      const result = await retry;
+      signUp.status = 'complete';
+      return result;
+    });
     const decorateUrl = jest.fn((url: string) => url);
     const signUp = {
       status: 'missing_requirements',
@@ -339,46 +343,58 @@ describe('Clerk sign-up switch to sign-in', () => {
 
     const screen = await render(<SignUpScreen />);
     await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
-    await fireEvent.press(screen.getByTestId('verify-button'));
 
-    expect(screen.getByTestId('verification-error')).toHaveTextContent(
-      'Could not verify your code. Please try again.',
-    );
-    expect(screen.getByTestId('verification-error').props.accessibilityRole).toBe('alert');
-    expect(screen.queryByText(privateError)).toBeNull();
-    expect(screen.getByText('Check your email')).toBeTruthy();
-    expect(screen.getByTestId('code-input').props.value).toBe('123456');
-    expect(screen.getByTestId('verify-button')).toBeEnabled();
-    expect(screen.getByTestId('resend-code-button')).toBeEnabled();
-    expect(mockLinkHref).toHaveBeenLastCalledWith(
-      'returnTo' in params
-        ? { pathname: '/(auth)/sign-in', params: { returnTo: params.returnTo } }
-        : '/(auth)/sign-in',
-    );
-    expect(signUp.finalize).not.toHaveBeenCalled();
-    expect(mockRouterReplace).not.toHaveBeenCalled();
-    await screen.rerender(<SignUpScreen />);
-    expect(screen.getByTestId('code-input').props.value).toBe('123456');
+    for (let attempt = 0; attempt < failures; attempt += 1) {
+      await fireEvent.press(screen.getByTestId('verify-button'));
+
+      expect(verifyEmailCode).toHaveBeenCalledTimes(attempt + 1);
+      expect(verifyEmailCode).toHaveBeenLastCalledWith({ code: '123456' });
+      expect(screen.getByTestId('verification-error')).toHaveTextContent(
+        'Could not verify your code. Please try again.',
+      );
+      expect(screen.getByTestId('verification-error').props.accessibilityRole).toBe('alert');
+      expect(screen.queryByText(privateError)).toBeNull();
+      expect(screen.getByText('Check your email')).toBeTruthy();
+      expect(screen.getByTestId('code-input').props.value).toBe('123456');
+      expect(screen.getByTestId('verify-button')).toBeEnabled();
+      expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+      expect(mockLinkHref).toHaveBeenLastCalledWith(
+        'returnTo' in params
+          ? { pathname: '/(auth)/sign-in', params: { returnTo: params.returnTo } }
+          : '/(auth)/sign-in',
+      );
+      expect(signUp.finalize).not.toHaveBeenCalled();
+      expect(decorateUrl).not.toHaveBeenCalled();
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+      expect(mockRedirect).not.toHaveBeenCalled();
+      await screen.rerender(<SignUpScreen />);
+      expect(screen.getByTestId('code-input').props.value).toBe('123456');
+    }
 
     let retryCheck!: Promise<void>;
     await act(async () => { retryCheck = getPressHandler(screen, 'verify-button')(); });
     expect(screen.queryByTestId('verification-error')).toBeNull();
     expect(screen.getByTestId('verify-button')).toBeDisabled();
     expect(screen.getByTestId('code-input').props.value).toBe('123456');
+    expect(signUp.finalize).not.toHaveBeenCalled();
+    expect(decorateUrl).not.toHaveBeenCalled();
+    expect(mockRouterReplace).not.toHaveBeenCalled();
+    expect(mockRedirect).not.toHaveBeenCalled();
     await act(async () => {
       resolveRetry({ error: null });
       await retryCheck;
     });
 
-    expect(verifyEmailCode.mock.calls).toEqual([
-      [{ code: '123456' }],
-      [{ code: '123456' }],
-    ]);
+    expect(verifyEmailCode.mock.calls).toEqual(
+      Array.from({ length: failures + 1 }, () => [{ code: '123456' }]),
+    );
     expect(signUp.verifications.sendEmailCode).not.toHaveBeenCalled();
     expect(signUp.finalize).toHaveBeenCalledTimes(1);
+    expect(decorateUrl).toHaveBeenCalledTimes(1);
     expect(decorateUrl).toHaveBeenCalledWith(destination);
     expect(mockRouterReplace).toHaveBeenCalledTimes(1);
     expect(mockRouterReplace).toHaveBeenCalledWith(destination);
+    expect(mockRedirect).not.toHaveBeenCalled();
   });
 
   it.each(['returned error', 'rejected promise'])('recovers from a finalization failure: %s', async (failure) => {
