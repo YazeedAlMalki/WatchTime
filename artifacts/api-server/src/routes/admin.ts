@@ -1709,6 +1709,14 @@ router.patch("/content-aliases/:id", async (req, res) => {
       }).from(titleAliasesTable).where(
         eq(titleAliasesTable.normalizedAlias, current.normalizedAlias),
       );
+      const providerCitations = current.isEditorial
+        ? []
+        : (current.providerSources ?? []).flatMap((provider) => {
+            const citation = current.providerCitations?.[provider];
+            return citation
+              ? [{ provider, sourceName: citation.sourceName, sourceUrl: citation.sourceUrl }]
+              : [];
+          });
       return {
         code: "stale_alias",
         error: "This alternate title changed while you were editing. Refresh the list and review the newer correction before saving.",
@@ -1722,6 +1730,7 @@ router.patch("/content-aliases/:id", async (req, res) => {
           language: current.language,
           sourceName: current.sourceName,
           sourceUrl: current.sourceUrl,
+          providerCitations,
           isEditorial: Boolean(current.isEditorial),
           collision: (collision?.titleCount ?? 1) > 1,
           collisionTitleCount: collision?.titleCount ?? 1,

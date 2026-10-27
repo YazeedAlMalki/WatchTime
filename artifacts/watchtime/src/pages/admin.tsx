@@ -3493,30 +3493,33 @@ export function AliasReview({
                     Source
                   </dt>
                   <dd>
-                    {!conflictAlias.isEditorial &&
-                    (conflictAlias.providerCitations?.length ?? 0) > 0 ? (
-                      <div className="flex flex-col gap-1">
-                        {conflictAlias.providerCitations.map((citation) =>
-                          citation.sourceUrl ? (
-                            <a
-                              key={citation.provider}
-                              href={citation.sourceUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-orange-800 underline dark:text-orange-200"
-                            >
-                              {citation.sourceName}
-                            </a>
-                          ) : (
-                            <span key={citation.provider}>
-                              {citation.sourceName}
-                              <span className="ml-1 text-xs italic text-orange-700/80 dark:text-orange-300/80">
-                                No source link
+                    {!conflictAlias.isEditorial ? (
+                      (conflictAlias.providerCitations?.length ?? 0) > 0 ? (
+                        <div className="flex flex-col gap-1">
+                          {conflictAlias.providerCitations?.map((citation) =>
+                            citation.sourceUrl ? (
+                              <a
+                                key={citation.provider}
+                                href={citation.sourceUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-orange-800 underline dark:text-orange-200"
+                              >
+                                {citation.sourceName}
+                              </a>
+                            ) : (
+                              <span key={citation.provider}>
+                                {citation.sourceName}
+                                <span className="ml-1 text-xs italic text-orange-700/80 dark:text-orange-300/80">
+                                  No source link
+                                </span>
                               </span>
-                            </span>
-                          ),
-                        )}
-                      </div>
+                            ),
+                          )}
+                        </div>
+                      ) : (
+                        "No active provider citations"
+                      )
                     ) : conflictAlias.sourceUrl ? (
                       <a
                         href={conflictAlias.sourceUrl}

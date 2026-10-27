@@ -1094,6 +1094,8 @@ describe("admin alternate-title review", () => {
     const providerAlias: AdminContentAlias = {
       ...initialAlias,
       isEditorial: false,
+      sourceName: "Withdrawn provider source",
+      sourceUrl: "https://example.test/withdrawn-provider",
       providerCitations: [
         {
           provider: "tvmaze",
@@ -1163,6 +1165,60 @@ describe("admin alternate-title review", () => {
       ["EN Wikipedia", "https://example.test/wikipedia"],
     ]);
     expect(sourceSection?.querySelectorAll("a")).toHaveLength(2);
+    expect(sourceSection?.textContent).not.toContain("Withdrawn provider source");
+    expect(sourceSection?.querySelector(
+      'a[href="https://example.test/withdrawn-provider"]',
+    )).toBeNull();
+  });
+
+  it("does not show historical provider source fields when no active citations remain", async () => {
+    const providerAlias: AdminContentAlias = {
+      ...initialAlias,
+      isEditorial: false,
+      sourceName: "Withdrawn provider source",
+      sourceUrl: "https://example.test/withdrawn-provider",
+      providerCitations: [],
+    };
+    mocks.updateMutation.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        options?: { onError?: (error: unknown) => Promise<void> },
+      ) => {
+        void options?.onError?.({
+          data: {
+            code: "stale_alias",
+            error: "This alternate title changed while you were editing.",
+            current: {
+              ...providerAlias,
+              alias: "Newer Provider Alias",
+              updatedAt: "2026-09-17T00:00:00.000Z",
+            },
+          },
+        });
+      },
+    );
+    render([providerAlias]);
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Stale provider draft",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    const sourceSection = Array.from(
+      container.querySelectorAll('[role="alert"] dl > div'),
+    )
+      .find(
+        (field) => field.querySelector("dt")?.textContent?.trim() === "Source",
+      )
+      ?.querySelector("dd");
+    expect(sourceSection?.textContent).toBe("No active provider citations");
+    expect(sourceSection?.querySelector("a")).toBeNull();
+    expect(sourceSection?.textContent).not.toContain("Withdrawn provider source");
   });
 
   it("keeps stale correction details available while another alias is edited", async () => {

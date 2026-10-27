@@ -1702,6 +1702,54 @@ describe("admin title aliases", () => {
     ]);
   });
 
+  it("returns only active provider citations with a stale alias conflict", async () => {
+    const [row] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
+    const expectedUpdatedAt = row.updatedAt;
+    const currentUpdatedAt = new Date(expectedUpdatedAt.getTime() + 1_000);
+    await db.update(titleAliasesTable).set({
+      isEditorial: false,
+      providerSources: ["tvmaze"],
+      providerCitations: {
+        tvmaze: {
+          sourceName: "Active TVMaze source",
+          sourceUrl: "https://example.test/active-tvmaze",
+        },
+        wikipedia: {
+          sourceName: "Withdrawn Wikipedia source",
+          sourceUrl: "https://example.test/withdrawn-wikipedia",
+        },
+      },
+      sourceName: "Withdrawn Wikipedia source",
+      sourceUrl: "https://example.test/withdrawn-wikipedia",
+      updatedAt: currentUpdatedAt,
+    }).where(eq(titleAliasesTable.id, row.id));
+
+    const staleEdit = await request(app)
+      .patch(`/api/admin/content-aliases/${row.id}`)
+      .send({
+        alias: "Stale Provider Draft",
+        language: "fr",
+        sourceUrl: null,
+        expectedUpdatedAt: expectedUpdatedAt.toISOString(),
+      })
+      .expect(409);
+
+    expect(staleEdit.body.current.providerCitations).toEqual([
+      {
+        provider: "tvmaze",
+        sourceName: "Active TVMaze source",
+        sourceUrl: "https://example.test/active-tvmaze",
+      },
+    ]);
+    expect(staleEdit.body.current.providerCitations).not.toContainEqual(
+      expect.objectContaining({
+        sourceName: "Withdrawn Wikipedia source",
+        sourceUrl: "https://example.test/withdrawn-wikipedia",
+      }),
+    );
+  });
+
   it("rejects a stale removal without deleting the newer correction", async () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
