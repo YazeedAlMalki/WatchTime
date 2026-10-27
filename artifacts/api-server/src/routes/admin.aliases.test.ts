@@ -858,19 +858,24 @@ describe("admin title aliases", () => {
     expect(firstPage.body.items.map((alias: { alias: string }) => alias.alias))
       .toEqual(["Snapshot Review Alpha", "Snapshot Review Bravo"]);
     expect(firstPage.body.nextCursor).toMatch(/^[0-9a-f-]{36}:2:0$/i);
-    await request(app)
+    const filterMismatch = await request(app)
       .get("/api/admin/content-aliases")
       .query({
         q: "Snapshot Review",
         ownership: "provider",
         limit: 2,
         cursor: firstPage.body.nextCursor,
-      })
-      .expect(400);
-    await request(app)
+      });
+    expect(filterMismatch.status).toBe(400);
+    expect(filterMismatch.body).toEqual({
+      error: "Alias snapshot cursor does not match the active filters",
+    });
+
+    const malformedCursor = await request(app)
       .get("/api/admin/content-aliases")
-      .query({ q: "Snapshot Review", limit: 2, cursor: "not-a-snapshot" })
-      .expect(400);
+      .query({ q: "Snapshot Review", limit: 2, cursor: "not-a-snapshot" });
+    expect(malformedCursor.status).toBe(400);
+    expect(malformedCursor.body).toEqual({ error: "Invalid alias snapshot cursor" });
 
     await db.delete(titleAliasesTable).where(eq(titleAliasesTable.id, rows[2].id));
     await db.update(titleAliasesTable).set({
@@ -950,6 +955,32 @@ describe("admin title aliases", () => {
       ...secondPage.body.items.map((alias: { id: number }) => alias.id),
       ...thirdPage.body.items.map((alias: { id: number }) => alias.id),
     ]).size).toBe(4);
+  });
+
+  it("explains when an alias review snapshot has expired", async () => {
+    const firstPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Shared Local Title", limit: 1 })
+      .expect(200);
+    expect(firstPage.body.nextCursor).toBeTruthy();
+
+    const now = Date.now();
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(now + 15 * 60 * 1000);
+    try {
+      const expiredPage = await request(app)
+        .get("/api/admin/content-aliases")
+        .query({
+          q: "Shared Local Title",
+          limit: 1,
+          cursor: firstPage.body.nextCursor,
+        });
+      expect(expiredPage.status).toBe(409);
+      expect(expiredPage.body).toEqual({
+        error: "This alias review snapshot expired. Restart the search.",
+      });
+    } finally {
+      dateNow.mockRestore();
+    }
   });
 
   it("exports all matching alternate titles as safely escaped CSV", async () => {
