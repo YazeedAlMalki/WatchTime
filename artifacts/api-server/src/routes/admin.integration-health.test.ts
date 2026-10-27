@@ -101,6 +101,88 @@ describe("GET /api/admin/integrations", () => {
     });
   });
 
+  it("distinguishes discarded last-sync and last-success timestamps from missing values", async () => {
+    const syncProvider = "Malformed last sync health regression";
+    const successProvider = "Malformed last success health regression";
+    const missingProvider = "Missing health timestamps regression";
+    const healthRows = await db
+      .insert(integrationHealthTable)
+      .values([
+        {
+          provider: syncProvider,
+          status: "healthy",
+          successRatePercent: 91,
+          lastSyncAt: new Date("2026-10-20T12:00:00.000Z"),
+        },
+        {
+          provider: successProvider,
+          status: "healthy",
+          successRatePercent: 87,
+        },
+        {
+          provider: missingProvider,
+          status: "healthy",
+          successRatePercent: 100,
+        },
+      ])
+      .returning({ id: integrationHealthTable.id, provider: integrationHealthTable.provider });
+    insertedIds.push(...healthRows.map((row) => row.id));
+
+    const syncRow = healthRows.find((row) => row.provider === syncProvider)!;
+    const successRow = healthRows.find((row) => row.provider === successProvider)!;
+    await db.execute(sql`
+      update integration_health
+      set last_sync_at = 'infinity'::timestamp
+      where id = ${syncRow.id}
+    `);
+    await db.execute(sql`
+      update integration_health
+      set last_success_at = '-infinity'::timestamp
+      where id = ${successRow.id}
+    `);
+
+    const response = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+    const syncHealth = response.body.find(
+      (row: { provider: string }) => row.provider === syncProvider,
+    );
+    const successHealth = response.body.find(
+      (row: { provider: string }) => row.provider === successProvider,
+    );
+    const missingHealth = response.body.find(
+      (row: { provider: string }) => row.provider === missingProvider,
+    );
+
+    expect(syncHealth).toMatchObject({
+      provider: syncProvider,
+      status: "healthy",
+      successRatePercent: 91,
+      lastSyncAt: null,
+      lastSyncAtMalformed: true,
+      lastSuccessAt: null,
+      lastSuccessAtMalformed: false,
+    });
+    expect(successHealth).toMatchObject({
+      provider: successProvider,
+      status: "healthy",
+      successRatePercent: 87,
+      lastSyncAt: null,
+      lastSyncAtMalformed: false,
+      lastSuccessAt: null,
+      lastSuccessAtMalformed: true,
+    });
+    expect(missingHealth).toMatchObject({
+      provider: missingProvider,
+      status: "healthy",
+      successRatePercent: 100,
+      lastSyncAt: null,
+      lastSyncAtMalformed: false,
+      lastSuccessAt: null,
+      lastSuccessAtMalformed: false,
+    });
+  });
+
   it("preserves each missing refresh count as null for partially populated rows", async () => {
     const attemptsOnlyProvider = "Admin history attempts-only regression";
     const successesOnlyProvider = "Admin history successes-only regression";

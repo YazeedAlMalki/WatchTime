@@ -4266,11 +4266,45 @@ function IntegrationsTab({
                 </span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-border/50">
-                <span className="text-muted-foreground">Last Sync</span>
-                <span className="font-medium">
+                <div>
+                  <span className="text-muted-foreground">Last Sync</span>
+                  {int.lastSyncAtMalformed && (
+                    <span
+                      role="alert"
+                      className="mt-1 block text-xs font-medium text-orange-700 dark:text-orange-300"
+                    >
+                      Stored timestamp was malformed and discarded. Investigate
+                      this provider value.
+                    </span>
+                  )}
+                </div>
+                <span className="font-medium text-right">
                   {int.lastSyncAt
                     ? new Date(int.lastSyncAt).toLocaleString()
-                    : "Never"}
+                    : int.lastSyncAtMalformed
+                      ? "Unavailable"
+                      : "Never"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-border/50">
+                <div>
+                  <span className="text-muted-foreground">Last Success</span>
+                  {int.lastSuccessAtMalformed && (
+                    <span
+                      role="alert"
+                      className="mt-1 block text-xs font-medium text-orange-700 dark:text-orange-300"
+                    >
+                      Stored timestamp was malformed and discarded. Investigate
+                      this provider value.
+                    </span>
+                  )}
+                </div>
+                <span className="font-medium text-right">
+                  {int.lastSuccessAt
+                    ? new Date(int.lastSuccessAt).toLocaleString()
+                    : int.lastSuccessAtMalformed
+                      ? "Unavailable"
+                      : "Never"}
                 </span>
               </div>
               {int.lastError && (

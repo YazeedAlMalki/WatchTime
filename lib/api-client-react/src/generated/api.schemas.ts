@@ -1012,6 +1012,10 @@ export interface IntegrationHealth {
   lastSyncAt?: string | null;
   /** @nullable */
   lastSuccessAt?: string | null;
+  /** True when a non-null stored last-sync timestamp was unusable and returned as null. */
+  lastSyncAtMalformed: boolean;
+  /** True when a non-null stored last-success timestamp was unusable and returned as null. */
+  lastSuccessAtMalformed: boolean;
   /** @nullable */
   lastError?: string | null;
   successRatePercent: number;

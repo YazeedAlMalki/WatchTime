@@ -22,7 +22,23 @@ import {
   safetySyncRunsTable,
   type SafetySyncRunResult,
 } from "@workspace/db";
-import { and, asc, eq, sql, desc, gte, gt, lt, lte, ilike, inArray, isNull, or, exists } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  sql,
+  desc,
+  gte,
+  gt,
+  lt,
+  lte,
+  ilike,
+  inArray,
+  isNull,
+  or,
+  exists,
+  getTableColumns,
+} from "drizzle-orm";
 import {
   DeleteAdminContentAliasBody,
   UpdateAdminContributionBody,
@@ -441,7 +457,25 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
 
 router.get("/integrations", async (_req, res) => {
   const [rows, malformedTimestampCounts] = await Promise.all([
-    db.select().from(integrationHealthTable),
+    db
+      .select({
+        ...getTableColumns(integrationHealthTable),
+        lastSyncAtMalformed: sql<boolean>`
+          ${integrationHealthTable.lastSyncAt} is not null
+          and (
+            not isfinite(${integrationHealthTable.lastSyncAt})
+            or abs(extract(epoch from ${integrationHealthTable.lastSyncAt})) > 8640000000000
+          )
+        `,
+        lastSuccessAtMalformed: sql<boolean>`
+          ${integrationHealthTable.lastSuccessAt} is not null
+          and (
+            not isfinite(${integrationHealthTable.lastSuccessAt})
+            or abs(extract(epoch from ${integrationHealthTable.lastSuccessAt})) > 8640000000000
+          )
+        `,
+      })
+      .from(integrationHealthTable),
     db
       .select({
         provider: safetyRecordsTable.sourceName,
@@ -462,8 +496,20 @@ router.get("/integrations", async (_req, res) => {
     rows.map((r) => ({
       provider: r.provider,
       status: r.status,
-      lastSyncAt: r.lastSyncAt?.toISOString() ?? null,
-      lastSuccessAt: r.lastSuccessAt?.toISOString() ?? null,
+      lastSyncAt:
+        !r.lastSyncAtMalformed &&
+        r.lastSyncAt &&
+        Number.isFinite(r.lastSyncAt.getTime())
+          ? r.lastSyncAt.toISOString()
+          : null,
+      lastSuccessAt:
+        !r.lastSuccessAtMalformed &&
+        r.lastSuccessAt &&
+        Number.isFinite(r.lastSuccessAt.getTime())
+          ? r.lastSuccessAt.toISOString()
+          : null,
+      lastSyncAtMalformed: r.lastSyncAtMalformed,
+      lastSuccessAtMalformed: r.lastSuccessAtMalformed,
       lastError: r.lastError,
       successRatePercent: r.successRatePercent,
       refreshAttempts: r.refreshAttempts,
@@ -475,7 +521,10 @@ router.get("/integrations", async (_req, res) => {
       sustainedFailureAlert:
         (r.provider === "TVMaze" || r.provider === "Wikipedia") &&
         r.status === "failing" &&
-        (!r.lastSuccessAt || r.lastSuccessAt.getTime() < sustainedFailureThreshold),
+        (r.lastSuccessAtMalformed ||
+          !r.lastSuccessAt ||
+          !Number.isFinite(r.lastSuccessAt.getTime()) ||
+          r.lastSuccessAt.getTime() < sustainedFailureThreshold),
       lowAccumulatedSuccessRateAlert:
         LOW_ACCUMULATED_SUCCESS_RATE_PROVIDERS.has(r.provider) &&
         r.refreshAttempts != null &&

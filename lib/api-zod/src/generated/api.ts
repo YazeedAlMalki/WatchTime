@@ -1277,6 +1277,8 @@ export const ListAdminIntegrationsResponseItem = zod.object({
   "status": zod.enum(['healthy', 'degraded', 'failing', 'provider_unavailable']),
   "lastSyncAt": zod.string().nullish(),
   "lastSuccessAt": zod.string().nullish(),
+  "lastSyncAtMalformed": zod.boolean().describe('True when a non-null stored last-sync timestamp was unusable and returned as null.'),
+  "lastSuccessAtMalformed": zod.boolean().describe('True when a non-null stored last-success timestamp was unusable and returned as null.'),
   "lastError": zod.string().nullish(),
   "successRatePercent": zod.number(),
   "refreshAttempts": zod.int().nullable(),

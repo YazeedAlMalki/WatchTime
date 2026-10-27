@@ -2147,12 +2147,18 @@ components:
             - type: "null"
     IntegrationHealth:
       type: object
-      required: [provider, status, successRatePercent, refreshAttempts, successfulRefreshes, mappedTitles, missingMappings, malformedRefreshTimestampCount, sustainedFailureAlert, lowAccumulatedSuccessRateAlert]
+      required: [provider, status, successRatePercent, refreshAttempts, successfulRefreshes, mappedTitles, missingMappings, malformedRefreshTimestampCount, lastSyncAtMalformed, lastSuccessAtMalformed, sustainedFailureAlert, lowAccumulatedSuccessRateAlert]
       properties:
         provider: { type: string }
         status: { type: string, enum: [healthy, degraded, failing, provider_unavailable] }
         lastSyncAt: { type: ["string", "null"] }
         lastSuccessAt: { type: ["string", "null"] }
+        lastSyncAtMalformed:
+          type: boolean
+          description: True when a non-null stored last-sync timestamp was unusable and returned as null.
+        lastSuccessAtMalformed:
+          type: boolean
+          description: True when a non-null stored last-success timestamp was unusable and returned as null.
         lastError: { type: ["string", "null"] }
         successRatePercent: { type: number }
         refreshAttempts: { type: ["integer", "null"] }
