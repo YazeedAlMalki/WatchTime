@@ -281,6 +281,63 @@ describe("restored admin actions", () => {
     await request(app).get("/api/admin/feedback?category=unsupported").expect(400);
   });
 
+  it("rejects unsupported report and feedback decisions without saving or auditing", async () => {
+    const [report] = await db.insert(reportsTable).values({
+      userId: adminId,
+      titleId,
+      reason: "wrong_title",
+      status: "open",
+    }).returning();
+    reportIds.push(report.id);
+    const [feedback] = await db.insert(feedbackTable).values({
+      userId: adminId,
+      category: "bug",
+      message: "unsupported status test",
+      status: "new",
+    }).returning();
+
+    await request(app).patch(`/api/admin/reports/${report.id}`)
+      .send({ status: "unsupported" }).expect(400);
+    await request(app).patch(`/api/admin/feedback/${feedback.id}`)
+      .send({ status: "unsupported" }).expect(400);
+
+    const [unchangedReport] = await db.select().from(reportsTable)
+      .where(eq(reportsTable.id, report.id));
+    const [unchangedFeedback] = await db.select().from(feedbackTable)
+      .where(eq(feedbackTable.id, feedback.id));
+    expect(unchangedReport.status).toBe("open");
+    expect(unchangedFeedback.status).toBe("new");
+    expect(await db.select().from(adminAuditLogTable)
+      .where(eq(adminAuditLogTable.adminId, adminId))).toEqual([]);
+
+    await request(app).patch(`/api/admin/reports/${report.id}`)
+      .send({ status: "resolved" }).expect(200);
+    await request(app).patch(`/api/admin/feedback/${feedback.id}`)
+      .send({ status: "reviewing" }).expect(200);
+
+    const [updatedReport] = await db.select().from(reportsTable)
+      .where(eq(reportsTable.id, report.id));
+    const [updatedFeedback] = await db.select().from(feedbackTable)
+      .where(eq(feedbackTable.id, feedback.id));
+    expect(updatedReport.status).toBe("resolved");
+    expect(updatedFeedback.status).toBe("reviewing");
+
+    const auditEntries = await db.select().from(adminAuditLogTable)
+      .where(eq(adminAuditLogTable.adminId, adminId));
+    expect(auditEntries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "resolved_report",
+        entityType: "report",
+        entityId: report.id,
+      }),
+      expect.objectContaining({
+        action: "feedback_reviewing",
+        entityType: "feedback",
+        entityId: feedback.id,
+      }),
+    ]));
+  });
+
   it("rejects report and feedback pagination outside the supported bounds", async () => {
     await request(app).get("/api/admin/reports?limit=0").expect(400);
     await request(app).get("/api/admin/reports?limit=101").expect(400);
