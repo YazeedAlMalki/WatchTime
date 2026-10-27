@@ -314,6 +314,99 @@ describe("rate-limit background cleanup", () => {
     expect(warn).toHaveBeenCalledTimes(3);
   });
 
+  it("recovers after a stalled batch fails without leaking client keys or throttling the next batch's warning", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(performance, "now").mockImplementation(() => Date.now());
+    let reject!: (reason: Error) => void;
+    let resolve!: (result: { rowCount: number }) => void;
+    execute
+      .mockImplementationOnce(() => new Promise((_done, fail) => { reject = fail; }))
+      .mockImplementationOnce(() => new Promise<{ rowCount: number }>((done) => { resolve = done; }))
+      .mockResolvedValue({ rowCount: 0 });
+    initializedStore();
+
+    try {
+      await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+      await vi.advanceTimersByTimeAsync(
+        RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS,
+      );
+      expect(warn).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledExactlyOnceWith(
+        {
+          event: "rate_limit_cleanup",
+          outcome: "stalled",
+          durationMs: RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS,
+          thresholdMs: RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS,
+          batchSize: RATE_LIMIT_CLEANUP_BATCH_SIZE,
+          intervalMs: RATE_LIMIT_CLEANUP_INTERVAL_MS,
+        },
+        expect.stringContaining("no overlapping batch will start"),
+      );
+      expect(info).not.toHaveBeenCalled();
+
+      const error = new Error("database unavailable: private-client-key");
+      Object.assign(error, { query: "private-client-key", params: ["private-client-key"] });
+      reject(error);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenLastCalledWith(
+        {
+          event: "rate_limit_cleanup",
+          outcome: "failure",
+          durationMs: RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS,
+          batchSize: RATE_LIMIT_CLEANUP_BATCH_SIZE,
+          intervalMs: RATE_LIMIT_CLEANUP_INTERVAL_MS,
+        },
+        expect.stringContaining("Retrying on the next scheduled tick"),
+      );
+      expect(JSON.stringify([warn.mock.calls, info.mock.calls])).not.toContain("private-client-key");
+      expect(info).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS - 1);
+      expect(execute).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(execute).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(
+        RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS,
+      );
+      expect(warn).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+      // This threshold falls inside the first batch's reminder throttle window.
+      expect(RATE_LIMIT_CLEANUP_INTERVAL_MS + RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS)
+        .toBeLessThan(RATE_LIMIT_CLEANUP_WARNING_INTERVAL_MS);
+      expect(warn).toHaveBeenCalledTimes(3);
+      expect(warn).toHaveBeenLastCalledWith(
+        {
+          event: "rate_limit_cleanup",
+          outcome: "stalled",
+          durationMs: RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS,
+          thresholdMs: RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS,
+          batchSize: RATE_LIMIT_CLEANUP_BATCH_SIZE,
+          intervalMs: RATE_LIMIT_CLEANUP_INTERVAL_MS,
+        },
+        expect.stringContaining("no overlapping batch will start"),
+      );
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(info).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(1);
+      resolve({ rowCount: 7 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(info).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ outcome: "success", deletedRows: 7 }),
+        "Rate-limit counter cleanup completed",
+      );
+    } finally {
+      // Settle either deferred batch even if an assertion fails.
+      reject?.(new Error("test cleanup"));
+      resolve?.({ rowCount: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+    }
+  });
+
   it("warns after repeated full batches and throttles reminders until recovery", async () => {
     vi.useFakeTimers();
     vi.spyOn(performance, "now").mockImplementation(() => Date.now());
