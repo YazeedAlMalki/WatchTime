@@ -43,6 +43,7 @@ const mockRecommendations = () => mockMovieWatched
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
+  useIsFocused: () => true,
   useLocalSearchParams: () => ({ id: '42' }),
 }));
 jest.mock('@/lib/app-auth', () => ({

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useIsFocused, useRouter } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import {
   showSignInUnavailableMessage,
@@ -47,6 +47,7 @@ import colors from '@/constants/colors';
 
 type Tab = 'shows' | 'movies' | 'history';
 const PAGE_SIZE = 24;
+export const WATCH_PROGRESS_REFRESH_INTERVAL_MS = 30_000;
 
 function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
   const c = useColors();
@@ -322,12 +323,28 @@ type ShowFilter = 'all' | 'up-next' | 'caught-up';
 export default function MyShowsScreen() {
   const c = useColors();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const { isSignedIn, isAuthAvailable, userId } = useAppAuth();
   const [activeTab, setActiveTab] = useState<Tab>('shows');
   const [showSearch, setShowSearch] = useState('');
   const [debouncedShowSearch, setDebouncedShowSearch] = useState('');
   const [showFilter, setShowFilter] = useState<ShowFilter>('all');
+  const hasFocusedOnce = useRef(false);
+
+  useEffect(() => {
+    if (isFocused && hasFocusedOnce.current) {
+      void queryClient.invalidateQueries({
+        queryKey: getGetMyShowsQueryKey(),
+        exact: false,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: getGetMyInProgressShowsQueryKey(),
+      });
+    }
+    if (isFocused) hasFocusedOnce.current = true;
+  }, [isFocused, queryClient]);
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedShowSearch(showSearch.trim()), 350);
@@ -342,6 +359,8 @@ export default function MyShowsScreen() {
     queryKey: [...getGetMyShowsQueryKey(), 'account', userId, 'infinite', showQueryParams],
     initialPageParam: undefined as number | undefined,
     enabled: !!isSignedIn && !!userId,
+    refetchInterval: isFocused ? WATCH_PROGRESS_REFRESH_INTERVAL_MS : false,
+    refetchIntervalInBackground: false,
     queryFn: ({ pageParam, signal }) =>
       getMyShows({ limit: PAGE_SIZE, beforeId: pageParam, ...showQueryParams }, { signal }),
     getNextPageParam: (lastPage) =>
@@ -351,6 +370,8 @@ export default function MyShowsScreen() {
     queryKey: [...getGetMyInProgressShowsQueryKey(), 'account', userId, 'infinite'],
     initialPageParam: undefined as number | undefined,
     enabled: !!isSignedIn && !!userId && showFilter !== 'caught-up' && !debouncedShowSearch,
+    refetchInterval: isFocused ? WATCH_PROGRESS_REFRESH_INTERVAL_MS : false,
+    refetchIntervalInBackground: false,
     queryFn: ({ pageParam, signal }) =>
       getMyInProgressShows({ limit: PAGE_SIZE, beforeId: pageParam }, { signal }),
     getNextPageParam: (lastPage) =>

@@ -44,6 +44,7 @@ jest.mock('@/lib/dev-demo-session', () => ({
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn() }),
+  useIsFocused: () => true,
 }));
 
 jest.mock('expo-image', () => {

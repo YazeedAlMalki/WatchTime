@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { useGetSeason } from '@workspace/api-client-react';
 
 const mockRouter = { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: jest.fn() };
+const mockRouteFocused = { current: true };
 const mockWatched = new Set<number>();
 const mockSeasons = [
   { seasonNumber: 1, name: 'Season 1', episodeCount: 2 },
@@ -55,6 +56,7 @@ const mockTrackedShow = () => {
 
 jest.mock('expo-router', () => ({
   useRouter: () => mockRouter,
+  useIsFocused: () => mockRouteFocused.current,
   useLocalSearchParams: () => ({ id: '42' }),
   Link: ({ children }: { children: React.ReactNode }) => children,
 }));
@@ -225,7 +227,7 @@ jest.mock('@workspace/api-client-react', () => {
 });
 
 import HomeScreen from '../app/(tabs)/index';
-import MyShowsScreen from '../app/(tabs)/my-shows';
+import MyShowsScreen, { WATCH_PROGRESS_REFRESH_INTERVAL_MS } from '../app/(tabs)/my-shows';
 import TitleDetailScreen from '../app/title/[id]';
 
 const mockApi = require('@workspace/api-client-react');
@@ -433,6 +435,52 @@ it('moves a show from Caught Up back into Up Next after a title-detail unmark', 
   await act(async () => screen.unmount());
   client.clear();
 });
+
+it.each([
+  {
+    filter: 'up-next',
+    initiallyWatched: [101, 102, 201],
+    changeRemoteProgress: () => mockWatched.add(202),
+  },
+  {
+    filter: 'caught-up',
+    initiallyWatched: [101, 102, 201, 202],
+    changeRemoteProgress: () => mockWatched.delete(202),
+  },
+] as const)(
+  'refreshes the $filter show list after watch progress changes remotely',
+  async ({ filter, initiallyWatched, changeRemoteProgress }) => {
+    jest.useFakeTimers();
+    mockRouteFocused.current = true;
+    mockWatched.clear();
+    initiallyWatched.forEach((episodeId) => mockWatched.add(episodeId));
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      },
+    });
+    const screen = await render(
+      <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
+    );
+
+    try {
+      await fireEvent.press(screen.getByTestId(`filter-chip-${filter}`));
+      await waitFor(() => expect(screen.getByTestId('show-row-42')).toBeTruthy());
+
+      changeRemoteProgress();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(WATCH_PROGRESS_REFRESH_INTERVAL_MS);
+      });
+
+      await waitFor(() => expect(screen.queryByTestId('show-row-42')).toBeNull());
+    } finally {
+      await act(async () => screen.unmount());
+      client.clear();
+      jest.useRealTimers();
+    }
+  },
+);
 
 it('keeps settled and late Home mark errors tied to the failed episode as the same card updates', async () => {
   mockWatched.clear();

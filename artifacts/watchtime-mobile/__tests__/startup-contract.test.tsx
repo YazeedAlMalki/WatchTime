@@ -152,6 +152,7 @@ jest.mock('@tanstack/react-query', () => {
   class QueryClient {}
 
   return {
+    focusManager: { setEventListener: jest.fn() },
     QueryClient,
     QueryClientProvider: ({ children }: any) => children,
     useQueryClient: () => ({}),

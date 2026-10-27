@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ClerkProvider, useAuth } from '@clerk/expo';
@@ -35,6 +35,18 @@ const domain = process.env.EXPO_PUBLIC_DOMAIN;
 if (domain) setBaseUrl(`https://${domain}`);
 
 const SPLASH_HIDE_TIMEOUT_MS = 5_000;
+
+if (Platform.OS !== 'web') {
+  focusManager.setEventListener((setFocused) => {
+    if (AppState.currentState !== null) {
+      setFocused(AppState.currentState === 'active');
+    }
+    const subscription = AppState.addEventListener('change', (state) => {
+      setFocused(state === 'active');
+    });
+    return () => subscription.remove();
+  });
+}
 
 // Defer storage access one microtask so preventAutoHideAsync starts first.
 const devSplashFailure = Promise.resolve().then(consumeDevSplashFailure);

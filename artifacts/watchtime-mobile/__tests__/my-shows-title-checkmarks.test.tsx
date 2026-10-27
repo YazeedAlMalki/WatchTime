@@ -42,6 +42,7 @@ const mockSeasonData = (season: number) => ({
 
 jest.mock('expo-router', () => ({
   useRouter: () => mockRouter,
+  useIsFocused: () => true,
   useLocalSearchParams: () => ({ id: '42' }),
   Link: ({ children }: { children: React.ReactNode }) => children,
 }));
