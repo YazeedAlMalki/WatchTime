@@ -2620,6 +2620,43 @@ describe("admin title aliases", () => {
             recordId: records[1].id,
             refreshTimestampMalformed: true,
           });
+
+          const allRegionsReviewUrl =
+            `/api/admin/content?q=${encodeURIComponent(titleQuery)}` +
+            "&malformedRefreshTimestamp=true&malformedRefreshTimestampAllRegions=true" +
+            "&malformedRefreshTimestampProvider=Wikidata";
+          const initialAllRegionsReview = await request(app)
+            .get(allRegionsReviewUrl)
+            .expect(200);
+          expect(initialAllRegionsReview.body).toHaveLength(1);
+          expect(initialAllRegionsReview.body[0].selectedRating).toMatchObject({
+            region: "GB",
+            recordId: records[1].id,
+            refreshTimestampMalformed: true,
+          });
+
+          await tx.update(safetyRecordsTable)
+            .set({ updatedAt: new Date("2026-03-01T00:00:00.000Z") })
+            .where(eq(safetyRecordsTable.id, records[1].id));
+
+          const repairedGbReview = await request(app)
+            .get(`/api/admin/content?q=${encodeURIComponent(titleQuery)}&region=GB&malformedRefreshTimestamp=true`)
+            .expect(200);
+          expect(repairedGbReview.body).toEqual([]);
+          const repairedAllRegionsReview = await request(app)
+            .get(allRegionsReviewUrl)
+            .expect(200);
+          expect(repairedAllRegionsReview.body).toEqual([]);
+
+          const unchangedUsContent = await request(app)
+            .get(`/api/admin/content?q=${encodeURIComponent(titleQuery)}&region=US`)
+            .expect(200);
+          expect(unchangedUsContent.body).toHaveLength(1);
+          expect(unchangedUsContent.body[0].selectedRating).toMatchObject({
+            region: "US",
+            recordId: records[0].id,
+            refreshTimestampMalformed: false,
+          });
         } finally {
           selectSpy.mockRestore();
           executeSpy.mockRestore();
