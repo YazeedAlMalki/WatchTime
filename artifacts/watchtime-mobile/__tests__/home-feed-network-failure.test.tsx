@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ApiError } from '../../../lib/api-client-react/src/custom-fetch';
 import {
   getGetMyRecommendationsQueryKey,
   getGetMyShowsQueryKey,
@@ -64,6 +65,12 @@ const trackedShow = {
   watchedEpisodes: 0,
 };
 const accountKey = (key: readonly unknown[]) => [...key, 'account', 'home-network-user'];
+const unavailableBody = { error: 'Feed temporarily unavailable' };
+const unavailableResponse = () => new Response(JSON.stringify(unavailableBody), {
+  status: 503,
+  statusText: 'Service Unavailable',
+  headers: { 'Content-Type': 'application/json' },
+});
 const feedCases = [
   {
     key: accountKey(getGetMyShowsQueryKey()),
@@ -103,7 +110,7 @@ const feedCases = [
   },
 ];
 
-describe('Home network refetch failures with a real query client', () => {
+describe('Home HTTP 503 refetch failures with a real query client', () => {
   let client: QueryClient;
   let fetchSpy: jest.SpyInstance;
 
@@ -114,7 +121,8 @@ describe('Home network refetch failures with a real query client', () => {
         mutations: { retry: false, gcTime: Infinity },
       },
     });
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Network request failed'));
+    // Each request needs its own body: customFetch consumes the real response.
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(async () => unavailableResponse());
   });
 
   afterEach(async () => {
@@ -181,6 +189,10 @@ describe('Home network refetch failures with a real query client', () => {
         expect(screen.getByTestId(feed.warning)).toBeTruthy();
         expect(client.getQueryState(feed.key)?.status).toBe('error');
         expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
+        expect(client.getQueryState(feed.key)?.error).toBeInstanceOf(ApiError);
+        expect(client.getQueryState(feed.key)?.error).toMatchObject({
+          status: 503, data: unavailableBody, method: 'GET', url: feed.path,
+        });
       }
     });
     expect(fetchSpy).toHaveBeenCalledTimes(3);
@@ -223,9 +235,9 @@ describe('Home network refetch failures with a real query client', () => {
 
       // Fail the focused retry too: cached content and each section's own
       // warning must survive until that section actually recovers.
-      let rejectResponse!: (error: Error) => void;
-      fetchSpy.mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => {
-        rejectResponse = reject;
+      let resolveFailedResponse!: (response: Response) => void;
+      fetchSpy.mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveFailedResponse = resolve;
       }));
       await fireEvent.press(within(screen.getByTestId(feed.warning)).getByRole('button', {
         name: `Retry ${feed.section}`,
@@ -240,12 +252,16 @@ describe('Home network refetch failures with a real query client', () => {
       expect(screen.queryByTestId(feed.fullError)).toBeNull();
       expectUnrelatedSectionsUnchanged();
 
-      const retryError = new TypeError('Focused retry network request failed');
-      await act(async () => rejectResponse(retryError));
+      const retryResponse = unavailableResponse();
+      await act(async () => resolveFailedResponse(retryResponse));
       await waitFor(() => {
         expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
         expect(client.getQueryState(feed.key)?.status).toBe('error');
-        expect(client.getQueryState(feed.key)?.error).toBe(retryError);
+        expect(client.getQueryState(feed.key)?.error).toBeInstanceOf(ApiError);
+        expect(client.getQueryState(feed.key)?.error).toMatchObject({
+          status: 503, data: unavailableBody, response: retryResponse,
+          method: 'GET', url: feed.path,
+        });
         expect(within(screen.getByTestId(feed.warning)).getByText(
           `Couldn't refresh ${feed.section}. Results may be out of date.`,
         )).toBeTruthy();
@@ -285,6 +301,7 @@ describe('Home network refetch failures with a real query client', () => {
         expect(screen.getByText(feed.recoveredCard)).toBeTruthy();
         expect(client.getQueryState(feed.key)?.status).toBe('success');
         expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
+        expect(client.getQueryState(feed.key)?.error).toBeNull();
       });
       if (recoversToCards) {
         expect(screen.queryByText(feed.card)).toBeNull();
