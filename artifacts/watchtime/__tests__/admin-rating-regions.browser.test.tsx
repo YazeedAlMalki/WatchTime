@@ -28,6 +28,13 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
       },
     }),
     useListAdminIntegrations: () => ({ data: integrationHealth.rows, isLoading: false }),
+    useListAdminWikidataIdentityConflicts: () => ({
+      data: { items: [], total: 0, limit: 25, offset: 0 },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      refetch: vi.fn(),
+    }),
     useListAdminContentAliases: (params?: { id?: number }) => ({
       data: params?.id === 217 ? {
         items: [{
@@ -361,6 +368,7 @@ it("requests and displays each review region with the selected record's provenan
         sourceName: "Wikidata",
         recordId: 123,
         lastRefreshedAt: `2026-0${regions.indexOf(region as typeof regions[number]) + 1}-01T12:00:00.000Z`,
+        hasLatestRatingLabelConflict: region === "GB",
         refreshTimestampMalformed: region === "US",
         sourceUrl: `https://www.wikidata.org/wiki/Q${regions.indexOf(region as typeof regions[number]) + 1}`,
       },
@@ -399,6 +407,14 @@ it("requests and displays each review region with the selected record's provenan
           .toHaveTextContent("Refresh timestamp is malformed; check this provider record.");
       } else {
         await expect.element(malformedTimestampWarning).not.toBeInTheDocument();
+      }
+
+      const ratingConflictWarning = page.getByTestId("status-rating-label-conflict-101");
+      if (region === "GB") {
+        await expect.element(ratingConflictWarning)
+          .toHaveTextContent("Conflicting official ratings for GB (BBFC) share the latest refresh time.");
+      } else {
+        await expect.element(ratingConflictWarning).not.toBeInTheDocument();
       }
 
       if (region === "US" || region === "GB") {

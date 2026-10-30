@@ -1384,6 +1384,7 @@ export const SearchAdminContentResponseItem = zod.object({
   "lastRefreshedAt": zod.string().nullable(),
   "sourceUrl": zod.string().nullable()
 }).and(zod.object({
+  "hasLatestRatingLabelConflict": zod.boolean(),
   "refreshTimestampMalformed": zod.boolean()
 })),zod.null()]),
   "unclassifiedRating": zod.union([zod.object({

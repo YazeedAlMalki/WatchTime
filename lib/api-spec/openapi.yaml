@@ -2266,8 +2266,9 @@ components:
       allOf:
         - $ref: "#/components/schemas/RegionalRating"
         - type: object
-          required: [refreshTimestampMalformed]
+          required: [hasLatestRatingLabelConflict, refreshTimestampMalformed]
           properties:
+            hasLatestRatingLabelConflict: { type: boolean }
             refreshTimestampMalformed: { type: boolean }
     AnalyticsPoint:
       type: object

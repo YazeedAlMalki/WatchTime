@@ -8,5 +8,6 @@
 import type { RegionalRating } from './regionalRating';
 
 export type AdminRegionalRating = RegionalRating & {
+  hasLatestRatingLabelConflict: boolean;
   refreshTimestampMalformed: boolean;
 };

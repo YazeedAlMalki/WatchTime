@@ -2529,6 +2529,16 @@ function ContentTab({
                           Refresh timestamp is malformed; check this provider record.
                         </span>
                       ) : null}
+                      {item.selectedRating.hasLatestRatingLabelConflict === true ? (
+                        <span
+                          className="ml-2 font-semibold text-amber-700 dark:text-amber-300"
+                          role="status"
+                          data-testid={`status-rating-label-conflict-${item.id}`}
+                        >
+                          Conflicting official ratings for {item.selectedRating.region}{" "}
+                          ({item.selectedRating.system}) share the latest refresh time.
+                        </span>
+                      ) : null}
                       {item.selectedRating.sourceUrl ? (
                         <a
                           className="ml-2 font-medium text-primary hover:underline"

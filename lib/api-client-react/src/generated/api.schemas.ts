@@ -1122,6 +1122,7 @@ export const ContentMappingType = {
 } as const;
 
 export type AdminRegionalRating = RegionalRating & {
+  hasLatestRatingLabelConflict: boolean;
   refreshTimestampMalformed: boolean;
 };
 
