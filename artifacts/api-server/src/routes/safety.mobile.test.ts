@@ -403,6 +403,113 @@ describe("shared rating-region preference", () => {
   });
 
   it.each([
+    ["missing", null],
+    ["malformed", "not-a-timestamp"],
+  ] as const)("keeps the higher-priority rating for equal %s timestamps in either query order", async (_description, timestamp) => {
+    const [lowerPriority] = await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      url: "https://example.test/lower-priority-rating",
+      items: [{
+        category: "MPAA",
+        label: "PG",
+        score: null,
+        maxScore: null,
+        description: "Lower-priority official rating",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+    const higherPriorityId = lowerPriority.id + 1_000_000_000;
+
+    for (const order of ["forward", "reverse"] as const) {
+      const restoreOrder = mockSafetyRecordQueryOrder(db, order, {
+        sourceRecordId: lowerPriority.id,
+        duplicateRecordId: higherPriorityId,
+        sourceOverrides: { updatedAt: timestamp, rawUpdatedAt: timestamp },
+        overrides: {
+          tier: 1,
+          url: "https://example.test/higher-priority-rating",
+          items: [{
+            category: "MPAA",
+            label: "PG-13",
+            score: null,
+            maxScore: null,
+            description: "Higher-priority official rating",
+          }],
+        },
+      });
+      try {
+        const response = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.preferredRating).toMatchObject({
+          label: "PG-13",
+          recordId: higherPriorityId,
+          lastRefreshedAt: null,
+          sourceUrl: "https://example.test/higher-priority-rating",
+        });
+      } finally {
+        restoreOrder();
+      }
+    }
+  });
+
+  it("prefers a known source tier over a missing tier in either query order", async () => {
+    const [missingTier] = await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      url: "https://example.test/missing-tier",
+      items: [{
+        category: "MPAA",
+        label: "PG",
+        score: null,
+        maxScore: null,
+        description: "Legacy rating without a tier",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+    const knownTierId = missingTier.id + 1_000_000_000;
+
+    for (const order of ["forward", "reverse"] as const) {
+      const restoreOrder = mockSafetyRecordQueryOrder(db, order, {
+        sourceRecordId: missingTier.id,
+        duplicateRecordId: knownTierId,
+        sourceOverrides: { tier: undefined, updatedAt: null, rawUpdatedAt: null },
+        overrides: {
+          tier: 2,
+          url: "https://example.test/known-tier",
+          items: [{
+            category: "MPAA",
+            label: "PG-13",
+            score: null,
+            maxScore: null,
+            description: "Rating with a known tier",
+          }],
+        },
+      });
+      try {
+        const response = await supertest(app).get(`/api/safety?titleId=${titleId}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.preferredRating).toMatchObject({
+          label: "PG-13",
+          recordId: knownTierId,
+          lastRefreshedAt: null,
+          sourceUrl: "https://example.test/known-tier",
+        });
+      } finally {
+        restoreOrder();
+      }
+    }
+  });
+
+  it.each([
     ["US", "MPAA", "PG-13"],
     ["GB", "BBFC", "12A"],
     ["DE", "FSK", "12"],

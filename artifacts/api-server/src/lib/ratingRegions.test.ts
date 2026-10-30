@@ -246,6 +246,55 @@ describe("resolvePreferredRating", () => {
     expect(resolvePreferredRating([...candidates].reverse(), "US")?.label).toBe("PG");
   });
 
+  it.each([
+    ["missing", null],
+    ["malformed", "not-a-date"],
+  ] as const)("uses source tier to break equal %s refresh timestamps", (_description, updatedAt) => {
+    const lowerPriority = {
+      ...records[0],
+      id: 10,
+      tier: 2,
+      updatedAt,
+      url: "https://example.test/a",
+      items: [{ category: "MPAA", label: "PG" }],
+    };
+    const higherPriority = {
+      ...records[0],
+      id: 20,
+      tier: 1,
+      updatedAt,
+      url: "https://example.test/z",
+      items: [{ category: "MPAA", label: "PG-13" }],
+    };
+    const expected = { label: "PG-13", recordId: 20, lastRefreshedAt: null };
+
+    expect(resolvePreferredRating([lowerPriority, higherPriority], "US")).toMatchObject(expected);
+    expect(resolvePreferredRating([higherPriority, lowerPriority], "US")).toMatchObject(expected);
+  });
+
+  it("prefers a known tier over a missing tier when refresh dates are missing", () => {
+    const missingTier = {
+      ...records[0],
+      id: 10,
+      tier: undefined,
+      updatedAt: null,
+      url: "https://example.test/a",
+      items: [{ category: "MPAA", label: "PG" }],
+    };
+    const knownTier = {
+      ...records[0],
+      id: 20,
+      tier: 2,
+      updatedAt: null,
+      url: "https://example.test/z",
+      items: [{ category: "MPAA", label: "PG-13" }],
+    };
+    const expected = { label: "PG-13", recordId: 20, lastRefreshedAt: null };
+
+    expect(resolvePreferredRating([missingTier, knownTier], "US")).toMatchObject(expected);
+    expect(resolvePreferredRating([knownTier, missingTier], "US")).toMatchObject(expected);
+  });
+
   it("represents malformed refresh timestamps safely in the resolved response", () => {
     const valid = resolvePreferredRating([{
       ...records[0],

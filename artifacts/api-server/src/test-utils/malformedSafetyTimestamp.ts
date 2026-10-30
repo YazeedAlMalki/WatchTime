@@ -89,6 +89,7 @@ export function mockSafetyRecordQueryOrder(
   duplicate?: {
     sourceRecordId: number;
     duplicateRecordId: number;
+    sourceOverrides?: Record<string, unknown>;
     overrides?: Record<string, unknown>;
   },
 ): () => void {
@@ -104,11 +105,19 @@ export function mockSafetyRecordQueryOrder(
       const sourceRecord = duplicate
         ? rows.find((row) => row.id === duplicate.sourceRecordId)
         : undefined;
+      const rowsWithSourceOverrides = sourceRecord && duplicate?.sourceOverrides
+        ? rows.map((row) =>
+          row.id === duplicate.sourceRecordId
+            ? { ...row, ...duplicate.sourceOverrides }
+            : row,
+        )
+        : rows;
       const rowsToOrder = sourceRecord
         ? [
-          ...rows,
+          ...rowsWithSourceOverrides,
           {
             ...sourceRecord,
+            ...duplicate!.sourceOverrides,
             ...duplicate!.overrides,
             id: duplicate!.duplicateRecordId,
           },
