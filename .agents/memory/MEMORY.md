@@ -40,6 +40,7 @@
 - [React Native event simulation](react-native-event-simulation.md) — await version 14 fireEvent calls; disabled nested controls can make simulators target different handlers.
 - [React Query retry test timers](react-query-retry-test-timers.md) — failed mutations replaced by retries can leave garbage-collection timers; use infinite test cache lifetimes.
 - [Timestamp-review SQL ranking](timestamp-review-sql-ranking.md) — SQL filtering must mirror the shared rating resolver's millisecond precision and deterministic tie-breaks.
+- [Rating conflict freshness](rating-conflict-freshness.md) — conflict warnings consider every eligible record tied at the newest valid refresh, independently of source-tier selection.
 - [Admin filter route ordering](admin-filter-route-ordering.md) — specialized review filters must bypass generic early returns; assert mode-specific fields so fallthrough is visible.
 - [Scheduler timer isolation](scheduler-timer-test-isolation.md) — database recovery adds timers; existing timer spies can survive fake-timer restoration and contaminate later tests.
 - [Alternate-title query planning](alternate-title-query-planning.md) — correlated alias `EXISTS` can become a catalog-wide scan; verify plans and prefer per-title bounded lookups.

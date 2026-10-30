@@ -180,6 +180,11 @@ describe("admin title aliases", () => {
           hasLatestRatingLabelConflict: true,
         });
         expect(publicResponse.body.preferredRating).toEqual(expectedRating);
+        expect({
+          ...publicResponse.body.preferredRating,
+          refreshTimestampMalformed: false,
+          hasLatestRatingLabelConflict: true,
+        }).toEqual(adminResponse.body[0].selectedRating);
         expect(expectedRating.recordId).not.toBe(lowerPriority.id);
       } finally {
         restoreOrder();
@@ -374,6 +379,58 @@ describe("admin title aliases", () => {
         .get(`/api/safety?titleId=${createdTitleIds[0]}`)
         .expect(200);
       expect(publicResponse.body.preferredRating).toEqual(expectedSelectedRating);
+    } finally {
+      restoreSelect();
+    }
+  });
+
+  it("does not report a conflict from older official classifications", async () => {
+    const newestUpdatedAt = new Date("2026-02-01T00:00:00.000Z");
+    const [newestRating] = await db.insert(safetyRecordsTable).values({
+      titleId: createdTitleIds[0],
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      updatedAt: newestUpdatedAt,
+      url: "https://www.wikidata.org/wiki/Q123",
+      items: [{
+        category: "MPAA",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "Newest official rating",
+      }],
+    }).returning({ id: safetyRecordsTable.id });
+    const olderUpdatedAt = new Date("2026-01-01T00:00:00.000Z");
+    const restoreSelect = mockSafetyRecordQueryOrder(db, "forward", {
+      sourceRecordId: newestRating.id,
+      duplicateRecordId: -Math.abs(newestRating.id),
+      overrides: {
+        updatedAt: olderUpdatedAt,
+        rawUpdatedAt: olderUpdatedAt,
+        url: "https://www.wikidata.org/wiki/Q456",
+        items: [{
+          category: "MPAA",
+          label: "R",
+          score: null,
+          maxScore: null,
+          description: "Older conflicting official rating",
+        }],
+      },
+    });
+
+    try {
+      const response = await request(app)
+        .get("/api/admin/content?q=Alias%20Test%20One")
+        .expect(200);
+
+      expect(response.body[0].selectedRating).toMatchObject({
+        label: "PG-13",
+        lastRefreshedAt: newestUpdatedAt.toISOString(),
+        refreshTimestampMalformed: false,
+        hasLatestRatingLabelConflict: false,
+      });
     } finally {
       restoreSelect();
     }

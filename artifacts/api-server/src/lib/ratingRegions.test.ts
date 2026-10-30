@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { UpdateMeBody } from "@workspace/api-zod";
 import { RATING_REGIONS } from "@workspace/rating-regions";
-import { resolvePreferredRating } from "./ratingRegions";
+import { hasLatestRatingLabelConflict, resolvePreferredRating } from "./ratingRegions";
 
 const records = [{
   sourceName: "Wikidata",
@@ -402,5 +402,78 @@ describe("resolvePreferredRating", () => {
     };
     expect(resolvePreferredRating(candidates, "US")).toEqual(expected);
     expect(resolvePreferredRating([...candidates].reverse(), "US")).toEqual(expected);
+  });
+});
+
+describe("hasLatestRatingLabelConflict", () => {
+  const officialRating = {
+    sourceName: "Wikidata",
+    isCommunity: false,
+    status: "available",
+    items: [{ category: "MPAA", label: "PG" }],
+  };
+
+  it("ignores conflicting classifications older than the newest valid refresh", () => {
+    const newestAt = new Date("2026-02-01T00:00:00.000Z");
+    const olderAt = new Date("2026-01-01T00:00:00.000Z");
+
+    expect(hasLatestRatingLabelConflict([
+      { ...officialRating, updatedAt: olderAt, items: [{ category: "MPAA", label: "PG" }] },
+      { ...officialRating, updatedAt: olderAt, items: [{ category: "MPAA", label: "R" }] },
+      { ...officialRating, updatedAt: newestAt, items: [{ category: "MPAA", label: "PG-13" }] },
+    ], "US")).toBe(false);
+  });
+
+  it.each([
+    ["malformed", "not-a-date"],
+    ["missing", undefined],
+  ] as const)("does not use a %s refresh timestamp in conflict detection", (_kind, updatedAt) => {
+    const newestAt = new Date("2026-02-01T00:00:00.000Z");
+
+    expect(hasLatestRatingLabelConflict([
+      { ...officialRating, updatedAt: newestAt, items: [{ category: "MPAA", label: "PG" }] },
+      { ...officialRating, updatedAt, items: [{ category: "MPAA", label: "R" }] },
+    ], "US")).toBe(false);
+  });
+
+  it("does not report a conflict when all candidate timestamps are malformed or missing", () => {
+    expect(hasLatestRatingLabelConflict([
+      { ...officialRating, updatedAt: "not-a-date", items: [{ category: "MPAA", label: "PG" }] },
+      { ...officialRating, updatedAt: null, items: [{ category: "MPAA", label: "R" }] },
+    ], "US")).toBe(false);
+  });
+
+  it("ignores community, unavailable, and non-selected-region classifications", () => {
+    const newestAt = new Date("2026-02-01T00:00:00.000Z");
+
+    expect(hasLatestRatingLabelConflict([
+      { ...officialRating, updatedAt: newestAt, items: [{ category: "MPAA", label: "PG" }] },
+      {
+        ...officialRating,
+        isCommunity: true,
+        updatedAt: new Date("2026-03-01T00:00:00.000Z"),
+        items: [{ category: "MPAA", label: "R" }],
+      },
+      {
+        ...officialRating,
+        status: "unavailable",
+        updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+        items: [{ category: "MPAA", label: "R" }],
+      },
+      {
+        ...officialRating,
+        updatedAt: new Date("2026-05-01T00:00:00.000Z"),
+        items: [{ category: "BBFC", label: "15" }],
+      },
+    ], "US")).toBe(false);
+  });
+
+  it("reports conflicting labels when eligible records tie at the newest valid refresh", () => {
+    const newestAt = new Date("2026-02-01T00:00:00.000Z");
+
+    expect(hasLatestRatingLabelConflict([
+      { ...officialRating, updatedAt: newestAt, items: [{ category: "MPAA", label: "PG" }] },
+      { ...officialRating, updatedAt: newestAt, items: [{ category: "MPAA", label: "R" }] },
+    ], "US")).toBe(true);
   });
 });
