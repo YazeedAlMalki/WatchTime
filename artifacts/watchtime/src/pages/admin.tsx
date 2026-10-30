@@ -2657,6 +2657,8 @@ function getAliasReviewLoadExplanation(error: unknown): string | undefined {
   if (!data || typeof data !== "object" || !("error" in data)) return undefined;
 
   switch ((data as { error?: unknown }).error) {
+    case "This alias review matches more than 10,000 aliases. Narrow your search and try again.":
+      return "This review exceeds the 10,000-alias limit. Narrow your search and try again.";
     case "Invalid alias snapshot cursor":
     case "Invalid alias snapshot offset":
       return "The saved page link is invalid, so this review cannot resume. Restart the review to load page 1.";

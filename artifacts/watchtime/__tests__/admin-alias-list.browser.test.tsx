@@ -123,6 +123,52 @@ it("distinguishes an alias-list failure from an empty result and retries the cur
   }
 });
 
+it("explains how to narrow an alias review that exceeds the snapshot limit", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&q=Popular&ownership=editorial",
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    return new Response(JSON.stringify({
+      error: "This alias review matches more than 10,000 aliases. Narrow your search and try again.",
+    }), {
+      status: 413,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    const alert = page.getByRole("alert");
+    await expect.element(alert).toHaveTextContent("Could not load alternate titles.");
+    await expect.element(alert).toHaveTextContent(
+      "This review exceeds the 10,000-alias limit. Narrow your search and try again.",
+    );
+    await expect.element(page.getByRole("button", { name: "Retry alternate titles" })).toBeVisible();
+    expect(requests.at(-1)?.searchParams.get("q")).toBe("Popular");
+    expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("hides previous alias rows while the new search is waiting for its debounce", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=content&q=Old+search");
