@@ -166,6 +166,38 @@ describe("resolvePreferredRating", () => {
     });
   });
 
+  it("treats equivalent offset timestamps as a tie and normalizes the selected time", () => {
+    const lowerPriority = {
+      ...records[0],
+      id: 10,
+      tier: 2,
+      updatedAt: "2026-02-01T00:00:00.000Z",
+      url: "https://example.test/lower-priority-rating",
+      items: [{ category: "MPAA", label: "PG" }],
+    };
+    const higherPriority = {
+      ...records[0],
+      id: 20,
+      tier: 1,
+      updatedAt: "2026-01-31T19:00:00.000-05:00",
+      url: "https://example.test/higher-priority-rating",
+      items: [{ category: "MPAA", label: "PG-13" }],
+    };
+    const expected = {
+      region: "US",
+      countryName: "United States",
+      system: "MPAA",
+      label: "PG-13",
+      sourceName: "Wikidata",
+      recordId: 20,
+      lastRefreshedAt: "2026-02-01T00:00:00.000Z",
+      sourceUrl: "https://example.test/higher-priority-rating",
+    };
+
+    expect(resolvePreferredRating([lowerPriority, higherPriority], "US")).toEqual(expected);
+    expect(resolvePreferredRating([higherPriority, lowerPriority], "US")).toEqual(expected);
+  });
+
   it("uses stable content when refresh timestamps are missing", () => {
     const candidates = [
       {

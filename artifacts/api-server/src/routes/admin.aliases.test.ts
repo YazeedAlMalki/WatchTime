@@ -155,6 +155,7 @@ describe("admin title aliases", () => {
         duplicateRecordId: higherPriorityId,
         overrides: {
           tier: 1,
+          updatedAt: "2026-01-31T19:00:00.000-05:00",
           url: "https://example.test/higher-priority-rating",
           items: [{
             category: "MPAA",
@@ -176,12 +177,9 @@ describe("admin title aliases", () => {
         expect(adminResponse.body[0].selectedRating).toEqual({
           ...expectedRating,
           refreshTimestampMalformed: false,
+          hasLatestRatingLabelConflict: true,
         });
         expect(publicResponse.body.preferredRating).toEqual(expectedRating);
-        expect({
-          ...publicResponse.body.preferredRating,
-          refreshTimestampMalformed: false,
-        }).toEqual(adminResponse.body[0].selectedRating);
         expect(expectedRating.recordId).not.toBe(lowerPriority.id);
       } finally {
         restoreOrder();

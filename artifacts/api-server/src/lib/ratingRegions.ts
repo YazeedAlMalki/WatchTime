@@ -36,7 +36,8 @@ function serializeTimestamp(value: Date | string | null | undefined): string | n
   if (value instanceof Date) {
     return Number.isFinite(value.getTime()) ? value.toISOString() : null;
   }
-  return Number.isFinite(Date.parse(value)) ? value : null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
 export function hasMalformedTimestamp(value: Date | string | null | undefined): boolean {

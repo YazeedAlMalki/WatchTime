@@ -373,6 +373,7 @@ describe("shared rating-region preference", () => {
         duplicateRecordId: higherPriorityId,
         overrides: {
           tier: 1,
+          updatedAt: "2026-01-31T19:00:00.000-05:00",
           url: "https://example.test/higher-priority-rating",
           items: [{
             category: "MPAA",
