@@ -942,8 +942,9 @@ describe("admin title aliases", () => {
     expect(new Set(pageIds).size).toBe(103);
   });
 
-  it("rejects alphabetical reviews larger than the snapshot ID limit", async () => {
-    const aliases = Array.from({ length: 10_000 }, (_, index) => {
+  it("pages through alphabetical reviews larger than 10,000 aliases", async () => {
+    const aliasCount = 10_025;
+    const aliases = Array.from({ length: aliasCount }, (_, index) => {
       const suffix = String(index).padStart(5, "0");
       return {
         titleId: createdTitleIds[0],
@@ -957,28 +958,57 @@ describe("admin title aliases", () => {
       await db.insert(titleAliasesTable).values(aliases.slice(index, index + 1_000));
     }
 
-    const maxSizeResponse = await request(app)
-      .get("/api/admin/content-aliases")
-      .query({ q: "Large Snapshot Review", ownership: "editorial", limit: 1 })
-      .expect(200);
-    expect(maxSizeResponse.body.total).toBe(10_000);
-    expect(maxSizeResponse.body.nextCursor).toBeTruthy();
+    const reviewedAliases: string[] = [];
+    let cursor: string | null = null;
+    let pageCount = 0;
+    let snapshotId: string | undefined;
+    const snapshotQueries: string[] = [];
+    const originalQuery = pool.query.bind(pool);
+    const querySpy = vi.spyOn(pool, "query").mockImplementation(((...args: unknown[]) => {
+      const statement = args[0] as string | { text: string };
+      const result = (originalQuery as (...args: unknown[]) => Promise<{ rows: unknown[] }>)(...args);
+      return result.then((value) => {
+        const text = typeof statement === "string" ? statement : statement.text;
+        if (/^\s*select\b/i.test(text) && /alias_review_snapshots/i.test(text)) {
+          snapshotQueries.push(text);
+        }
+        return value;
+      });
+    }) as typeof pool.query);
+    try {
+      do {
+        const page: { body: any } = await request(app)
+          .get("/api/admin/content-aliases")
+          .query({
+            q: "Large Snapshot Review",
+            ownership: "editorial",
+            limit: 100,
+            ...(cursor ? { cursor } : {}),
+          })
+          .expect(200);
 
-    await db.insert(titleAliasesTable).values({
-      titleId: createdTitleIds[0],
-      alias: "Large Snapshot Review 10000",
-      normalizedAlias: "largesnapshotreview10000",
-      sourceName: "Snapshot size test",
-      isEditorial: true,
-    });
-    const response = await request(app)
-      .get("/api/admin/content-aliases")
-      .query({ q: "Large Snapshot Review", ownership: "editorial", limit: 1 })
-      .expect(413);
+        expect(page.body.total).toBe(aliasCount);
+        expect(page.body.items.length).toBe(Math.min(100, aliasCount - pageCount * 100));
+        reviewedAliases.push(...page.body.items.map((alias: { alias: string }) => alias.alias));
+        cursor = page.body.nextCursor;
+        snapshotId ??= cursor?.split(":")[0];
+        pageCount += 1;
+      } while (cursor);
+    } finally {
+      querySpy.mockRestore();
+    }
 
-    expect(response.body).toEqual({
-      error: "This alias review matches more than 10,000 aliases. Narrow your search and try again.",
-    });
+    expect(pageCount).toBe(Math.ceil(aliasCount / 100));
+    expect(snapshotQueries.filter((text) => /alias_ids"\s*\[/i.test(text))).toHaveLength(pageCount);
+    expect(reviewedAliases).toEqual(
+      aliases.map(({ alias }) => alias),
+    );
+    expect(new Set(reviewedAliases).size).toBe(aliasCount);
+    const [savedSnapshot] = await db.select({
+      total: sql<number>`cardinality(${aliasReviewSnapshotsTable.aliasIds})`,
+    }).from(aliasReviewSnapshotsTable)
+      .where(eq(aliasReviewSnapshotsTable.id, snapshotId!));
+    expect(savedSnapshot.total).toBe(aliasCount);
   });
 
   it("keeps normalized-alias collision counts consistent across cursor pages", async () => {

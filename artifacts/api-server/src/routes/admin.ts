@@ -1059,10 +1059,9 @@ router.post("/content-alias-collisions", async (req, res): Promise<void> => {
 
 const ALIAS_REVIEW_SNAPSHOT_TTL_MS = 15 * 60 * 1000;
 const ALIAS_REVIEW_SNAPSHOT_LIMIT = 20;
-const ALIAS_REVIEW_SNAPSHOT_MAX_IDS = 10_000;
 type AliasReviewSnapshot = {
   filterKey: string;
-  aliasIds: number[];
+  total: number;
   expiresAt: Date;
 };
 
@@ -1374,7 +1373,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
     const snapshotId = match[1];
     const [snapshotRow] = await db.select({
       filterKey: aliasReviewSnapshotsTable.filterKey,
-      aliasIds: aliasReviewSnapshotsTable.aliasIds,
+      total: sql<number>`cardinality(${aliasReviewSnapshotsTable.aliasIds})`,
       expiresAt: aliasReviewSnapshotsTable.expiresAt,
     }).from(aliasReviewSnapshotsTable)
       .where(and(
@@ -1392,12 +1391,29 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       return;
     }
     const snapshotOffset = Number(match[2]);
-    const nextOffset = Math.min(snapshotOffset + limit, snapshot.aliasIds.length);
-    if (!Number.isSafeInteger(snapshotOffset) || snapshotOffset > snapshot.aliasIds.length) {
+    if (!Number.isSafeInteger(snapshotOffset) || snapshotOffset > snapshot.total) {
       res.status(400).json({ error: "Invalid alias snapshot offset" });
       return;
     }
-    const windowIds = snapshot.aliasIds.slice(snapshotOffset, nextOffset);
+    const nextOffset = Math.min(snapshotOffset + limit, snapshot.total);
+    const [snapshotIds] = await db.select({
+      aliasIds: sql<number[]>`
+        coalesce(
+          ${aliasReviewSnapshotsTable.aliasIds}[${snapshotOffset + 1}:${nextOffset}],
+          '{}'::integer[]
+        )
+      `,
+    }).from(aliasReviewSnapshotsTable)
+      .where(and(
+        eq(aliasReviewSnapshotsTable.id, snapshotId),
+        gt(aliasReviewSnapshotsTable.expiresAt, now),
+      ))
+      .limit(1);
+    if (!snapshotIds) {
+      res.status(409).json({ error: "This alias review snapshot expired. Restart the search." });
+      return;
+    }
+    const windowIds = snapshotIds.aliasIds;
     const liveRows = windowIds.length
       ? await db.select({
           alias: titleAliasesTable,
@@ -1413,9 +1429,9 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       const row = rowsById.get(id);
       return row ? [row] : [];
     });
-    total = snapshot.aliasIds.length;
+    total = snapshot.total;
     effectiveOffset = snapshotOffset;
-    nextCursor = nextOffset < snapshot.aliasIds.length
+    nextCursor = nextOffset < snapshot.total
       ? createAliasReviewSnapshotCursor(snapshotId, nextOffset, snapshotOffset)
       : null;
     previousCursor = snapshotOffset > 0
@@ -1428,38 +1444,50 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       : null;
   } else if (snapshotMode) {
     await pruneAliasReviewSnapshots();
-    const orderedAliases = await db.select({ id: titleAliasesTable.id })
-      .from(titleAliasesTable)
-      .innerJoin(titlesTable, eq(titlesTable.id, titleAliasesTable.titleId))
-      .where(baseWhere)
-      .orderBy(
-        asc(titleAliasesTable.normalizedAlias),
-        asc(titlesTable.name),
-        asc(titleAliasesTable.id),
-      )
-      .limit(ALIAS_REVIEW_SNAPSHOT_MAX_IDS + 1);
-    if (orderedAliases.length > ALIAS_REVIEW_SNAPSHOT_MAX_IDS) {
-      res.status(413).json({
-        error: `This alias review matches more than ${ALIAS_REVIEW_SNAPSHOT_MAX_IDS.toLocaleString()} aliases. Narrow your search and try again.`,
-      });
-      return;
-    }
     const snapshotId = randomUUID();
     const now = new Date();
     await makeRoomForAliasReviewSnapshot(now);
     const snapshot = {
       filterKey,
-      aliasIds: orderedAliases.map((row) => row.id),
       expiresAt: new Date(now.getTime() + ALIAS_REVIEW_SNAPSHOT_TTL_MS),
     };
     await db.insert(aliasReviewSnapshotsTable).values({
       id: snapshotId,
       filterKey: snapshot.filterKey,
-      aliasIds: snapshot.aliasIds,
+      aliasIds: sql`
+        (
+          select coalesce(
+            array_agg(
+              ${titleAliasesTable.id}
+              order by
+                ${titleAliasesTable.normalizedAlias},
+                ${titlesTable.name},
+                ${titleAliasesTable.id}
+            ),
+            '{}'::integer[]
+          )
+          from ${titleAliasesTable}
+          inner join ${titlesTable}
+            on ${titlesTable.id} = ${titleAliasesTable.titleId}
+          where ${baseWhere}
+        )
+      `,
       expiresAt: snapshot.expiresAt,
     });
-    const nextOffset = Math.min(limit, snapshot.aliasIds.length);
-    const windowIds = snapshot.aliasIds.slice(0, nextOffset);
+    const [snapshotPage] = await db.select({
+      total: sql<number>`cardinality(${aliasReviewSnapshotsTable.aliasIds})`,
+      aliasIds: sql<number[]>`
+        coalesce(
+          ${aliasReviewSnapshotsTable.aliasIds}[1:${limit}],
+          '{}'::integer[]
+        )
+      `,
+    }).from(aliasReviewSnapshotsTable)
+      .where(eq(aliasReviewSnapshotsTable.id, snapshotId))
+      .limit(1);
+    total = snapshotPage?.total ?? 0;
+    const nextOffset = Math.min(limit, total);
+    const windowIds = snapshotPage?.aliasIds ?? [];
     const liveRows = windowIds.length
       ? await db.select({
           alias: titleAliasesTable,
@@ -1475,8 +1503,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       const row = rowsById.get(id);
       return row ? [row] : [];
     });
-    total = snapshot.aliasIds.length;
-    nextCursor = nextOffset < snapshot.aliasIds.length
+    nextCursor = nextOffset < total
       ? createAliasReviewSnapshotCursor(snapshotId, nextOffset, 0)
       : null;
   } else {
