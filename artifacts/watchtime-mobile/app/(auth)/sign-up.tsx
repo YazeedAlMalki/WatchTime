@@ -41,13 +41,15 @@ function ClerkSignUpScreen() {
   const [emailCodeSent, setEmailCodeSent] = useState(false);
   const [resendStatus, setResendStatus] = useState<{ message: string; failed: boolean } | null>(null);
   const [resending, setResending] = useState(false);
+  const accountCreationInFlight = useRef(false);
+  const [creatingAccount, setCreatingAccount] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizationError, setFinalizationError] = useState<string | null>(null);
   const verificationInFlight = useRef(false);
   const [checkingCode, setCheckingCode] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
 
-  const busy = fetchStatus === 'fetching' || finalizing || checkingCode;
+  const busy = fetchStatus === 'fetching' || creatingAccount || finalizing || checkingCode;
 
   const handleResend = async () => {
     if (busy || resending) return;
@@ -67,41 +69,46 @@ function ClerkSignUpScreen() {
   };
 
   const handleSubmit = async () => {
+    if (accountCreationInFlight.current || busy) return;
+    accountCreationInFlight.current = true;
+    setCreatingAccount(true);
     setSignUpError(null);
-    let error: unknown;
     try {
-      ({ error } = await signUp.password({ emailAddress, password }));
-    } catch {
-      setSignUpError('Could not create your account. Please try again.');
-      return;
-    }
-    if (error) {
-      const message =
-        typeof error === 'object' &&
-        error !== null &&
-        'message' in error &&
-        typeof error.message === 'string' &&
-        error.message.trim()
-          ? error.message
-          : 'Could not create your account. Check your details and try again.';
-      setSignUpError(message);
-      return;
-    }
-    setResending(true);
-    setResendStatus(null);
-    setEmailCodeSent(false);
-    const recoveryMessage = 'Could not send your verification code. Tap “I need a new code” below to try again.';
-    try {
-      const { error: sendError } = await signUp.verifications.sendEmailCode();
-      if (sendError) {
+      const { error } = await signUp.password({ emailAddress, password });
+      if (error) {
+        const message =
+          typeof error === 'object' &&
+          error !== null &&
+          'message' in error &&
+          typeof error.message === 'string' &&
+          error.message.trim()
+            ? error.message
+            : 'Could not create your account. Check your details and try again.';
+        setSignUpError(message);
+        return;
+      }
+
+      setResending(true);
+      setResendStatus(null);
+      setEmailCodeSent(false);
+      const recoveryMessage = 'Could not send your verification code. Tap “I need a new code” below to try again.';
+      try {
+        const { error: sendError } = await signUp.verifications.sendEmailCode();
+        if (sendError) {
+          setResendStatus({ message: recoveryMessage, failed: true });
+        } else {
+          setEmailCodeSent(true);
+        }
+      } catch {
         setResendStatus({ message: recoveryMessage, failed: true });
-      } else {
-        setEmailCodeSent(true);
+      } finally {
+        setResending(false);
       }
     } catch {
-      setResendStatus({ message: recoveryMessage, failed: true });
+      setSignUpError('Could not create your account. Please try again.');
     } finally {
-      setResending(false);
+      accountCreationInFlight.current = false;
+      setCreatingAccount(false);
     }
   };
 

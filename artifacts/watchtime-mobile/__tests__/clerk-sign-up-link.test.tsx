@@ -130,6 +130,53 @@ describe('Clerk sign-up switch to sign-in', () => {
     });
   });
 
+  it('blocks duplicate account creation while Clerk stays idle until the request succeeds', async () => {
+    mockUseLocalSearchParams.mockReturnValue({});
+    let resolvePassword!: (result: { error: null }) => void;
+    const pendingPassword = new Promise<{ error: null }>((resolve) => {
+      resolvePassword = resolve;
+    });
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: [] as string[],
+      missingFields: ['email_address', 'password'] as string[],
+      password: jest.fn(() => pendingPassword),
+      verifications: {
+        sendEmailCode: jest.fn(async () => {
+          signUp.unverifiedFields = ['email_address'];
+          signUp.missingFields = [];
+          return { error: null };
+        }),
+      },
+    };
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('email-input'), 'viewer@example.com');
+    await fireEvent.changeText(screen.getByTestId('password-input'), 'test-password');
+
+    let firstAttempt!: Promise<void>;
+    await act(async () => {
+      const submit = getPressHandler(screen, 'sign-up-button');
+      firstAttempt = submit();
+      await submit();
+    });
+
+    expect(signUp.password).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('sign-up-button')).toBeDisabled();
+    expect(screen.getByText('Creating account…')).toBeTruthy();
+
+    await act(async () => {
+      resolvePassword({ error: null });
+      await firstAttempt;
+    });
+
+    expect(signUp.password).toHaveBeenCalledTimes(1);
+    expect(signUp.verifications.sendEmailCode).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Check your email')).toBeTruthy();
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+  });
+
   it('keeps credentials available and retries account creation after a rejected request', async () => {
     mockUseLocalSearchParams.mockReturnValue({});
     const signUp = {
