@@ -321,6 +321,98 @@ it("keeps a filtered later alias page unchanged when removal is cancelled", asyn
   }
 });
 
+it("continues forward from a restored filtered alias page", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174000";
+  const restoredPageCursor = `${snapshotId}:50:0`;
+  const nextPageCursor = `${snapshotId}:100:0`;
+  window.history.replaceState(
+    {},
+    "",
+    `/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=2&aliasCursor=${restoredPageCursor}`,
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const isNextPage = url.searchParams.get("cursor") === nextPageCursor;
+    return new Response(JSON.stringify(isNextPage
+      ? {
+          items: [makeAlias(201, "Lighthouse restored page three alias")],
+          total: 151,
+          limit: 50,
+          offset: 100,
+          nextCursor: null,
+          previousCursor: restoredPageCursor,
+        }
+      : {
+          items: [makeAlias(151, "Lighthouse restored page two alias")],
+          total: 151,
+          limit: 50,
+          offset: 50,
+          nextCursor: nextPageCursor,
+          previousCursor: `${snapshotId}:0`,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 151 matching aliases");
+    await expect.element(page.getByText("Lighthouse restored page two alias")).toBeVisible();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.searchParams.get("cursor")).toBe(restoredPageCursor);
+    expect(requests[0]?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests[0]?.searchParams.get("ownership")).toBe("editorial");
+
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+
+    await expect.element(page.getByRole("status")).toHaveTextContent("Page 3 · 151 matching aliases");
+    await expect.element(page.getByText("Lighthouse restored page three alias")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse restored page two alias")).not.toBeInTheDocument();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.searchParams.get("cursor")).toBe(nextPageCursor);
+    expect(requests[1]?.searchParams.get("q")).toBe("Lighthouse");
+    expect(requests[1]?.searchParams.get("ownership")).toBe("editorial");
+
+    const params = new URLSearchParams(location.search);
+    expect(params.get("region")).toBe("GB");
+    expect(params.get("q")).toBe("Lighthouse");
+    expect(params.get("ownership")).toBe("editorial");
+    expect(params.get("aliasPage")).toBe("3");
+    expect(params.get("aliasCursor")).toBe(nextPageCursor);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("starts a fresh filtered alias page after deleting the last alias on a later page", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const snapshotId = "123e4567-e89b-12d3-a456-426614174000";

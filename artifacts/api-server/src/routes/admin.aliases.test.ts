@@ -1159,6 +1159,22 @@ describe("admin title aliases", () => {
     expect(restoredSecondPage.body.items.map((alias: { alias: string }) => alias.alias))
       .toEqual(["Snapshot Review Aardvark"]);
     expect(restoredSecondPage.body.previousCursor).toMatch(/^[0-9a-f-]{36}:0$/i);
+    expect(restoredSecondPage.body.nextCursor).toMatch(/^[0-9a-f-]{36}:4:2$/i);
+
+    const continuedFromRestoredPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Snapshot Review",
+        ownership: "editorial",
+        limit: 2,
+        cursor: restoredSecondPage.body.nextCursor,
+      })
+      .expect(200);
+    expect(continuedFromRestoredPage.body.items.map((alias: { id: number }) => alias.id))
+      .toEqual([rows[0].id]);
+    expect(continuedFromRestoredPage.body.items.map((alias: { alias: string }) => alias.alias))
+      .toEqual(["Snapshot Review Zulu"]);
+    expect(continuedFromRestoredPage.body.nextCursor).toBeNull();
 
     const restoredFirstPage = await request(app)
       .get("/api/admin/content-aliases")
