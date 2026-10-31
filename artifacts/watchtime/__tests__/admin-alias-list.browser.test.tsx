@@ -1304,6 +1304,148 @@ it("keeps the selected alias page when an older page response finishes late", as
   }
 });
 
+it("restores filtered alias pages and rows with browser Back and Forward", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174003";
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial",
+  );
+  const requests: URL[] = [];
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  const pages = new Map([
+    [null, {
+      alias: makeAlias(101, "Lighthouse history page one"),
+      offset: 0,
+      nextCursor: `${snapshotId}:50`,
+      previousCursor: null,
+    }],
+    [`${snapshotId}:50`, {
+      alias: makeAlias(151, "Lighthouse history page two"),
+      offset: 50,
+      nextCursor: `${snapshotId}:100:50`,
+      previousCursor: `${snapshotId}:0`,
+    }],
+    [`${snapshotId}:100:50`, {
+      alias: makeAlias(201, "Lighthouse history page three"),
+      offset: 100,
+      nextCursor: null,
+      previousCursor: `${snapshotId}:50`,
+    }],
+  ]);
+  const originalFetch = window.fetch;
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const cursor = url.searchParams.get("cursor");
+    const responsePage = pages.get(cursor);
+    if (!responsePage) throw new Error(`Unexpected alias cursor: ${cursor}`);
+    return new Response(JSON.stringify({
+      items: [responsePage.alias],
+      total: 125,
+      limit: 50,
+      offset: responsePage.offset,
+      nextCursor: responsePage.nextCursor,
+      previousCursor: responsePage.previousCursor,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const navigateHistory = (direction: "back" | "forward") => new Promise<void>((resolve) => {
+    window.addEventListener("popstate", () => resolve(), { once: true });
+    window.history[direction]();
+  });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Lighthouse history page one")).toBeVisible();
+    await expect.element(page.getByText("Page 1 · 125 matching aliases")).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await expect.element(page.getByText("Lighthouse history page two")).toBeVisible();
+    await expect.element(page.getByText("Page 2 · 125 matching aliases")).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await expect.element(page.getByText("Lighthouse history page three")).toBeVisible();
+    await expect.element(page.getByText("Page 3 · 125 matching aliases")).toBeVisible();
+
+    await navigateHistory("back");
+    await expect.element(page.getByText("Lighthouse history page two")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page three")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Page 2 · 125 matching aliases")).toBeVisible();
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(`${snapshotId}:50`);
+
+    await navigateHistory("back");
+    await expect.element(page.getByText("Lighthouse history page one")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page two")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Page 1 · 125 matching aliases")).toBeVisible();
+    expect(new URLSearchParams(location.search).has("aliasPage")).toBe(false);
+    expect(new URLSearchParams(location.search).has("aliasCursor")).toBe(false);
+
+    await navigateHistory("forward");
+    await expect.element(page.getByText("Lighthouse history page two")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page one")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Page 2 · 125 matching aliases")).toBeVisible();
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(`${snapshotId}:50`);
+
+    await navigateHistory("forward");
+    await expect.element(page.getByText("Lighthouse history page three")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page two")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Page 3 · 125 matching aliases")).toBeVisible();
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("3");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(`${snapshotId}:100:50`);
+
+    await expect.element(page.getByPlaceholder("Search titles…")).toHaveValue("Lighthouse");
+    await expect.element(page.getByRole("combobox", { name: "Alias ownership" }))
+      .toHaveTextContent("Editorial");
+    await expect.element(page.getByRole("combobox", { name: "Review Wikidata region" }))
+      .toHaveTextContent("GB");
+    expect(new URLSearchParams(location.search).get("q")).toBe("Lighthouse");
+    expect(new URLSearchParams(location.search).get("ownership")).toBe("editorial");
+    expect(new URLSearchParams(location.search).get("region")).toBe("GB");
+    expect(requests.length).toBeGreaterThanOrEqual(3);
+    for (const request of requests) {
+      expect(request.searchParams.get("q")).toBe("Lighthouse");
+      expect(request.searchParams.get("ownership")).toBe("editorial");
+    }
+    expect(requests.some((request) =>
+      request.searchParams.get("cursor") === `${snapshotId}:50`,
+    )).toBe(true);
+    expect(requests.some((request) =>
+      request.searchParams.get("cursor") === `${snapshotId}:100:50`,
+    )).toBe(true);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("shows both alias sources for All ownership and keeps filtered source labels visible", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState({}, "", "/admin?tab=content&region=US&ownership=provider");
