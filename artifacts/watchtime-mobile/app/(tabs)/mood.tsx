@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Platform,
   Pressable,
@@ -143,20 +144,22 @@ function Wrap({ children, rtl }: { children: React.ReactNode; rtl: boolean }) {
 }
 
 /* ---------- mood target track (no third-party slider) ---------- */
-function TargetTrack({ value, active, onChange, label, c, rtl, testID }: {
-  value: number; active: boolean; onChange: (v: number) => void; label: string; c: Colors; rtl: boolean; testID: string;
+function TargetTrack({ value, active, onChange, label, valueText, t, c, rtl, testID }: {
+  value: number; active: boolean; onChange: (v: number) => void; label: string; valueText: string; t: T; c: Colors; rtl: boolean; testID: string;
 }) {
   const steps = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
   return (
     <View style={{ flexDirection: rtl ? 'row-reverse' : 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
-      <Pressable testID={`${testID}-dec`} accessibilityRole="button" accessibilityLabel={`${label} -5`} onPress={() => onChange(value - 5)} style={[s.stepBtn, { borderColor: c.border }]}>
+      <Pressable testID={`${testID}-dec`} accessibilityRole="button" accessibilityLabel={t('slider.adjust.decrease', { label })} onPress={() => onChange(value - 5)} style={[s.stepBtn, { borderColor: c.border }]}>
         <Feather name="minus" size={14} color={c.foreground} />
       </Pressable>
       <View
+        testID={testID}
         style={{ flex: 1, flexDirection: rtl ? 'row-reverse' : 'row', height: 28, alignItems: 'center', gap: 2 }}
+        accessible
         accessibilityRole="adjustable"
         accessibilityLabel={label}
-        accessibilityValue={{ min: 0, max: 100, now: value }}
+        accessibilityValue={{ min: 0, max: 100, now: value, text: valueText }}
         accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
         onAccessibilityAction={(e) => onChange(value + (e.nativeEvent.actionName === 'increment' ? 5 : -5))}
       >
@@ -164,7 +167,7 @@ function TargetTrack({ value, active, onChange, label, c, rtl, testID }: {
           <Pressable
             key={st}
             testID={`${testID}-${st}`}
-            accessibilityLabel={`${label} ${st}`}
+            accessible={false}
             onPress={() => { tap(); onChange(st); }}
             style={{ flex: 1, height: 28, justifyContent: 'center' }}
           >
@@ -172,7 +175,7 @@ function TargetTrack({ value, active, onChange, label, c, rtl, testID }: {
           </Pressable>
         ))}
       </View>
-      <Pressable testID={`${testID}-inc`} accessibilityRole="button" accessibilityLabel={`${label} +5`} onPress={() => onChange(value + 5)} style={[s.stepBtn, { borderColor: c.border }]}>
+      <Pressable testID={`${testID}-inc`} accessibilityRole="button" accessibilityLabel={t('slider.adjust.increase', { label })} onPress={() => onChange(value + 5)} style={[s.stepBtn, { borderColor: c.border }]}>
         <Feather name="plus" size={14} color={c.foreground} />
       </Pressable>
     </View>
@@ -289,20 +292,54 @@ export default function MoodScreen() {
   const [stage, setStage] = useState<Stage | null>(null);
   const [limit, setLimit] = useState(PAGE);
   const scrollRef = useRef<ScrollView>(null);
+  const lastAnnouncementSignature = useRef<string | null>(null);
+  const lastAnnouncementStage = useRef<Stage | null>(null);
+  const announcementTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [liveAnnouncement, setLiveAnnouncement] = useState('');
   const f = state.filters;
+  const current: Stage = stage ?? (state.session.started ? 'results' : 'start');
   const ta: TextStyle = { textAlign: rtl ? 'right' : 'left', writingDirection: rtl ? 'rtl' : 'ltr' };
   const row: ViewStyle = { flexDirection: rtl ? 'row-reverse' : 'row' };
   const bottomPad = (Platform.OS === 'web' ? 84 : insets.bottom + 56) + 24;
 
   const ranked = useMemo(() => classify(MOVIES, f, state), [f, state.viewed, state.dismissed, state.saved, state.session]); // eslint-disable-line react-hooks/exhaustive-deps
   const failures = useMemo(() => countFailures(MOVIES, f, state), [f, state.viewed, state.dismissed, state.session]); // eslint-disable-line react-hooks/exhaustive-deps
+  const announcementSignature = JSON.stringify([f, ranked.results.length]);
+
+  React.useEffect(() => {
+    if (!state.hydrated) return;
+    if (lastAnnouncementSignature.current === null) {
+      lastAnnouncementSignature.current = announcementSignature;
+      lastAnnouncementStage.current = current;
+      return;
+    }
+    const filterOrCountChanged = lastAnnouncementSignature.current !== announcementSignature;
+    const enteringResults = current === 'results' && lastAnnouncementStage.current !== 'results';
+    lastAnnouncementSignature.current = announcementSignature;
+    lastAnnouncementStage.current = current;
+    if (!filterOrCountChanged && !enteringResults) return;
+
+    if (announcementTimer.current) clearTimeout(announcementTimer.current);
+    announcementTimer.current = setTimeout(() => {
+      const message = getT(state.lang).t('a11y.recommendations.updated', { n: ranked.results.length });
+      setLiveAnnouncement('');
+      if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(message);
+      announcementTimer.current = setTimeout(() => {
+        setLiveAnnouncement(message);
+        announcementTimer.current = null;
+      }, 50);
+    }, 450);
+
+    return () => {
+      if (announcementTimer.current) clearTimeout(announcementTimer.current);
+      announcementTimer.current = null;
+    };
+  }, [state.hydrated, state.lang, announcementSignature, ranked.results.length, current]);
 
   const go = (next: Stage) => {
     setStage(next);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
   };
-  const current: Stage = stage ?? (state.session.started ? 'results' : 'start');
-
   const Banner = (
     <View testID="banner-demo-warning" accessibilityRole="alert" style={[s.banner, row, { borderColor: c.severityMild, backgroundColor: c.muted }]}>
       <Feather name="alert-triangle" size={16} color={c.severityMild} style={{ marginTop: 1 }} />
@@ -376,6 +413,11 @@ export default function MoodScreen() {
   return (
     <View style={[s.root, { backgroundColor: c.background }]}>
       <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 16, paddingBottom: bottomPad, gap: 14 }} testID="screen-mood" keyboardShouldPersistTaps="handled">
+        {liveAnnouncement ? (
+          <Text testID="text-filter-announcement" accessibilityLiveRegion="polite" style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}>
+            {liveAnnouncement}
+          </Text>
+        ) : null}
         {Banner}
         {moodSync.status ? (
           <View
@@ -494,7 +536,7 @@ export default function MoodScreen() {
                         <Text style={[s.small, { color: active ? c.primary : c.mutedForeground }]}>{active ? t('slider.target', { n: f.targets[k] }) : t('slider.off')}</Text>
                         <Switch testID={`switch-mood-${k}`} accessibilityLabel={t('slider.use', { label })} value={active} onValueChange={(v) => actions.setActive(k, v)} trackColor={{ true: c.primary, false: c.muted }} thumbColor={c.foreground} />
                       </View>
-                      <TargetTrack c={c} rtl={rtl} testID={`slider-mood-${k}`} label={`${label}: ${t(`mood.low.${k}`)} - ${t(`mood.high.${k}`)}`} value={f.targets[k]} active={active} onChange={(v) => actions.setTarget(k, v)} />
+                      <TargetTrack c={c} rtl={rtl} t={t} testID={`slider-mood-${k}`} label={`${label}: ${t(`mood.low.${k}`)} - ${t(`mood.high.${k}`)}`} valueText={t('slider.target', { n: f.targets[k] })} value={f.targets[k]} active={active} onChange={(v) => actions.setTarget(k, v)} />
                       <View style={[row, { justifyContent: 'space-between', marginTop: 2 }]}>
                         <Text style={[s.tiny, { color: c.mutedForeground }]}>{t(`mood.low.${k}`)}</Text>
                         <Text style={[s.tiny, { color: c.mutedForeground }]}>{t(`mood.high.${k}`)}</Text>
@@ -610,7 +652,7 @@ export default function MoodScreen() {
             <View style={row}><Btn c={c} testID="button-reset-all" kind="outline" icon="rotate-ccw" label={t('reset.all')} onPress={() => actions.resetAllFilters()} /></View>
 
             <View style={[s.card, row, { alignItems: 'center', gap: 10, backgroundColor: c.card, borderColor: c.primary }]}>
-              <Text testID="text-live-match-count" accessibilityLiveRegion="polite" style={[s.label, ta, { color: c.foreground, flex: 1 }]}>{t('t.count', { n: ranked.results.length })}</Text>
+              <Text testID="text-live-match-count" style={[s.label, ta, { color: c.foreground, flex: 1 }]}>{t('t.count', { n: ranked.results.length })}</Text>
               <Btn c={c} testID="button-show-matches" label={t('t.show')} icon={rtl ? 'arrow-left' : 'arrow-right'} onPress={showResults} />
             </View>
           </View>
@@ -618,7 +660,7 @@ export default function MoodScreen() {
 
         {current === 'results' ? (
           <View style={{ gap: 12 }} testID="screen-results">
-            <Text testID="text-results-count" accessibilityLiveRegion="polite" style={[s.h2, ta, { color: c.foreground }]}>{t('results.heading', { n: ranked.results.length })}</Text>
+            <Text testID="text-results-count" style={[s.h2, ta, { color: c.foreground }]}>{t('results.heading', { n: ranked.results.length })}</Text>
             <Text style={[s.small, ta, { color: c.mutedForeground }]}>
               {[selectedPreset ? t(`p.${selectedPreset.id}`) : '', ...moodKeys.slice(0, 3).map((k) => `${t(`mood.${k}`)} ${f.targets[k]}`)].filter(Boolean).join(' · ') || t('results.hardNote')}
             </Text>

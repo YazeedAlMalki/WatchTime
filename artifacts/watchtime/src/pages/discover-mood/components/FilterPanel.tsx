@@ -65,6 +65,10 @@ function LimitOptions({ kind, value, onChange }: { kind: ContentKey; value: numb
         <Chip
           key={level}
           testId={`chip-limit-${kind}-${level}`}
+          ariaLabel={t("content.limit.accessibility", {
+            category: t(`content.${kind}`),
+            level: optionLabel(level),
+          })}
           on={value === level}
           onClick={() => onChange(level)}
         >
@@ -91,7 +95,7 @@ export function FilterPanel() {
             return (
               <div key={key} className="rounded-xl border border-border/70 bg-background/40 p-3" data-testid={`control-mood-${key}`}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label htmlFor={`slider-mood-${key}`} className="text-sm font-semibold">{label}</label>
+                  <span className="text-sm font-semibold">{label}</span>
                   <Switch
                     aria-label={t("slider.use", { label })}
                     checked={f.active[key]}
@@ -107,13 +111,15 @@ export function FilterPanel() {
                   <span className="min-w-0 flex-1 text-end text-[11px] leading-tight text-muted-foreground">{t(`mood.high.${key}`)}</span>
                 </div>
                 <Slider
-                  id={`slider-mood-${key}`}
-                  aria-label={`${label}: ${t(`mood.low.${key}`)} to ${t(`mood.high.${key}`)}`}
                   min={0}
                   max={100}
                   step={5}
                   value={[f.targets[key]]}
                   onValueChange={([value]) => actions.setTarget(key, value)}
+                  thumbProps={{
+                    "aria-label": `${label}: ${t(`mood.low.${key}`)} to ${t(`mood.high.${key}`)}`,
+                    "aria-valuetext": t("slider.target", { n: f.targets[key] }),
+                  }}
                   data-testid={`slider-mood-${key}`}
                 />
                 <div className={`mt-3 flex items-center gap-2 ${f.active[key] ? "" : "opacity-50"}`}>
@@ -123,6 +129,7 @@ export function FilterPanel() {
                       <Chip
                         key={importance}
                         testId={`chip-importance-${key}-${importance}`}
+                        ariaLabel={`${label}: ${t(`importance.${importance === 1 ? "nice" : importance === 2 ? "important" : "must"}`)}`}
                         on={f.active[key] && f.importance[key] === importance}
                         disabled={!f.active[key]}
                         onClick={() => actions.setImportance(key, importance)}
@@ -155,12 +162,17 @@ export function FilterPanel() {
             {f.maxRuntime === 240 ? t("runtime.any") : t("runtime.custom.value", { n: f.maxRuntime })}
           </p>
           <Slider
-            aria-label={t("runtime.custom")}
             min={60}
             max={240}
             step={1}
             value={[Math.max(60, f.maxRuntime === 240 ? 120 : f.maxRuntime)]}
             onValueChange={([value]) => actions.patchFilters({ maxRuntime: value })}
+            thumbProps={{
+              "aria-label": t("runtime.custom"),
+              "aria-valuetext": f.maxRuntime === 240
+                ? t("runtime.any")
+                : t("runtime.custom.value", { n: f.maxRuntime }),
+            }}
             data-testid="slider-runtime"
           />
           <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">

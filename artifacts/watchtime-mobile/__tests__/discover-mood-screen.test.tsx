@@ -64,6 +64,11 @@ describe("WatchTime Mobile mood-discovery screen", () => {
 
     expect(view.queryByTestId("mood-sync-status")).toBeNull();
   });
+  afterEach(() => {
+    cleanup();
+    jest.useRealTimers();
+    jest.mocked(useMoodDiscoverySync).mockReturnValue({ status: null, retry: jest.fn() });
+  });
 
   it("renders Arabic RTL no-results and preserves age/content limits after runtime recovery", async () => {
     const view = await render(<MoodScreen />);
@@ -155,5 +160,40 @@ describe("WatchTime Mobile mood-discovery screen", () => {
     await fireEvent.press(view.getByTestId("chip-limit-sexualContent-3"));
     expect(view.getByTestId("chip-limit-sexualContent-0").props.accessibilityState?.selected).toBe(false);
     expect(view.getByTestId("chip-limit-sexualContent-3").props.accessibilityState?.selected).toBe(true);
+  });
+
+  it("exposes adjustable mood values and politely announces updated recommendations", async () => {
+    const view = await render(<MoodScreen />);
+    await waitFor(() => expect(view.queryByTestId("mood-loading")).toBeNull());
+
+    jest.useFakeTimers();
+    await act(async () => {
+      actions.resetForNewSession();
+      actions.setLang("en");
+    });
+    await fireEvent.press(view.getByTestId("button-fine-tune"));
+
+    const target = view.getByTestId("slider-mood-feelGood");
+    expect(target.props.accessibilityRole).toBe("adjustable");
+    expect(target.props.accessibilityLabel).toContain("Feel-good");
+    expect(target.props.accessibilityValue).toEqual({
+      min: 0,
+      max: 100,
+      now: 50,
+      text: getT("en").t("slider.target", { n: 50 }),
+    });
+
+    await fireEvent.press(view.getByTestId("slider-mood-feelGood-inc"));
+    expect(view.getByTestId("slider-mood-feelGood").props.accessibilityValue).toMatchObject({
+      now: 55,
+      text: getT("en").t("slider.target", { n: 55 }),
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(500);
+    });
+    const announcement = view.getByTestId("text-filter-announcement");
+    expect(announcement.props.accessibilityLiveRegion).toBe("polite");
+    expect(announcement.props.children).toMatch(/^Recommendations updated\./);
   });
 });

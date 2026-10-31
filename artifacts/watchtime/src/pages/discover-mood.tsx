@@ -220,7 +220,7 @@ export default function DiscoverMoodPage() {
           </Button>
           <FilterPanel />
           <div className="sticky bottom-3 z-20 mt-6 flex items-center justify-between gap-3 rounded-2xl border border-border bg-background/95 p-3 shadow-xl backdrop-blur">
-            <span className="text-sm font-medium" aria-live="polite" data-testid="text-live-match-count">
+            <span className="text-sm font-medium" role="status" aria-live="polite" aria-atomic="true" data-testid="text-live-match-count">
               {t("t.count", { n: ranked.results.length })}
             </span>
             <Button className="rounded-full" onClick={showResults} data-testid="button-show-matches">
@@ -234,7 +234,7 @@ export default function DiscoverMoodPage() {
         <section data-testid="screen-results">
           <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h2 className="text-2xl font-semibold" data-testid="text-results-count" aria-live="polite">
+              <h2 className="text-2xl font-semibold" aria-live="polite" aria-atomic="true" data-testid="text-results-count">
                 {t("results.heading", { n: ranked.results.length })}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground" data-testid="text-results-summary">
