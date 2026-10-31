@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { addNetworkStateListener } from "expo-network";
 import {
   getGetMyMoodDiscoveryStateQueryKey,
   useGetMyMoodDiscoveryState,
@@ -9,7 +10,12 @@ import { useAppAuth } from "@/lib/app-auth";
 import type { StoreState } from "./types";
 import { actions, type MoodPersonalState } from "./store";
 
-export function useMoodDiscoverySync(state: StoreState) {
+export type MoodSyncStatus = "syncing" | "saved" | "waiting";
+
+export function useMoodDiscoverySync(state: StoreState): {
+  status: MoodSyncStatus | null;
+  retry: () => void;
+} {
   const { isLoaded, isSignedIn, userId } = useAppAuth();
   const activeUserId = isLoaded && isSignedIn ? userId : null;
   const scopeKey = activeUserId ?? "guest";
@@ -21,6 +27,7 @@ export function useMoodDiscoverySync(state: StoreState) {
   const lastSnapshotByScope = useRef(new Map<string, string>());
   const writeQueue = useRef(Promise.resolve());
   const [retryTick, setRetryTick] = useState(0);
+  const [failedScope, setFailedScope] = useState<string | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryAttempt = useRef(0);
   const isMounted = useRef(true);
@@ -70,6 +77,17 @@ export function useMoodDiscoverySync(state: StoreState) {
     },
   });
   const update = useUpdateMyMoodDiscoveryState({ mutation: { retry: 2 } });
+  const retry = useCallback(() => {
+    if (!activeUserId || readyScope !== scopeKey || !state.cloudSyncDirty) return;
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
+    retryAttempt.current = 0;
+    setFailedScope(null);
+    if (loadedScope !== scopeKey) void cloudState.refetch();
+    setRetryTick((tick) => tick + 1);
+  }, [activeUserId, readyScope, scopeKey, state.cloudSyncDirty, loadedScope, cloudState.refetch]);
 
   useEffect(() => {
     if (!activeUserId || readyScope !== scopeKey || !cloudState.isSuccess || cloudState.isFetching) return;
@@ -100,6 +118,7 @@ export function useMoodDiscoverySync(state: StoreState) {
       expectedRevision: state.cloudRevision,
       state: JSON.parse(snapshot),
     } as MoodDiscoveryStateUpdate;
+    setFailedScope(null);
 
     writeQueue.current = writeQueue.current
       .catch(() => undefined)
@@ -120,6 +139,7 @@ export function useMoodDiscoverySync(state: StoreState) {
           }
           if (result.accepted) {
             retryAttempt.current = 0;
+            setFailedScope(null);
             actions.markCloudSyncClean(
               activeUserId,
               snapshot,
@@ -127,6 +147,7 @@ export function useMoodDiscoverySync(state: StoreState) {
               result.revision,
             );
           } else {
+            setFailedScope(null);
             if (lastSnapshotByScope.current.get(scopeKey) === snapshot) {
               lastSnapshotByScope.current.delete(scopeKey);
             }
@@ -140,6 +161,7 @@ export function useMoodDiscoverySync(state: StoreState) {
             lastSnapshotByScope.current.delete(scopeKey);
           }
           if (isMounted.current && currentScope.current === scopeKey) {
+            setFailedScope(scopeKey);
             const delay = Math.min(30_000, 1_000 * 2 ** Math.min(retryAttempt.current, 5));
             retryAttempt.current += 1;
             retryTimer.current = setTimeout(() => {
@@ -150,4 +172,22 @@ export function useMoodDiscoverySync(state: StoreState) {
         }
       });
   }, [activeUserId, readyScope, loadedScope, scopeKey, snapshot, state.cloudSyncDirty, state.cloudRevision, cloudState.dataUpdatedAt, update.mutateAsync, retryTick]);
+
+  const status: MoodSyncStatus | null = !activeUserId || readyScope !== scopeKey
+    ? null
+    : state.cloudSyncDirty
+      ? loadedScope !== scopeKey
+        ? cloudState.isError && !cloudState.isFetching ? "waiting" : "syncing"
+        : failedScope === scopeKey ? "waiting" : "syncing"
+      : loadedScope === scopeKey ? "saved" : null;
+
+  useEffect(() => {
+    if (!activeUserId || status !== "waiting") return;
+    const subscription = addNetworkStateListener((networkState) => {
+      if (networkState.isConnected && networkState.isInternetReachable !== false) retry();
+    });
+    return () => subscription.remove();
+  }, [activeUserId, status, retry]);
+
+  return { status, retry };
 }

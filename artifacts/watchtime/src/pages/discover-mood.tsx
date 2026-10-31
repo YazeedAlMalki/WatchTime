@@ -6,6 +6,7 @@ import { Chip } from "./discover-mood/components/Shell";
 import { FilterPanel } from "./discover-mood/components/FilterPanel";
 import { MovieCard } from "./discover-mood/components/MovieCard";
 import { MovieDetail } from "./discover-mood/components/MovieDetail";
+import { MoodSyncNotice } from "./discover-mood/MoodSyncNotice";
 import { Shell } from "./discover-mood/components/Shell";
 import { MOVIES, PRESETS } from "./discover-mood/data";
 import { buildReasons, classify, countFailures } from "./discover-mood/engine";
@@ -20,7 +21,7 @@ type Stage = "start" | "tune" | "results";
 export default function DiscoverMoodPage() {
   const { t } = useT();
   const state = useStore();
-  useMoodDiscoverySync(state);
+  const moodSync = useMoodDiscoverySync(state);
   const [stage, setStage] = useState<Stage>(state.session.started ? "results" : "start");
   const [openId, setOpenId] = useState<string | null>(() => new URLSearchParams(window.location.search).get("movie"));
   const [limit, setLimit] = useState(PAGE);
@@ -158,6 +159,7 @@ export default function DiscoverMoodPage() {
       heading={stage === "start" ? t("header.start") : stage === "tune" ? t("header.tune") : t("title")}
       description={stage === "start" ? t("subtitle") : t("demoShort")}
     >
+      <MoodSyncNotice status={moodSync.status} onRetry={moodSync.retry} />
       {stage === "start" && (
         <section className="mx-auto max-w-5xl" data-testid="screen-start">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

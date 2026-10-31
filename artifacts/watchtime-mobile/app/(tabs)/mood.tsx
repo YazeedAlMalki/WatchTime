@@ -283,7 +283,7 @@ export default function MoodScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const state = useStore();
-  useMoodDiscoverySync(state);
+  const moodSync = useMoodDiscoverySync(state);
   const { t, dir } = getT(state.lang);
   const rtl = dir === 'rtl';
   const [stage, setStage] = useState<Stage | null>(null);
@@ -377,6 +377,45 @@ export default function MoodScreen() {
     <View style={[s.root, { backgroundColor: c.background }]}>
       <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 16, paddingBottom: bottomPad, gap: 14 }} testID="screen-mood" keyboardShouldPersistTaps="handled">
         {Banner}
+        {moodSync.status ? (
+          <View
+            testID="mood-sync-status"
+            style={[
+              s.banner,
+              row,
+              {
+                alignItems: 'center',
+                borderColor: moodSync.status === 'waiting'
+                  ? c.severityMild
+                  : moodSync.status === 'saved'
+                    ? c.severityNone
+                    : c.border,
+                backgroundColor: c.muted,
+              },
+            ]}
+          >
+            <Feather
+              name={moodSync.status === 'waiting' ? 'cloud-off' : moodSync.status === 'saved' ? 'cloud' : 'refresh-cw'}
+              size={16}
+              color={moodSync.status === 'waiting' ? c.severityMild : moodSync.status === 'saved' ? c.severityNone : c.mutedForeground}
+              style={{ marginTop: 1 }}
+            />
+            <Text accessibilityLiveRegion="polite" style={[s.small, ta, { color: c.foreground, flex: 1 }]}>
+              {t(`sync.${moodSync.status}`)}
+            </Text>
+            {moodSync.status === 'waiting' ? (
+              <Pressable
+                testID="button-retry-mood-sync"
+                accessibilityRole="button"
+                accessibilityLabel={t('sync.retry')}
+                onPress={moodSync.retry}
+                hitSlop={8}
+              >
+                <Text style={[s.small, { color: c.primary, fontWeight: '700' }]}>{t('sync.retry')}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         {state.storageError ? (
           <View testID="banner-storage-error" accessibilityRole="alert" style={[s.banner, row, { borderColor: c.destructive, backgroundColor: c.muted }]}>
             <Feather name="hard-drive" size={16} color={c.destructive} style={{ marginTop: 1 }} />

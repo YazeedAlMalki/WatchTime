@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MovieCard } from "./components/MovieCard";
 import { MovieDetail } from "./components/MovieDetail";
 import { Shell } from "./components/Shell";
+import { MoodSyncNotice } from "./MoodSyncNotice";
 import { MOVIES, MOVIE_BY_ID } from "./data";
 import { classify, comfortList } from "./engine";
 import { useT } from "./i18n";
@@ -18,7 +19,7 @@ const TABS = ["saved", "recent", "near", "comfort", "dismissed"] as const;
 export default function MovieIdeasPage() {
   const { t } = useT();
   const s = useStore();
-  useMoodDiscoverySync(s);
+  const moodSync = useMoodDiscoverySync(s);
   const params = new URLSearchParams(window.location.search);
   const requestedTab = params.get("tab") ?? "saved";
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]>(
@@ -57,6 +58,7 @@ export default function MovieIdeasPage() {
 
   return (
     <Shell current="ideas">
+      <MoodSyncNotice status={moodSync.status} onRetry={moodSync.retry} />
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as (typeof TABS)[number])}>
         <TabsList className="h-auto w-full flex-wrap justify-start gap-1 bg-card p-1">
           {TABS.map((k) => (

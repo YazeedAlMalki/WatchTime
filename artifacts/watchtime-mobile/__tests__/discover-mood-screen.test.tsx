@@ -10,7 +10,7 @@ jest.mock("expo-image", () => ({ Image: () => null }));
 jest.mock("expo-haptics", () => ({ selectionAsync: jest.fn() }));
 jest.mock("@expo/vector-icons", () => ({ Feather: () => null }));
 jest.mock("../lib/discover-mood/use-sync", () => ({
-  useMoodDiscoverySync: jest.fn(),
+  useMoodDiscoverySync: jest.fn(() => ({ status: null, retry: jest.fn() })),
 }));
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -38,10 +38,31 @@ import MoodScreen from "../app/(tabs)/mood";
 import { getT } from "../lib/discover-mood/i18n";
 import { actions } from "../lib/discover-mood/store";
 import { CONTENT_KEYS } from "../lib/discover-mood/types";
+import { useMoodDiscoverySync } from "../lib/discover-mood/use-sync";
 
 describe("WatchTime Mobile mood-discovery screen", () => {
   afterEach(() => {
     cleanup();
+    jest.mocked(useMoodDiscoverySync).mockReturnValue({ status: null, retry: jest.fn() });
+  });
+
+  it("shows a retry action when mood changes are waiting to sync", async () => {
+    const retry = jest.fn();
+    jest.mocked(useMoodDiscoverySync).mockReturnValue({ status: "waiting", retry });
+
+    const view = await render(<MoodScreen />);
+    await waitFor(() => expect(view.queryByTestId("mood-loading")).toBeNull());
+
+    expect(view.getByText(getT("en").t("sync.waiting"))).toBeTruthy();
+    await fireEvent.press(view.getByTestId("button-retry-mood-sync"));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not show sync status for local-only guest data", async () => {
+    const view = await render(<MoodScreen />);
+    await waitFor(() => expect(view.queryByTestId("mood-loading")).toBeNull());
+
+    expect(view.queryByTestId("mood-sync-status")).toBeNull();
   });
 
   it("renders Arabic RTL no-results and preserves age/content limits after runtime recovery", async () => {
