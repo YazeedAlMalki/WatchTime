@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertValidMovieCatalog as assertWebMovieCatalog,
   MOVIES as webMovies,
   PRESETS as webPresets,
 } from "../src/pages/discover-mood/data";
@@ -16,6 +17,7 @@ import {
 import { defaultFilters } from "../src/pages/discover-mood/store";
 import type { Filters as WebFilters, Movie as WebMovie, StoreState } from "../src/pages/discover-mood/types";
 import {
+  assertValidMovieCatalog as assertMobileMovieCatalog,
   MOVIES as mobileMovies,
   PRESETS as mobilePresets,
 } from "../../watchtime-mobile/lib/discover-mood/data";
@@ -32,6 +34,35 @@ import {
 import type { Movie as MobileMovie } from "../../watchtime-mobile/lib/discover-mood/types";
 
 const sorts: StoreState["session"]["sort"][] = ["match", "shortest", "newest", "rated", "surprise"];
+const invalidMovieCases = [
+  ["a missing required field", (movie: WebMovie) => ({ ...movie, posterUrl: "" })],
+  ["an unsupported age rating", (movie: WebMovie) => ({ ...movie, ageRating: "PG-16" })],
+  ["an unsupported movie language", (movie: WebMovie) => ({ ...movie, languages: ["xx"] })],
+  ["an unsupported subtitle language", (movie: WebMovie) => ({ ...movie, subtitleLanguages: ["xx"] })],
+  ["an unsupported streaming provider", (movie: WebMovie) => ({
+    ...movie,
+    availability: [{ ...movie.availability[0], provider: "Unknown Service" }],
+  })],
+  ["a mood value outside 0–100", (movie: WebMovie) => ({ ...movie, mood: { ...movie.mood, intensity: 101 } })],
+  ["a missing mood dimension", (movie: WebMovie) => {
+    const mood = { ...movie.mood };
+    delete (mood as Partial<typeof mood>).intensity;
+    return { ...movie, mood };
+  }],
+  ["a content value outside 0–4", (movie: WebMovie) => ({ ...movie, content: { ...movie.content, gore: 5 } })],
+  ["an unsupported availability region", (movie: WebMovie) => ({
+    ...movie,
+    availability: [{ ...movie.availability[0], region: "XX" }],
+  })],
+  ["an unsupported dubbed language", (movie: WebMovie) => ({
+    ...movie,
+    availability: [{ ...movie.availability[0], dubs: ["xx"] }],
+  })],
+  ["cautions inconsistent with content levels", (movie: WebMovie) => ({
+    ...movie,
+    cautions: ["sexualContent"],
+  })],
+] as const;
 
 describe("WatchTime web and mobile mood parity", () => {
   it("keeps the movie catalogue and presets identical", () => {
@@ -133,5 +164,22 @@ describe("WatchTime web and mobile mood parity", () => {
     const mobileMovie: MobileMovie = webMovie;
     const sameMovie: WebMovie = mobileMovie;
     expect(sameMovie).toEqual(webMovie);
+  });
+
+  it("accepts both complete movie catalogs", () => {
+    expect(() => assertWebMovieCatalog(webMovies)).not.toThrow();
+    expect(() => assertMobileMovieCatalog(mobileMovies)).not.toThrow();
+  });
+
+  it.each(invalidMovieCases)("rejects %s before recommendations can use the record", (_description, corrupt) => {
+    const invalidWebMovie = corrupt(webMovies[0]) as WebMovie;
+    const invalidMobileMovie = corrupt(mobileMovies[0] as unknown as WebMovie) as MobileMovie;
+    expect(() => assertWebMovieCatalog([invalidWebMovie])).toThrow(/Invalid mood movie/);
+    expect(() => assertMobileMovieCatalog([invalidMobileMovie])).toThrow(/Invalid mood movie/);
+  });
+
+  it("rejects duplicate movie IDs in either catalog", () => {
+    expect(() => assertWebMovieCatalog([webMovies[0], { ...webMovies[0] }])).toThrow(/id must be unique/);
+    expect(() => assertMobileMovieCatalog([mobileMovies[0], { ...mobileMovies[0] }])).toThrow(/id must be unique/);
   });
 });

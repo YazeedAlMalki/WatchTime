@@ -1,5 +1,7 @@
 import {
+  AGE_RANK,
   CONTENT_KEYS,
+  LANGS,
   MOOD_KEYS,
   REGIONS,
   PROVIDERS,
@@ -151,6 +153,127 @@ export const MOVIES: Movie[] = ROWS.map((r, i) => {
     cautions: CONTENT_KEYS.filter((k) => contentObj[k] >= 2),
   };
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function assertValidMovie(movie: Movie, index: number): void {
+  const record = movie as unknown as Record<string, unknown>;
+  const label = isNonEmptyString(record.id) ? `"${record.id}"` : `at index ${index}`;
+  const fail = (field: string, reason: string): never => {
+    throw new Error(`Invalid mood movie ${label}: ${field} ${reason}`);
+  };
+
+  if (!isNonEmptyString(record.id)) fail("id", "must be a non-empty string");
+  for (const field of ["title", "country", "posterUrl", "backdropUrl", "director", "summary"]) {
+    if (!isNonEmptyString(record[field])) fail(field, "must be a non-empty string");
+  }
+  if (record.originalTitle !== undefined && !isNonEmptyString(record.originalTitle)) {
+    fail("originalTitle", "must be a non-empty string when provided");
+  }
+  if (!Number.isInteger(record.year) || (record.year as number) < 1888 || (record.year as number) > 2100) {
+    fail("year", "must be a whole year between 1888 and 2100");
+  }
+  if (!Number.isInteger(record.runtimeMinutes) || (record.runtimeMinutes as number) < 1 || (record.runtimeMinutes as number) > 600) {
+    fail("runtimeMinutes", "must be a whole number between 1 and 600");
+  }
+
+  const stringArrays = ["cast", "genres", "languages", "subtitleLanguages", "bestFor"] as const;
+  for (const field of stringArrays) {
+    const value = record[field];
+    if (!Array.isArray(value) || (field !== "subtitleLanguages" && value.length === 0) || !value.every(isNonEmptyString)) {
+      fail(field, "must be an array of non-empty strings");
+    }
+  }
+  for (const field of ["languages", "subtitleLanguages"] as const) {
+    const values = record[field] as string[];
+    for (const language of values) {
+      if (!(LANGS as readonly string[]).includes(language)) fail(`${field}.${language}`, "is not an allowed language");
+    }
+  }
+
+  if (
+    !isNonEmptyString(record.ageRating) ||
+    !Object.prototype.hasOwnProperty.call(AGE_RANK, record.ageRating)
+  ) {
+    fail("ageRating", "must reference a supported age rating");
+  }
+
+  for (const [field, keys, min, max] of [
+    ["mood", MOOD_KEYS, 0, 100],
+    ["content", CONTENT_KEYS, 0, 4],
+  ] as const) {
+    const values = record[field];
+    if (!isRecord(values)) fail(field, "must be an object");
+    const objectValues = values as Record<string, unknown>;
+    const actualKeys = Object.keys(objectValues);
+    if (actualKeys.length !== keys.length || keys.some((key) => !Object.prototype.hasOwnProperty.call(objectValues, key))) {
+      fail(field, `must contain exactly ${keys.join(", ")}`);
+    }
+    for (const key of keys) {
+      const value = objectValues[key];
+      if (
+        typeof value !== "number" ||
+        !Number.isFinite(value) ||
+        (field === "content" && !Number.isInteger(value)) ||
+        value < min ||
+        value > max
+      ) {
+        fail(`${field}.${key}`, `must be a ${field === "content" ? "whole number from 0 to 4" : "number from 0 to 100"}`);
+      }
+    }
+  }
+
+  if (!Array.isArray(record.cautions) || !record.cautions.every((value) => CONTENT_KEYS.includes(value as (typeof CONTENT_KEYS)[number]))) {
+    fail("cautions", "must contain only supported content keys");
+  }
+  const expectedCautions = CONTENT_KEYS.filter((key) => (record.content as Record<string, number>)[key] >= 2);
+  if (JSON.stringify(record.cautions) !== JSON.stringify(expectedCautions)) {
+    fail("cautions", "must match content levels of 2 or higher");
+  }
+
+  if (!Array.isArray(record.availability)) fail("availability", "must be an array");
+  const availabilityEntries = record.availability as unknown[];
+  for (const [availabilityIndex, entry] of availabilityEntries.entries()) {
+    if (!isRecord(entry)) fail(`availability[${availabilityIndex}]`, "must be an object");
+    const availability = entry as Record<string, unknown>;
+    if (!(REGIONS as readonly string[]).includes(String(availability.region))) {
+      fail(`availability[${availabilityIndex}].region`, "must reference a supported region");
+    }
+    if (!(PROVIDERS as readonly string[]).includes(String(availability.provider))) {
+      fail(`availability[${availabilityIndex}].provider`, "must reference a supported provider");
+    }
+    if (!["stream", "rent", "buy"].includes(String(availability.kind))) {
+      fail(`availability[${availabilityIndex}].kind`, "must be stream, rent, or buy");
+    }
+    if (!Array.isArray(availability.dubs) || !availability.dubs.every(isNonEmptyString)) {
+      fail(`availability[${availabilityIndex}].dubs`, "must be an array of supported languages");
+    }
+    for (const language of availability.dubs as string[]) {
+      if (!(LANGS as readonly string[]).includes(language)) {
+        fail(`availability[${availabilityIndex}].dubs.${language}`, "is not an allowed language");
+      }
+    }
+  }
+}
+
+export function assertValidMovieCatalog(movies: readonly Movie[]): void {
+  const ids = new Set<string>();
+  movies.forEach((movie, index) => {
+    assertValidMovie(movie, index);
+    if (ids.has(movie.id)) throw new Error(`Invalid mood movie "${movie.id}": id must be unique`);
+    ids.add(movie.id);
+  });
+}
+
+// Validate the complete catalog during module initialization so bad records
+// cannot reach the recommendation engine or render as cards.
+assertValidMovieCatalog(MOVIES);
 
 export const MOVIE_BY_ID: Record<string, Movie> = Object.fromEntries(MOVIES.map((m) => [m.id, m]));
 
