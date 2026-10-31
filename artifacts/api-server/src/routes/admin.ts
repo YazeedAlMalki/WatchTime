@@ -1349,6 +1349,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
   const q = rawQ?.trim() ?? "";
   const filterKey = JSON.stringify([q, ownership ?? null]);
   const baseWhere = buildContentAliasWhere(q, ownership, requestedId);
+  const snapshotWhere = baseWhere ?? sql`true`;
   const snapshotMode =
     requestedId === undefined && afterId === undefined && req.query.offset === undefined;
   let pageRows: any[] = [];
@@ -1469,7 +1470,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
           from ${titleAliasesTable}
           inner join ${titlesTable}
             on ${titlesTable.id} = ${titleAliasesTable.titleId}
-          where ${baseWhere}
+          where ${snapshotWhere}
         )
       `,
       expiresAt: snapshot.expiresAt,

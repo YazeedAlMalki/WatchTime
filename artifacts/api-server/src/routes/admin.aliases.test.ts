@@ -942,6 +942,19 @@ describe("admin title aliases", () => {
     expect(new Set(pageIds).size).toBe(103);
   });
 
+  it("returns the first page for an unfiltered alias list", async () => {
+    const response = await request(app)
+      .get("/api/admin/content-aliases")
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      items: expect.any(Array),
+      total: expect.any(Number),
+      limit: expect.any(Number),
+      offset: 0,
+    });
+  });
+
   it("pages through alphabetical reviews larger than 10,000 aliases", async () => {
     const aliasCount = 10_025;
     const aliases = Array.from({ length: aliasCount }, (_, index) => {

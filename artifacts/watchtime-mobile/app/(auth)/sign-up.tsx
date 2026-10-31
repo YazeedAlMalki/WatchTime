@@ -75,7 +75,18 @@ function ClerkSignUpScreen() {
       setSignUpError('Could not create your account. Please try again.');
       return;
     }
-    if (error) return;
+    if (error) {
+      const message =
+        typeof error === 'object' &&
+        error !== null &&
+        'message' in error &&
+        typeof error.message === 'string' &&
+        error.message.trim()
+          ? error.message
+          : 'Could not create your account. Check your details and try again.';
+      setSignUpError(message);
+      return;
+    }
     setResending(true);
     setResendStatus(null);
     setEmailCodeSent(false);

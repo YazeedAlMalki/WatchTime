@@ -174,6 +174,75 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(screen.getByTestId('code-input')).toBeTruthy();
   });
 
+  it('shows returned account errors and lets corrected credentials reach email verification', async () => {
+    mockUseLocalSearchParams.mockReturnValue({});
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: [] as string[],
+      missingFields: ['email_address', 'password'],
+      password: jest.fn()
+        .mockResolvedValueOnce({ error: { message: 'That email address is already taken. Try another.' } })
+        .mockImplementationOnce(async () => {
+          signUp.unverifiedFields = ['email_address'];
+          signUp.missingFields = [];
+          return { error: null };
+        }),
+      verifications: { sendEmailCode: jest.fn(async () => ({ error: null })) },
+    };
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('email-input'), 'taken@example.com');
+    await fireEvent.changeText(screen.getByTestId('password-input'), 'test-password');
+    await fireEvent.press(screen.getByTestId('sign-up-button'));
+
+    expect(screen.getByTestId('sign-up-error')).toHaveTextContent(
+      'That email address is already taken. Try another.',
+    );
+    expect(screen.getByTestId('sign-up-error').props.accessibilityRole).toBe('alert');
+    expect(screen.getByTestId('email-input').props.value).toBe('taken@example.com');
+    expect(screen.getByTestId('password-input').props.value).toBe('test-password');
+    expect(screen.getByTestId('sign-up-button')).toBeEnabled();
+
+    await fireEvent.changeText(screen.getByTestId('email-input'), 'new@example.com');
+    await fireEvent.press(screen.getByTestId('sign-up-button'));
+
+    expect(signUp.password.mock.calls).toEqual([
+      [{ emailAddress: 'taken@example.com', password: 'test-password' }],
+      [{ emailAddress: 'new@example.com', password: 'test-password' }],
+    ]);
+    expect(signUp.verifications.sendEmailCode).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('sign-up-error')).toBeNull();
+    expect(screen.getByText('We sent a verification code to new@example.com')).toBeTruthy();
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+  });
+
+  it('shows actionable feedback when a returned account error has no message', async () => {
+    mockUseLocalSearchParams.mockReturnValue({});
+    mockUseSignUp.mockReturnValue({
+      signUp: {
+        status: 'missing_requirements',
+        unverifiedFields: [],
+        missingFields: ['email_address', 'password'],
+        password: jest.fn(async () => ({ error: {} })),
+      },
+      errors: { fields: {} },
+      fetchStatus: 'idle',
+    });
+
+    const screen = await render(<SignUpScreen />);
+    await fireEvent.changeText(screen.getByTestId('email-input'), 'viewer@example.com');
+    await fireEvent.changeText(screen.getByTestId('password-input'), 'test-password');
+    await fireEvent.press(screen.getByTestId('sign-up-button'));
+
+    expect(screen.getByTestId('sign-up-error')).toHaveTextContent(
+      'Could not create your account. Check your details and try again.',
+    );
+    expect(screen.getByTestId('email-input').props.value).toBe('viewer@example.com');
+    expect(screen.getByTestId('password-input').props.value).toBe('test-password');
+    expect(screen.getByTestId('sign-up-button')).toBeEnabled();
+  });
+
   it.each([
     { params: { returnTo: '/title/456' }, destination: '/title/456', decorated: '/title/456?verified=1' },
     { params: {}, destination: '/', decorated: '/' },
