@@ -66,10 +66,12 @@ describe("admin Content review timestamp filter", () => {
     await markMalformedTimestamp([record.id]);
 
     await db.insert(providerMappingsTable).values([
-      { titleId: title.id, provider: "IMDb", externalId: "imdb-z" },
-      { titleId: title.id, provider: "TVMaze", externalId: "tvmaze-1" },
-      { titleId: title.id, provider: "IMDb", externalId: "imdb-a" },
-      { titleId: title.id, provider: "Wikidata", externalId: "wikidata-1" },
+      { titleId: title.id, provider: "IMDb", externalId: "imdb-z", status: "mapped" },
+      { titleId: title.id, provider: "TVMaze", externalId: null, status: "missing" },
+      { titleId: title.id, provider: "IMDb", externalId: null, status: "missing" },
+      { titleId: title.id, provider: "IMDb", externalId: "imdb-a", status: "mapped" },
+      { titleId: title.id, provider: "Wikidata", externalId: null, status: "error" },
+      { titleId: title.id, provider: "IMDb", externalId: null, status: "error" },
     ]);
 
     const regularResponse = await request(app)
@@ -79,10 +81,12 @@ describe("admin Content review timestamp filter", () => {
       .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true`)
       .expect(200);
     const expectedMappings = [
-      { provider: "IMDb", externalId: "imdb-z" },
-      { provider: "IMDb", externalId: "imdb-a" },
-      { provider: "TVMaze", externalId: "tvmaze-1" },
-      { provider: "Wikidata", externalId: "wikidata-1" },
+      { provider: "IMDb", externalId: "imdb-z", status: "mapped" },
+      { provider: "IMDb", externalId: null, status: "missing" },
+      { provider: "IMDb", externalId: "imdb-a", status: "mapped" },
+      { provider: "IMDb", externalId: null, status: "error" },
+      { provider: "TVMaze", externalId: null, status: "missing" },
+      { provider: "Wikidata", externalId: null, status: "error" },
     ];
 
     expect(regularResponse.body).toHaveLength(1);
