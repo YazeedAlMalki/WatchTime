@@ -536,6 +536,12 @@ describe("admin Content review timestamp filter", () => {
       })),
     ).returning({ id: safetyRecordsTable.id });
     await markMalformedTimestamp(records.map(({ id }) => id));
+    await db.insert(providerMappingsTable).values([
+      { titleId: titles[25].id, provider: "Wikidata", externalId: "wikidata-26" },
+      { titleId: titles[25].id, provider: "IMDb", externalId: "imdb-z-26" },
+      { titleId: titles[25].id, provider: "TVMaze", externalId: "tvmaze-26" },
+      { titleId: titles[25].id, provider: "IMDb", externalId: "imdb-a-26" },
+    ]);
     const firstPage = await request(app)
       .get(`/api/admin/content?q=${fixturePrefix}&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Timestamp+Fixture+Provider&malformedRefreshTimestampAllRegions=true&offset=0`)
       .expect(200);
@@ -554,6 +560,18 @@ describe("admin Content review timestamp filter", () => {
     expect(secondPage.body).toHaveLength(2);
     expect(secondPage.body.map((item: any) => item.selectedRating.region)).toEqual(["GB", "US"]);
     expect(secondPage.body.map((item: any) => item.name)).toEqual([`${fixturePrefix}-26`, `${fixturePrefix}-26`]);
+    const expectedMappings = [
+      { provider: "IMDb", externalId: "imdb-z-26" },
+      { provider: "IMDb", externalId: "imdb-a-26" },
+      { provider: "TVMaze", externalId: "tvmaze-26" },
+      { provider: "Wikidata", externalId: "wikidata-26" },
+    ];
+    expect(secondPage.body.map((item: any) => item.mappings.map(
+      ({ provider, externalId }: { provider: string; externalId: string | null }) => ({ provider, externalId }),
+    ))).toEqual([
+      expectedMappings,
+      expectedMappings,
+    ]);
   });
 
   it("includes only the region whose selected rating has a malformed timestamp", async () => {
