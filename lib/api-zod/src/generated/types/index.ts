@@ -49,6 +49,7 @@ export * from './catalogRefreshAccepted';
 export * from './catalogRefreshFailure';
 export * from './catalogRefreshFailureProvider';
 export * from './catalogRefreshRun';
+export * from './catalogRefreshRunQueuedWorkerState';
 export * from './catalogRefreshRunStatus';
 export * from './catalogRefreshRunTrigger';
 export * from './contentMapping';

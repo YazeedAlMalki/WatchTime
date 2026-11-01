@@ -2192,7 +2192,7 @@ components:
         error: { type: ["string", "null"] }
     CatalogRefreshRun:
       type: object
-      required: [id, trigger, status, totalItems, processedItems, succeededItems, failedItems, episodesUpdated, createdAt, failures]
+      required: [id, trigger, status, totalItems, processedItems, succeededItems, failedItems, episodesUpdated, createdAt, queuedWorkerState, failures]
       properties:
         id: { type: integer }
         trigger: { type: string, enum: [scheduled, manual, retry] }
@@ -2206,6 +2206,10 @@ components:
         finishedAt: { type: ["string", "null"] }
         error: { type: ["string", "null"] }
         createdAt: { type: string }
+        queuedWorkerState:
+          type: ["string", "null"]
+          enum: [protected, abandoned, null]
+          description: Whether stale queued work still has a live worker lock; null for other runs.
         failures:
           type: array
           items:

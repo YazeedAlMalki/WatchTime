@@ -73,7 +73,11 @@ import {
   type RatingRegion,
 } from "../lib/ratingRegions";
 import { RATING_REGIONS, RATING_REGIONS_BY_CODE } from "@workspace/rating-regions";
-import { retryFailedCatalogTitles, startCatalogRefresh } from "../lib/catalog-refresh";
+import {
+  retryFailedCatalogTitles,
+  startCatalogRefresh,
+  STALE_QUEUED_REFRESH_MS,
+} from "../lib/catalog-refresh";
 
 const router: IRouter = Router();
 
@@ -553,9 +557,28 @@ router.get("/integrations", async (_req, res) => {
 });
 
 router.get("/catalog-refreshes", async (_req, res) => {
+  const staleQueuedCutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
   const runs = await db
     .select({
       run: catalogSyncRunsTable,
+      queuedWorkerState: sql<"protected" | "abandoned" | null>`
+        case
+          when ${catalogSyncRunsTable.status} <> 'queued'
+            or ${catalogSyncRunsTable.createdAt} >= ${staleQueuedCutoff}
+          then null
+          when exists (
+            select 1
+            from pg_locks
+            where pg_locks.locktype = 'advisory'
+              and pg_locks.classid = hashtext('watchtime:catalog-refresh-worker')::oid
+              and pg_locks.objid = ${catalogSyncRunsTable.id}::oid
+              and pg_locks.objsubid = 2
+              and pg_locks.granted
+          )
+          then 'protected'
+          else 'abandoned'
+        end
+      `,
       startedAtIsSupported: sql<boolean>`
         isfinite(${catalogSyncRunsTable.startedAt})
         and abs(extract(epoch from ${catalogSyncRunsTable.startedAt}) * 1000)
@@ -575,8 +598,9 @@ router.get("/catalog-refreshes", async (_req, res) => {
     ? await db.select().from(catalogSyncItemsTable)
         .where(and(inArray(catalogSyncItemsTable.runId, runIds), eq(catalogSyncItemsTable.status, "failed")))
     : [];
-  return res.json(runs.map(({ run, startedAtIsSupported, finishedAtIsSupported }) => ({
+  return res.json(runs.map(({ run, queuedWorkerState, startedAtIsSupported, finishedAtIsSupported }) => ({
     ...run,
+    queuedWorkerState,
     startedAt: serializeCatalogRunTimestamp(run.startedAt, startedAtIsSupported),
     finishedAt: serializeCatalogRunTimestamp(run.finishedAt, finishedAtIsSupported),
     createdAt: run.createdAt.toISOString(),

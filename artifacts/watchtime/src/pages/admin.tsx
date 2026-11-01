@@ -4479,6 +4479,17 @@ function IntegrationsTab({
                   {run.succeededItems} succeeded · {run.failedItems} failed ·{" "}
                   {run.episodesUpdated} episodes
                 </div>
+                {run.queuedWorkerState === "protected" && (
+                  <p className="mt-2 text-sm font-medium text-blue-700 dark:text-blue-300">
+                    A live worker is protecting this stale queued refresh.
+                  </p>
+                )}
+                {run.queuedWorkerState === "abandoned" && (
+                  <p className="mt-2 text-sm font-medium text-orange-700 dark:text-orange-300">
+                    No live worker owns this stale queued refresh; recovery is
+                    pending.
+                  </p>
+                )}
                 {run.failures.length > 0 && (
                   <div className="mt-3">
                     <div className="text-sm text-red-600 dark:text-red-400">

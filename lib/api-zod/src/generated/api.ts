@@ -1309,6 +1309,7 @@ export const ListCatalogRefreshesResponseItem = zod.object({
   "finishedAt": zod.string().nullish(),
   "error": zod.string().nullish(),
   "createdAt": zod.string(),
+  "queuedWorkerState": zod.union([zod.literal('protected'),zod.literal('abandoned'),zod.literal(null)]).nullable().describe('Whether stale queued work still has a live worker lock; null for other runs.'),
   "failures": zod.array(zod.object({
   "title": zod.string(),
   "provider": zod.enum(['TVMaze', 'Wikipedia']),

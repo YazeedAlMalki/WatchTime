@@ -1082,6 +1082,18 @@ export const CatalogRefreshRunStatus = {
   skipped: 'skipped',
 } as const;
 
+/**
+ * Whether stale queued work still has a live worker lock; null for other runs.
+ * @nullable
+ */
+export type CatalogRefreshRunQueuedWorkerState = typeof CatalogRefreshRunQueuedWorkerState[keyof typeof CatalogRefreshRunQueuedWorkerState] | null;
+
+
+export const CatalogRefreshRunQueuedWorkerState = {
+  protected: 'protected',
+  abandoned: 'abandoned',
+} as const;
+
 export interface CatalogRefreshRun {
   id: number;
   trigger: CatalogRefreshRunTrigger;
@@ -1098,6 +1110,11 @@ export interface CatalogRefreshRun {
   /** @nullable */
   error?: string | null;
   createdAt: string;
+  /**
+     * Whether stale queued work still has a live worker lock; null for other runs.
+     * @nullable
+     */
+  queuedWorkerState: CatalogRefreshRunQueuedWorkerState;
   failures: CatalogRefreshFailure[];
 }
 

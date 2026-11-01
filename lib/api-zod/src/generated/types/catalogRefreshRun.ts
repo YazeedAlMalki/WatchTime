@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CatalogRefreshFailure } from './catalogRefreshFailure';
+import type { CatalogRefreshRunQueuedWorkerState } from './catalogRefreshRunQueuedWorkerState';
 import type { CatalogRefreshRunStatus } from './catalogRefreshRunStatus';
 import type { CatalogRefreshRunTrigger } from './catalogRefreshRunTrigger';
 
@@ -25,5 +26,10 @@ export interface CatalogRefreshRun {
   /** @nullable */
   error?: string | null;
   createdAt: string;
+  /**
+     * Whether stale queued work still has a live worker lock; null for other runs.
+     * @nullable
+     */
+  queuedWorkerState: CatalogRefreshRunQueuedWorkerState;
   failures: CatalogRefreshFailure[];
 }
