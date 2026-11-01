@@ -3,6 +3,24 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export type DevSplashFailure = 'setup' | 'cleanup' | null;
 
 const DEV_SPLASH_FAILURE_KEY = 'watchtime.devSplashFailure';
+const DEV_FALLBACK_FONTS_KEY = 'watchtime.devFallbackFonts';
+
+export async function readDevFallbackFonts(): Promise<boolean> {
+  if (!__DEV__) return false;
+  return (await AsyncStorage.getItem(DEV_FALLBACK_FONTS_KEY)) === '1';
+}
+
+export async function setDevFallbackFonts(enabled: boolean): Promise<void> {
+  if (!__DEV__) {
+    throw new Error('Fallback font selection is available only in development.');
+  }
+
+  if (enabled) {
+    await AsyncStorage.setItem(DEV_FALLBACK_FONTS_KEY, '1');
+  } else {
+    await AsyncStorage.removeItem(DEV_FALLBACK_FONTS_KEY);
+  }
+}
 
 export async function armDevSplashFailure(
   failure: Exclude<DevSplashFailure, null>,

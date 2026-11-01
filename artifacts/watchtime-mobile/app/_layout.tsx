@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -21,6 +21,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import colors from '@/constants/colors';
 import {
   consumeDevSplashFailure,
+  readDevFallbackFonts,
   type DevSplashFailure,
 } from '@/lib/dev-splash-failure';
 import { getDevDemoToken } from '@/lib/dev-demo-session';
@@ -50,6 +51,9 @@ if (Platform.OS !== 'web') {
 
 // Defer storage access one microtask so preventAutoHideAsync starts first.
 const devSplashFailure = Promise.resolve().then(consumeDevSplashFailure);
+const devFallbackFonts = Promise.resolve()
+  .then(readDevFallbackFonts)
+  .catch(() => false);
 
 function describeError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -308,6 +312,20 @@ function FontLoaderFailureFallback({ error }: { error: Error }) {
 }
 
 function FontGatedRootLayout() {
+  const [fallbackFontsEnabled, setFallbackFontsEnabled] = useState<boolean | null>(
+    null,
+  );
+
+  useEffect(() => {
+    let active = true;
+    void devFallbackFonts.then((enabled) => {
+      if (active) setFallbackFontsEnabled(enabled);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Reviewer opt-in only: skip the hook entirely so Inter is not registered.
   // Cold-start with EXPO_PUBLIC_SKIP_INTER_LOADING=1; release builds ignore it.
   if (
@@ -318,7 +336,19 @@ function FontGatedRootLayout() {
     throw new Error('Development-only forced Inter font loading failure');
   }
 
+  if (fallbackFontsEnabled === null) return null;
+  if (fallbackFontsEnabled) return <FallbackFontRootLayout />;
+
   return <InterFontGatedRootLayout />;
+}
+
+function FallbackFontRootLayout() {
+  useEffect(() => {
+    markStartup('fallback-fonts-ready');
+    recoverSplashScreen();
+  }, []);
+
+  return <RootApplication />;
 }
 
 function InterFontGatedRootLayout() {

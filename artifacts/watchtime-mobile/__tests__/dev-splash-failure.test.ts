@@ -11,6 +11,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   armDevSplashFailure,
   consumeDevSplashFailure,
+  readDevFallbackFonts,
+  setDevFallbackFonts,
 } from '../lib/dev-splash-failure';
 
 const mockStoredValues = new Map<string, string>();
@@ -53,10 +55,22 @@ describe('development splash failure switch', () => {
         'available only in development',
       );
       await expect(consumeDevSplashFailure()).resolves.toBeNull();
+      await expect(readDevFallbackFonts()).resolves.toBe(false);
+      await expect(setDevFallbackFonts(true)).rejects.toThrow(
+        'available only in development',
+      );
       expect(mockStorage.getItem).not.toHaveBeenCalled();
       expect(mockStorage.setItem).not.toHaveBeenCalled();
     } finally {
       runtime.__DEV__ = wasDev;
     }
+  });
+
+  it('persists the fallback font mode until it is explicitly switched off', async () => {
+    await expect(readDevFallbackFonts()).resolves.toBe(false);
+    await setDevFallbackFonts(true);
+    await expect(readDevFallbackFonts()).resolves.toBe(true);
+    await setDevFallbackFonts(false);
+    await expect(readDevFallbackFonts()).resolves.toBe(false);
   });
 });

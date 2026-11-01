@@ -1,17 +1,45 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { reloadAppAsync } from 'expo';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
-import { armDevSplashFailure } from '@/lib/dev-splash-failure';
+import {
+  armDevSplashFailure,
+  readDevFallbackFonts,
+  setDevFallbackFonts,
+} from '@/lib/dev-splash-failure';
 
 export function ExpoPreviewReadiness() {
   const c = useColors();
   const insets = useSafeAreaInsets();
-  const [reloadingFor, setReloadingFor] = useState<'setup' | 'cleanup' | null>(null);
+  const [reloadingFor, setReloadingFor] = useState<
+    'setup' | 'cleanup' | 'fallback-fonts' | 'inter-fonts' | null
+  >(null);
   const [failureControlError, setFailureControlError] = useState<string | null>(null);
+  const [fallbackFontsEnabled, setFallbackFontsEnabled] = useState<boolean | null>(null);
+  const [fontModeError, setFontModeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void readDevFallbackFonts().then(
+      (enabled) => {
+        if (active) setFallbackFontsEnabled(enabled);
+      },
+      () => {
+        if (active) setFontModeError('Could not read the saved font mode.');
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+
   if (!__DEV__) return null;
+
+  const metroForcesFallbackFonts =
+    process.env.EXPO_PUBLIC_SKIP_INTER_LOADING === '1';
+  const activeFallbackFonts = metroForcesFallbackFonts || fallbackFontsEnabled;
 
   const restartWithSplashFailure = async (failure: 'setup' | 'cleanup') => {
     setFailureControlError(null);
@@ -22,6 +50,19 @@ export function ExpoPreviewReadiness() {
     } catch {
       setReloadingFor(null);
       setFailureControlError('Could not restart the preview. Try again.');
+    }
+  };
+
+  const restartWithFallbackFonts = async (enabled: boolean) => {
+    setFailureControlError(null);
+    setReloadingFor(enabled ? 'fallback-fonts' : 'inter-fonts');
+    try {
+      await setDevFallbackFonts(enabled);
+      setFallbackFontsEnabled(enabled);
+      await reloadAppAsync();
+    } catch {
+      setReloadingFor(null);
+      setFailureControlError('Could not save the font mode or restart the preview. Try again.');
     }
   };
 
@@ -75,31 +116,85 @@ export function ExpoPreviewReadiness() {
           </Text>
         ) : null}
         {Platform.OS !== 'web' ? (
-          <View style={styles.failureControls}>
-            <Text style={[styles.help, { color: c.mutedForeground }]}>
-              Reproduce a splash startup failure:
-            </Text>
-            <View style={styles.failureButtons}>
-              {(['setup', 'cleanup'] as const).map((failure) => (
+          <View>
+            <View style={styles.fontControls}>
+              <Text
+                testID="font-mode-status"
+                style={[styles.help, { color: c.mutedForeground }]}
+              >
+                Font mode:{' '}
+                {activeFallbackFonts === null
+                  ? 'Checking…'
+                  : activeFallbackFonts
+                    ? metroForcesFallbackFonts
+                      ? 'System fallback fonts (Metro override)'
+                      : 'System fallback fonts'
+                    : 'Inter'}
+              </Text>
+              <Text style={[styles.help, { color: c.mutedForeground }]}>
+                Changing this setting requires a cold restart.
+              </Text>
+              {metroForcesFallbackFonts ? (
+                <Text style={[styles.help, { color: c.mutedForeground }]}>
+                  The Metro environment is forcing fallback fonts.
+                </Text>
+              ) : null}
+              {fontModeError ? (
+                <Text
+                  accessibilityRole="alert"
+                  style={[styles.help, { color: c.foreground }]}
+                >
+                  {fontModeError}
+                </Text>
+              ) : null}
+              {fallbackFontsEnabled !== null && !metroForcesFallbackFonts ? (
                 <Pressable
-                  key={failure}
                   accessibilityRole="button"
                   disabled={reloadingFor !== null}
-                  onPress={() => void restartWithSplashFailure(failure)}
+                  onPress={() => void restartWithFallbackFonts(!fallbackFontsEnabled)}
                   style={[
                     styles.failureButton,
                     { borderColor: c.border },
                     reloadingFor !== null ? styles.disabledButton : null,
                   ]}
-                  testID={`splash-failure-${failure}`}
+                  testID="toggle-fallback-fonts"
                 >
                   <Text style={[styles.failureButtonText, { color: c.foreground }]}>
-                    {reloadingFor === failure
+                    {reloadingFor === 'fallback-fonts' || reloadingFor === 'inter-fonts'
                       ? 'Restarting…'
-                      : `Test ${failure} failure`}
+                      : fallbackFontsEnabled
+                        ? 'Switch to Inter fonts'
+                        : 'Switch to system fallback fonts'}
                   </Text>
                 </Pressable>
-              ))}
+              ) : null}
+            </View>
+            <View style={styles.failureControls}>
+              <Text style={[styles.help, { color: c.mutedForeground }]}>
+                Reproduce a splash startup failure:
+              </Text>
+              <View style={styles.failureButtons}>
+                {(['setup', 'cleanup'] as const).map((failure) => (
+                  <Pressable
+                    key={failure}
+                    accessibilityRole="button"
+                    disabled={reloadingFor !== null}
+                    onPress={() => void restartWithSplashFailure(failure)}
+                    style={[
+                      styles.failureButton,
+                      { borderColor: c.border },
+                      reloadingFor !== null ? styles.disabledButton : null,
+                    ]}
+                    testID={`splash-failure-${failure}`}
+                  >
+                    <Text style={[styles.failureButtonText, { color: c.foreground }]}>
+                      {reloadingFor === failure
+                        ? 'Restarting…'
+                        : `Test ${failure} failure`}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
             {failureControlError ? (
               <Text
@@ -144,6 +239,10 @@ const styles = StyleSheet.create({
   },
   failureControls: {
     marginTop: 8,
+  },
+  fontControls: {
+    marginTop: 8,
+    gap: 2,
   },
   failureButtons: {
     flexDirection: 'row',
