@@ -202,7 +202,7 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
 
   it(trigger === "retry"
     ? "recovers on the same source after PostgreSQL rejects the retry audit's admin foreign key"
-    : "rolls back the queue when PostgreSQL rejects the audit's admin foreign key", async () => {
+    : "recovers after PostgreSQL rejects the manual audit's admin foreign key", async () => {
     const { path, sourceRunId } = await prepareRequest();
     const runIdsBefore = await db.select({ id: catalogSyncRunsTable.id })
       .from(catalogSyncRunsTable).orderBy(catalogSyncRunsTable.id);
@@ -335,6 +335,40 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
         .where(eq(catalogSyncRunsTable.id, sourceRunId))).toEqual(sourceRunsBefore);
       expect(await db.select().from(catalogSyncItemsTable)
         .where(eq(catalogSyncItemsTable.runId, sourceRunId))).toEqual(sourceItemsBefore);
+    } else {
+      // Retry the manual start on the same pool after removing the FK interception.
+      transactionSpy.mockRestore();
+      runCatalogSync.mockResolvedValueOnce({
+        selected: 1, succeeded: 1, episodes: 0, failures: [],
+      });
+      const response = await request(app).post(path);
+      expect(response.status).toBe(202);
+      const recoveredRunId = response.body.runId as number;
+      createdRunIds.push(recoveredRunId);
+      expect(recoveredRunId).toEqual(expect.any(Number));
+      expect(recoveredRunId).not.toBe(queuedRunId);
+      await waitForFinishedRun(recoveredRunId);
+
+      expect(runCatalogSync).toHaveBeenCalledOnce();
+      expect(runCatalogSync.mock.calls[0][1]).toEqual([
+        expect.objectContaining({ key: "catalog-refresh-audit-item" }),
+      ]);
+      expect(await db.select({ id: catalogSyncRunsTable.id }).from(catalogSyncRunsTable)
+        .orderBy(catalogSyncRunsTable.id)).toEqual([...runIdsBefore, { id: recoveredRunId }]);
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, recoveredRunId))).toEqual([
+        expect.objectContaining({ trigger: "manual", status: "succeeded", totalItems: 1 }),
+      ]);
+      expect(await db.select().from(adminAuditLogTable).where(inArray(
+        adminAuditLogTable.adminId, [adminId, missingAdminId],
+      ))).toEqual([
+        expect.objectContaining({
+          adminId,
+          action: "start_catalog_refresh",
+          entityType: "catalog_sync",
+          entityId: recoveredRunId,
+        }),
+      ]);
     }
   });
 
