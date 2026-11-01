@@ -50,3 +50,4 @@
 - [Paginated query recovery tests](paginated-query-recovery-tests.md) — multi-page fallback after invalidation needs event-loop yielding and enough polling time.
 - [Radix slider accessible labels](radix-slider-accessibility.md) — pass accessible names and value text to the slider thumb, not only its root.
 - [Admin content tab state](admin-content-tab-state.md) — keeping the Content panel mounted is not enough; tab URLs drop alias search and ownership, so retain and restore them too.
+- [Inspectable Expo release bundles](expo-release-bundle-checks.md) — use production minification with `--no-bytecode` to inspect optimized native JavaScript instead of opaque Hermes output.
