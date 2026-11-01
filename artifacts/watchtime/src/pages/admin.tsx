@@ -2755,53 +2755,60 @@ export function AliasReview({
     q: string;
     ownership: ListAdminContentAliasesOwnership | "all";
   } | null>(null);
-  const [savedAliasPreviewState, setSavedAliasPreviewState] = useState<{
-    alias: AdminContentAlias;
-    q: string;
-    ownership: ListAdminContentAliasesOwnership | "all";
-    refreshed: boolean;
-  } | null>(null);
-  const savedAliasPreview =
-    savedAliasPreviewState?.q === q.trim() &&
-    savedAliasPreviewState.ownership === ownership
-      ? savedAliasPreviewState.alias
-      : null;
-  const savedAliasRefreshSucceeded =
-    savedAliasPreview !== null && savedAliasPreviewState?.refreshed === true;
+  const [savedAliasPreviewStates, setSavedAliasPreviewStates] = useState<
+    {
+      alias: AdminContentAlias;
+      q: string;
+      ownership: ListAdminContentAliasesOwnership | "all";
+      refreshed: boolean;
+    }[]
+  >([]);
+  const currentSavedAliasPreviewStates = savedAliasPreviewStates.filter(
+    (preview) => preview.q === q.trim() && preview.ownership === ownership,
+  );
+  const savedAliasPreviews = currentSavedAliasPreviewStates.map(
+    (preview) => preview.alias,
+  );
+  const getSavedAliasPreviewState = (id: number) =>
+    currentSavedAliasPreviewStates.find((preview) => preview.alias.id === id);
+  const getSavedAliasPreview = (id: number) =>
+    getSavedAliasPreviewState(id)?.alias ?? null;
+  const isSavedAliasPreviewUnrefreshed = (id: number) =>
+    getSavedAliasPreviewState(id)?.refreshed === false;
+  React.useEffect(() => {
+    setSavedAliasPreviewStates((current) => {
+      const next = current.filter(
+        (preview) =>
+          preview.q === q.trim() &&
+          preview.ownership === ownership &&
+          !(
+            preview.refreshed &&
+            aliases?.some((alias) => alias.id === preview.alias.id)
+          ),
+      );
+      return next.length === current.length ? current : next;
+    });
+  }, [q, ownership, aliases]);
   const [removedAliasPreviews, setRemovedAliasPreviews] = useState<
     AdminContentAlias[]
   >([]);
-  React.useEffect(() => {
-    if (
-      savedAliasPreviewState &&
-      (savedAliasPreviewState.q !== q.trim() ||
-        savedAliasPreviewState.ownership !== ownership)
-    ) {
-      setSavedAliasPreviewState(null);
-    }
-  }, [q, ownership, savedAliasPreviewState]);
   React.useEffect(() => {
     if (linkedAlias) linkedRowRef.current?.scrollIntoView?.({ block: "center" });
   }, [linkedAlias?.id]);
   const removedAliasIds = new Set(
     removedAliasPreviews.map((alias) => alias.id),
   );
-  const aliasesWithSavedPreview = aliases?.map((alias) =>
-    savedAliasPreview?.id === alias.id && !savedAliasRefreshSucceeded
-      ? savedAliasPreview
-      : alias,
+  const aliasesWithSavedPreview = aliases?.map((alias) => {
+    const savedPreview = getSavedAliasPreviewState(alias.id);
+    return savedPreview && !savedPreview.refreshed ? savedPreview.alias : alias;
+  });
+  const savedPreviewsOutsidePage = savedAliasPreviews.filter(
+    (savedPreview) => !aliases?.some((alias) => alias.id === savedPreview.id),
   );
-  const savedPreviewOutsidePage =
-    savedAliasPreview &&
-    !aliases?.some((alias) => alias.id === savedAliasPreview.id)
-      ? savedAliasPreview
-      : null;
   const reviewAliases = aliasesWithSavedPreview
-    ? savedPreviewOutsidePage
-      ? [savedPreviewOutsidePage, ...aliasesWithSavedPreview]
-      : aliasesWithSavedPreview
-    : savedAliasPreview
-      ? [savedAliasPreview]
+    ? [...savedPreviewsOutsidePage, ...aliasesWithSavedPreview]
+    : savedAliasPreviews.length > 0
+      ? savedAliasPreviews
       : undefined;
   const visibleAliasesBeforeRemoval =
     linkedAlias && !reviewAliases?.some((alias) => alias.id === linkedAlias.id)
@@ -3049,8 +3056,12 @@ export function AliasReview({
         requests.includes("aliases") &&
         !failedRequests.includes("aliases")
       ) {
-        setSavedAliasPreviewState((current) =>
-          current ? { ...current, refreshed: true } : current,
+        setSavedAliasPreviewStates((current) =>
+          current.map((preview) =>
+            preview.q === q.trim() && preview.ownership === ownership
+              ? { ...preview, refreshed: true }
+              : preview,
+          ),
         );
         setRemovedAliasPreviews([]);
       }
@@ -3077,7 +3088,8 @@ export function AliasReview({
   const getEditingAlias = () => {
     if (editingId === null) return null;
     if (conflictAlias?.id === editingId) return conflictAlias;
-    if (savedAliasPreview?.id === editingId) return savedAliasPreview;
+    const savedPreview = getSavedAliasPreview(editingId);
+    if (savedPreview) return savedPreview;
     return aliases?.find((candidate) => candidate.id === editingId) ?? null;
   };
 
@@ -3137,8 +3149,8 @@ export function AliasReview({
     const editedAlias =
       conflictAlias?.id === editingId
         ? conflictAlias
-        : savedAliasPreview?.id === editingId
-          ? savedAliasPreview
+        : getSavedAliasPreview(editingId)
+          ? getSavedAliasPreview(editingId)
           : aliases?.find((candidate) => candidate.id === editingId) ?? null;
     updateAlias.mutate(
       {
@@ -3170,20 +3182,32 @@ export function AliasReview({
             aliasesForCollisionLookup.push(savedAlias);
           }
           if (editedAlias) {
-            setSavedAliasPreviewState({
+            const savedPreview = {
               alias: {
                 ...editedAlias,
                 alias: savedAlias,
-                language: savedRecord?.language ?? (draft.language.trim() || null),
+                language:
+                  savedRecord?.language ?? (draft.language.trim() || null),
                 sourceName: savedRecord?.sourceName ?? editedAlias.sourceName,
                 sourceUrl:
                   savedRecord?.sourceUrl ?? (draft.sourceUrl.trim() || null),
-                isEditorial: savedRecord?.isEditorial ?? editedAlias.isEditorial,
+                isEditorial:
+                  savedRecord?.isEditorial ?? editedAlias.isEditorial,
                 updatedAt: savedRecord?.updatedAt ?? editedAlias.updatedAt,
               },
               q: q.trim(),
               ownership,
               refreshed: false,
+            };
+            setSavedAliasPreviewStates((current) => {
+              const existingIndex = current.findIndex(
+                (preview) => preview.alias.id === editingId,
+              );
+              return existingIndex === -1
+                ? [...current, savedPreview]
+                : current.map((preview, index) =>
+                    index === existingIndex ? savedPreview : preview,
+                  );
             });
           }
           const failedRequests = await refreshAliasViews(
@@ -3275,8 +3299,8 @@ export function AliasReview({
               ? current
               : [...current, alias],
           );
-          setSavedAliasPreviewState((current) =>
-            current?.alias.id === alias.id ? null : current,
+          setSavedAliasPreviewStates((current) =>
+            current.filter((preview) => preview.alias.id !== alias.id),
           );
           setConflictAlias((current) =>
             current?.id === alias.id ? null : current,
@@ -3345,7 +3369,7 @@ export function AliasReview({
             </SelectContent>
           </Select>
           <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-            {isError && !savedAliasPreview
+            {isError && savedAliasPreviews.length === 0
               ? "Aliases unavailable"
               : `${visibleAliasTotal} aliases`}
           </span>
@@ -3394,14 +3418,25 @@ export function AliasReview({
           )}
         </div>
       )}
-      {savedPreviewOutsidePage && (
+      {savedPreviewsOutsidePage.length > 0 && (
         <div
           role="status"
           className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm"
         >
-          Saved correction: <strong>{savedPreviewOutsidePage.alias}</strong> is
-          shown separately above the current page of filtered results. The
-          result count and page navigation remain based on the filtered list.
+          {savedPreviewsOutsidePage.length === 1 ? (
+            <>
+              Saved correction:{" "}
+              <strong>{savedPreviewsOutsidePage[0]?.alias}</strong> is shown
+              separately above the current page of filtered results.
+            </>
+          ) : (
+            <>
+              {savedPreviewsOutsidePage.length} saved corrections are shown
+              separately above the current page of filtered results.
+            </>
+          )}{" "}
+          The result count and page navigation remain based on the filtered
+          list.
         </div>
       )}
       {isError && linkedAlias && (
@@ -3410,7 +3445,7 @@ export function AliasReview({
           <button type="button" className="text-primary underline" onClick={onRetry}>Retry results</button>
         </div>
       )}
-      {isError && savedAliasPreview && (
+      {isError && savedAliasPreviews.length > 0 && (
         <div
           role="alert"
           className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
@@ -3450,7 +3485,8 @@ export function AliasReview({
                   {isAliasRefreshTimedOut
                     ? "A previous refresh is still pending. Its results are not being treated as current; retry to start a new check. "
                     : ""}
-                  {savedAliasPreview && refreshError.includes("aliases")
+                  {savedAliasPreviews.length > 0 &&
+                  refreshError.includes("aliases")
                     ? "Your saved correction is shown in the table below, but its review details may be out of date. "
                     : ""}
                   {isAliasRefreshTimedOut
@@ -3671,7 +3707,7 @@ export function AliasReview({
         </p>
       ) : isLoading ? (
         <div className="h-24 animate-pulse bg-secondary/30 rounded-2xl" />
-      ) : isError && !linkedAlias && !savedAliasPreview ? (
+      ) : isError && !linkedAlias && savedAliasPreviews.length === 0 ? (
         <div
           ref={aliasLoadAlertRef}
           role="alert"
@@ -3734,10 +3770,11 @@ export function AliasReview({
                   className={
                     linkedAliasId === alias.id
                       ? "bg-primary/10 ring-2 ring-inset ring-primary/50"
-                      : savedAliasPreview?.id === alias.id &&
-                          !savedAliasRefreshSucceeded
+                      : isSavedAliasPreviewUnrefreshed(alias.id)
                         ? "bg-primary/10"
-                        : savedPreviewOutsidePage?.id === alias.id
+                        : savedPreviewsOutsidePage.some(
+                              (savedPreview) => savedPreview.id === alias.id,
+                            )
                           ? "bg-primary/5"
                           : undefined
                   }
@@ -3758,8 +3795,7 @@ export function AliasReview({
                     ) : (
                       <span className="inline-flex flex-wrap items-center gap-2">
                         {alias.alias}
-                        {savedAliasPreview?.id === alias.id &&
-                          !savedAliasRefreshSucceeded && (
+                        {isSavedAliasPreviewUnrefreshed(alias.id) && (
                             <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
                               Saved correction preview
                             </span>

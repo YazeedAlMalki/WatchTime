@@ -787,6 +787,320 @@ describe("admin alternate-title review", () => {
     );
   });
 
+  it("keeps multiple saved corrections available without changing filtered totals", async () => {
+    const secondAlias: AdminContentAlias = {
+      ...initialAlias,
+      id: 18,
+      titleId: 102,
+      titleName: "The Harbor",
+      alias: "Harbor Local Title",
+      updatedAt: "2026-09-16T01:00:00.000Z",
+    };
+    const remainingAlias: AdminContentAlias = {
+      ...initialAlias,
+      id: 19,
+      titleId: 103,
+      titleName: "The Garden",
+      alias: "Garden Local Title",
+      updatedAt: "2026-09-16T02:00:00.000Z",
+    };
+    const firstSavedRecord: AdminContentAliasRecord = {
+      id: initialAlias.id,
+      titleId: initialAlias.titleId,
+      alias: "First Updated Title",
+      normalizedAlias: "first updated title",
+      language: "fr",
+      sourceName: initialAlias.sourceName,
+      sourceUrl: "https://example.test/first-updated",
+      isEditorial: true,
+      createdAt: initialAlias.updatedAt,
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    const secondSavedRecord: AdminContentAliasRecord = {
+      ...firstSavedRecord,
+      id: secondAlias.id,
+      titleId: secondAlias.titleId,
+      alias: "Second Updated Title",
+      normalizedAlias: "second updated title",
+      language: "es",
+      sourceUrl: "https://example.test/second-updated",
+      updatedAt: "2026-09-17T01:00:00.000Z",
+    };
+    const firstLatestRecord: AdminContentAliasRecord = {
+      ...firstSavedRecord,
+      alias: "First Latest Title",
+      normalizedAlias: "first latest title",
+      language: "it",
+      sourceUrl: "https://example.test/first-latest",
+      updatedAt: "2026-09-18T00:00:00.000Z",
+    };
+    const secondLatestRecord: AdminContentAliasRecord = {
+      ...secondSavedRecord,
+      alias: "Second Latest Title",
+      normalizedAlias: "second latest title",
+      language: "de",
+      sourceUrl: "https://example.test/second-latest",
+      updatedAt: "2026-09-18T01:00:00.000Z",
+    };
+    const savedRecords = [
+      firstSavedRecord,
+      secondSavedRecord,
+      firstLatestRecord,
+      secondLatestRecord,
+    ];
+    let savedAliasId: number | null = null;
+    let removeFromFilteredResults!: (id: number) => void;
+    let setRefreshedResults!: (next: AdminContentAlias[]) => void;
+    const onAliasPageChange = vi.fn();
+    mocks.updateMutation.mutate.mockImplementation(
+      async (
+        variables: { id: number },
+        options?: {
+          onSuccess?: (savedRecord?: AdminContentAliasRecord) => Promise<void>;
+        },
+      ) => {
+        savedAliasId = variables.id;
+        await options?.onSuccess?.(savedRecords.shift());
+      },
+    );
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) => {
+        if (
+          queryKey[0] === "/api/admin/content-aliases" &&
+          savedAliasId !== null
+        ) {
+          removeFromFilteredResults(savedAliasId);
+        }
+        return Promise.resolve();
+      },
+    );
+    function FilteredAliasReview() {
+      const [aliases, setAliases] = React.useState([
+        initialAlias,
+        secondAlias,
+        remainingAlias,
+      ]);
+      const [total, setTotal] = React.useState(3);
+      removeFromFilteredResults = (id) => {
+        const wasInResults = aliases.some((alias) => alias.id === id);
+        setAliases((current) => current.filter((alias) => alias.id !== id));
+        if (wasInResults) setTotal((current) => Math.max(0, current - 1));
+      };
+      setRefreshedResults = (next) => {
+        setAliases(next);
+        setTotal(next.length);
+      };
+      return (
+        <AliasReview
+          aliases={aliases}
+          q="Local Title"
+          aliasTotal={total}
+          aliasPage={1}
+          nextAliasCursor="matching-results-next"
+          onAliasPageChange={onAliasPageChange}
+          isLoading={false}
+          isError={false}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="all"
+          onOwnershipChange={() => {}}
+        />
+      );
+    }
+    act(() => root.render(<FilteredAliasReview />));
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "First Updated Title",
+      );
+      setInput(container, "Language for Shared Local Title", "fr");
+      setInput(
+        container,
+        "Source link for Shared Local Title",
+        "https://example.test/first-updated",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    const secondRow = Array.from(container.querySelectorAll("tbody tr")).find(
+      (row) => row.textContent?.includes(secondAlias.alias),
+    );
+    const secondEditButton = Array.from(
+      secondRow?.querySelectorAll("button") ?? [],
+    ).find((candidate) => candidate.textContent?.trim() === "Edit");
+    expect(secondEditButton).toBeTruthy();
+    act(() => secondEditButton?.click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Harbor",
+        "Second Updated Title",
+      );
+      setInput(container, "Language for Harbor Local Title", "es");
+      setInput(
+        container,
+        "Source link for Harbor Local Title",
+        "https://example.test/second-updated",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(3);
+    expect(container.textContent).toContain("1 aliases");
+    expect(container.textContent).toContain("Page 1 · 1 matching aliases");
+    expect(container.textContent).toContain(
+      "2 saved corrections are shown separately above the current page of filtered results.",
+    );
+    act(() => button(container, "Next aliases").click());
+    expect(onAliasPageChange).toHaveBeenCalledWith(2, "matching-results-next");
+
+    act(() => button(container, "Edit").click());
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for The Lighthouse"]',
+      )?.value,
+    ).toBe(firstSavedRecord.alias);
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Language for First Updated Title"]',
+      )?.value,
+    ).toBe(firstSavedRecord.language);
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Source link for First Updated Title"]',
+      )?.value,
+    ).toBe(firstSavedRecord.sourceUrl);
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "First Latest Title",
+      );
+      setInput(container, "Language for First Updated Title", "it");
+      setInput(
+        container,
+        "Source link for First Updated Title",
+        "https://example.test/first-latest",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+    expect(mocks.updateMutation.mutate).toHaveBeenNthCalledWith(
+      3,
+      {
+        id: initialAlias.id,
+        data: {
+          alias: "First Latest Title",
+          language: "it",
+          sourceUrl: "https://example.test/first-latest",
+          expectedUpdatedAt: firstSavedRecord.updatedAt,
+        },
+      },
+      expect.any(Object),
+    );
+
+    const latestSecondRow = Array.from(
+      container.querySelectorAll("tbody tr"),
+    ).find((row) => row.textContent?.includes(secondSavedRecord.alias));
+    const latestSecondEditButton = Array.from(
+      latestSecondRow?.querySelectorAll("button") ?? [],
+    ).find((candidate) => candidate.textContent?.trim() === "Edit");
+    expect(latestSecondEditButton).toBeTruthy();
+    act(() => latestSecondEditButton?.click());
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Alternate title for The Harbor"]',
+      )?.value,
+    ).toBe(secondSavedRecord.alias);
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Language for Second Updated Title"]',
+      )?.value,
+    ).toBe(secondSavedRecord.language);
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="Source link for Second Updated Title"]',
+      )?.value,
+    ).toBe(secondSavedRecord.sourceUrl);
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Harbor",
+        "Second Latest Title",
+      );
+      setInput(container, "Language for Second Updated Title", "de");
+      setInput(
+        container,
+        "Source link for Second Updated Title",
+        "https://example.test/second-latest",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+    expect(mocks.updateMutation.mutate).toHaveBeenNthCalledWith(
+      4,
+      {
+        id: secondAlias.id,
+        data: {
+          alias: "Second Latest Title",
+          language: "de",
+          sourceUrl: "https://example.test/second-latest",
+          expectedUpdatedAt: secondSavedRecord.updatedAt,
+        },
+      },
+      expect.any(Object),
+    );
+    expect(container.querySelector("tbody")?.textContent).toContain(
+      firstLatestRecord.alias,
+    );
+    expect(container.querySelector("tbody")?.textContent).toContain(
+      secondLatestRecord.alias,
+    );
+
+    const refreshedFirstAlias: AdminContentAlias = {
+      ...initialAlias,
+      alias: firstLatestRecord.alias,
+      language: firstLatestRecord.language,
+      sourceUrl: firstLatestRecord.sourceUrl,
+      updatedAt: firstLatestRecord.updatedAt,
+    };
+    const refreshedSecondAlias: AdminContentAlias = {
+      ...secondAlias,
+      alias: secondLatestRecord.alias,
+      language: secondLatestRecord.language,
+      sourceUrl: secondLatestRecord.sourceUrl,
+      updatedAt: secondLatestRecord.updatedAt,
+    };
+    act(() =>
+      setRefreshedResults([
+        refreshedFirstAlias,
+        refreshedSecondAlias,
+        remainingAlias,
+      ]),
+    );
+    await flushEffects();
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(3);
+    expect(container.textContent).not.toContain("Saved correction:");
+
+    act(() => setRefreshedResults([remainingAlias]));
+    await flushEffects();
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(1);
+    expect(container.querySelector("tbody tr")?.textContent).toContain(
+      remainingAlias.alias,
+    );
+    expect(container.querySelector("tbody tr")?.textContent).not.toContain(
+      firstLatestRecord.alias,
+    );
+    expect(container.querySelector("tbody tr")?.textContent).not.toContain(
+      secondLatestRecord.alias,
+    );
+  });
+
   it("identifies a saved correction preview after a failed active-search refresh and replaces it on retry", async () => {
     const refreshedAlias: AdminContentAlias = {
       ...initialAlias,
