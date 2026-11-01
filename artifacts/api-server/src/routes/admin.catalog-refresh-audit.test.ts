@@ -15,6 +15,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 const adminId = "test-catalog-refresh-audit";
 const missingAdminId = `test-catalog-refresh-audit-missing-${randomUUID()}`;
 const runCatalogSync = vi.hoisted(() => vi.fn());
+const isolatedAdminIds: string[] = [];
 vi.mock("../seed-real", () => ({
   sourceItems: [{
     key: "catalog-refresh-audit-item",
@@ -27,7 +28,7 @@ vi.mock("../seed-real", () => ({
 }));
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
-    req.userId = adminId;
+    req.userId = req.header("x-test-admin-id") ?? adminId;
     next();
   },
   requireAuth: (_req: any, _res: any, next: any) => next(),
@@ -53,10 +54,15 @@ beforeAll(async () => {
 afterEach(async () => {
   vi.restoreAllMocks();
   runCatalogSync.mockReset();
-  await db.delete(adminAuditLogTable).where(inArray(adminAuditLogTable.adminId, [adminId, missingAdminId]));
+  await db.delete(adminAuditLogTable).where(inArray(
+    adminAuditLogTable.adminId, [adminId, missingAdminId, ...isolatedAdminIds],
+  ));
   if (createdRunIds.length) {
     await db.delete(catalogSyncRunsTable).where(inArray(catalogSyncRunsTable.id, createdRunIds));
     createdRunIds.length = 0;
+  }
+  if (isolatedAdminIds.length) {
+    await db.delete(usersTable).where(inArray(usersTable.id, isolatedAdminIds.splice(0)));
   }
 });
 
@@ -479,6 +485,72 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
 });
 
 describe("other catalog refresh starts", () => {
+  it("attributes retries of the same failed source to each requesting admin", async () => {
+    const [firstAdminId, secondAdminId] = [
+      `test-catalog-refresh-retry-first-${randomUUID()}`,
+      `test-catalog-refresh-retry-second-${randomUUID()}`,
+    ];
+    isolatedAdminIds.push(firstAdminId, secondAdminId);
+    await db.insert(usersTable).values([
+      { id: firstAdminId, email: `${firstAdminId}@example.test` },
+      { id: secondAdminId, email: `${secondAdminId}@example.test` },
+    ]);
+
+    const sourceRunId = await createSourceRun("failed");
+    const [sourceRunBefore] = await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, sourceRunId));
+    const sourceItemsBefore = await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, sourceRunId));
+    const retryRunIds: number[] = [];
+
+    runCatalogSync
+      .mockResolvedValueOnce({ selected: 1, succeeded: 1, episodes: 0, failures: [] })
+      .mockResolvedValueOnce({ selected: 1, succeeded: 1, episodes: 0, failures: [] });
+
+    for (const requestingAdminId of [firstAdminId, secondAdminId]) {
+      const response = await request(app)
+        .post(`/api/admin/catalog-refreshes/${sourceRunId}/retry`)
+        .set("x-test-admin-id", requestingAdminId)
+        .expect(202);
+      const retryRunId = response.body.runId as number;
+      retryRunIds.push(retryRunId);
+      createdRunIds.push(retryRunId);
+      expect(retryRunId).not.toBe(sourceRunId);
+      await waitForFinishedRun(retryRunId);
+    }
+
+    expect(retryRunIds[0]).not.toBe(retryRunIds[1]);
+    expect(runCatalogSync).toHaveBeenCalledTimes(2);
+    for (const retryRunId of retryRunIds) {
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, retryRunId))).toEqual([
+        expect.objectContaining({ trigger: "retry", status: "succeeded", totalItems: 1 }),
+      ]);
+    }
+    expect(await db.select().from(adminAuditLogTable).where(inArray(
+      adminAuditLogTable.adminId, [firstAdminId, secondAdminId],
+    )).orderBy(adminAuditLogTable.adminId)).toEqual([
+      expect.objectContaining({
+        adminId: firstAdminId,
+        action: "retry_catalog_refresh",
+        entityType: "catalog_sync",
+        entityId: retryRunIds[0],
+        details: { sourceRunId },
+      }),
+      expect.objectContaining({
+        adminId: secondAdminId,
+        action: "retry_catalog_refresh",
+        entityType: "catalog_sync",
+        entityId: retryRunIds[1],
+        details: { sourceRunId },
+      }),
+    ]);
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, sourceRunId))).toEqual([sourceRunBefore]);
+    expect(await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, sourceRunId))).toEqual(sourceItemsBefore);
+  });
+
   it("returns 409 without auditing or starting work when there are no failed titles", async () => {
     const sourceRunId = await createSourceRun("succeeded");
     const transactionSpy = vi.spyOn(db, "transaction");
