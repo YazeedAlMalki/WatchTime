@@ -35,7 +35,11 @@ vi.mock("../middlewares/auth", () => ({
 }));
 
 import app from "../app";
-import { startCatalogRefresh } from "../lib/catalog-refresh";
+import {
+  recoverInterruptedRuns,
+  startCatalogRefresh,
+  STALE_QUEUED_REFRESH_MS,
+} from "../lib/catalog-refresh";
 
 const createdRunIds: number[] = [];
 
@@ -484,6 +488,104 @@ describe("other catalog refresh starts", () => {
     expect(runCatalogSync).not.toHaveBeenCalled();
     expect(await db.select().from(adminAuditLogTable)
       .where(eq(adminAuditLogTable.adminId, adminId))).toEqual([]);
+  });
+
+  it("retries only failed titles from a stale run still owned by a worker", async () => {
+    const staleAt = new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000);
+    const [sourceRun] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual",
+      status: "running",
+      createdAt: staleAt,
+      startedAt: staleAt,
+      totalItems: 3,
+      failedItems: 1,
+    }).returning();
+    createdRunIds.push(sourceRun.id);
+    await db.insert(catalogSyncItemsTable).values([
+      {
+        runId: sourceRun.id,
+        itemKey: "still-active-queued-title",
+        title: "Still active queued title",
+        provider: "TVMaze",
+        status: "queued",
+      },
+      {
+        runId: sourceRun.id,
+        itemKey: "still-active-running-title",
+        title: "Still active running title",
+        provider: "TVMaze",
+        status: "running",
+        startedAt: staleAt,
+      },
+      {
+        runId: sourceRun.id,
+        itemKey: "catalog-refresh-audit-item",
+        title: "Catalog refresh audit test",
+        provider: "TVMaze",
+        status: "failed",
+        error: "Original provider failure",
+        startedAt: staleAt,
+        finishedAt: staleAt,
+      },
+    ]);
+    const [sourceRunBefore] = await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, sourceRun.id));
+    const sourceItemsBefore = await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, sourceRun.id)).orderBy(catalogSyncItemsTable.id);
+    const worker = await pool.connect();
+
+    try {
+      await worker.query(
+        "select pg_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1)",
+        [sourceRun.id],
+      );
+
+      // A stale run's queued and running rows remain protected while its worker
+      // lease is held; only its separately failed title is eligible for retry.
+      await recoverInterruptedRuns(new Date(Date.now() - STALE_QUEUED_REFRESH_MS));
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, sourceRun.id))).toEqual([sourceRunBefore]);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, sourceRun.id))
+        .orderBy(catalogSyncItemsTable.id)).toEqual(sourceItemsBefore);
+
+      runCatalogSync.mockResolvedValueOnce({
+        selected: 1, succeeded: 1, episodes: 0, failures: [],
+      });
+      const response = await request(app)
+        .post(`/api/admin/catalog-refreshes/${sourceRun.id}/retry`)
+        .expect(202);
+      const retryRunId = response.body.runId as number;
+      createdRunIds.push(retryRunId);
+      await waitForFinishedRun(retryRunId);
+
+      expect(runCatalogSync).toHaveBeenCalledOnce();
+      expect(runCatalogSync.mock.calls[0][1]).toEqual([
+        expect.objectContaining({ key: "catalog-refresh-audit-item" }),
+      ]);
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, retryRunId))).toEqual([
+        expect.objectContaining({ trigger: "retry", status: "succeeded", totalItems: 1 }),
+      ]);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, retryRunId))).toEqual([
+        expect.objectContaining({
+          itemKey: "catalog-refresh-audit-item",
+          status: "queued",
+        }),
+      ]);
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, sourceRun.id))).toEqual([sourceRunBefore]);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, sourceRun.id))
+        .orderBy(catalogSyncItemsTable.id)).toEqual(sourceItemsBefore);
+    } finally {
+      await worker.query(
+        "select pg_advisory_unlock(hashtext('watchtime:catalog-refresh-worker'), $1)",
+        [sourceRun.id],
+      );
+      worker.release();
+    }
   });
 
   it("still starts scheduled refreshes without an audit prerequisite", async () => {
