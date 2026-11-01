@@ -35,6 +35,9 @@ export function validateConfig(config) {
       !['loaded', 'fallback'].includes(config.expected?.fontState)) {
     throw new Error('expected logicalWidth, fontScale and fontState (loaded/fallback) are required');
   }
+  if (!['guest', 'signed-in'].includes(config.expected?.accountState)) {
+    throw new Error('expected.accountState must be guest or signed-in');
+  }
   if (config.capabilities.browserName) throw new Error('Browser sessions are not native evidence; use the separate browser checks');
   return platform;
 }
@@ -56,6 +59,8 @@ export function assessScreen(screen, metadata, expected, platform) {
   const states = Object.values(metadata.fonts ?? {});
   check('font loading state', states.length === 4 && states.every((s) => s === expected.fontState),
     JSON.stringify(metadata.fonts));
+  check('account state', metadata.accountState === expected.accountState,
+    `actual ${metadata.accountState}; expected ${expected.accountState}`);
   for (const id of requiredProbes[screen]) {
     const measurement = metadata.measurements?.[id];
     const measured = measurement && Number.isFinite(measurement.width) && measurement.width > 0 &&

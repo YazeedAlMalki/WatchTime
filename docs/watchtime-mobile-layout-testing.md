@@ -62,7 +62,10 @@ service as part of these steps.
    use `exps:` when the current Expo link requires TLS. Existing development
    builds can use `watchtime-mobile:///browse` and `watchtime-mobile:///title/ID`,
    with their already configured app identifier instead of Expo Go's identifier.
-3. Record the expected logical width and actual OS text scale in the config.
+3. Record the expected logical width, actual OS text scale, and account state in
+   the config. `accountState` is `guest` or `signed-in`; auth that is still
+   loading is not a valid capture. The instrumentation records only that state,
+   never an account ID.
    Width is the React Native viewport in **logical units**, not screenshot pixels.
    Android density / display-size settings can change it. The runner compares,
    rather than silently accepts, the requested width and font scale.
@@ -72,6 +75,8 @@ service as part of these steps.
    pnpm --filter @workspace/watchtime-mobile test:device-layout
    # Prints help only; no server/device is contacted.
    pnpm --filter @workspace/watchtime-mobile test:device-layout --run /absolute/path/to/local-config.json
+   # Only after visually reviewing a good physical-device capture:
+   pnpm --filter @workspace/watchtime-mobile test:device-layout --run /absolute/path/to/local-config.json --approve-baseline
    ```
 
    This creates its own WebDriver session and closes it in a finally block.
@@ -81,6 +86,10 @@ service as part of these steps.
    If a startup, scroll or capture step fails, the report is blocked/failing,
    not a successful typography check. Where possible it captures the error UI.
    If session cleanup fails, close that session on the local Appium server.
+   Baseline approval is explicit and updates only the identity-matched baseline.
+   It requires verified physical hardware and passing automated measurements.
+   Review the screenshots before approving them. Ordinary runs never replace
+   baselines. `visualReview` stays `required` even after approval or comparison.
 
 5. Repeat on both iOS and Android at normal and enlarged OS text sizes. Include
    a narrow phone (roughly 360–375 logical units) and your supported large text
@@ -106,12 +115,32 @@ generated-artifacts/mobile-layout/<physical|simulator|unverified-native|browser>
   browse.png
   title-top.png
   title.png
+  *-diff.png                         # only when a matching baseline exists
+generated-artifacts/mobile-layout/baselines/<identity-hash>/
+  baseline.json
+  browse.png
+  title-top.png
+  title.png
 ```
 
 The directory is ignored by both Git and deployment packaging. Keep or transfer
 it only using an approved private evidence store. The runner does not upload.
 Reports exclude device serials, names assigned by owners, tokens, full driver
 responses and account data. Screenshots still require privacy review.
+
+Baselines are keyed by device model, OS version, logical width, font scale,
+font state, and guest/signed-in state. Each screenshot is additionally matched
+to its screen state and, for title detail, the configured movie ID. Only a
+device-verified physical run can approve or compare a baseline; browser,
+simulator, and unverified-native captures are never used. A baseline miss or
+incompatible image dimensions is reported without comparing pixels.
+
+`report.json` lists per-screenshot image comparison results. Changed pixels
+are highlighted in red in the corresponding `*-diff.png`; small channel
+differences up to 16 are ignored to reduce antialiasing noise. A pixel change is
+a review signal, not an automatic layout failure. Review both screenshots and
+diffs manually; neither image differences nor automated measurements change
+the `visualReview: "required"` status.
 
 `report.json` records model, OS, logical viewport, pixel ratio, OS font scale,
 each Inter font's loading state, per-screen measured line bounds, screenshots

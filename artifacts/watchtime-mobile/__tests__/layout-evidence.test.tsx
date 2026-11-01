@@ -32,7 +32,7 @@ test('opt-in captures native layout, fonts and content readiness without label c
   jest.useFakeTimers();
   const screen = await render(<>
     <EvidenceText evidenceId="browse-chip-All" testID="label">All</EvidenceText>
-    <LayoutEvidence screen="browse" contentReady />
+    <LayoutEvidence screen="browse" contentReady accountState="signed-in" />
   </>);
   await fireEvent(screen.getByTestId('label'), 'layout', {
     nativeEvent: { layout: { x: 0, y: 0, width: 100, height: 20 } },
@@ -44,6 +44,7 @@ test('opt-in captures native layout, fonts and content readiness without label c
   const metadata = JSON.parse(screen.getByTestId('layout-evidence-browse').props.accessibilityLabel);
   expect(metadata.screen).toBe('browse');
   expect(metadata.contentReady).toBe(true);
+  expect(metadata.accountState).toBe('signed-in');
   expect(metadata.logicalWidth).toBeGreaterThan(0);
   expect(metadata.fontScale).toBeGreaterThan(0);
   expect(Object.values(metadata.fonts)).toEqual(['loaded', 'loaded', 'loaded', 'loaded']);
@@ -57,9 +58,10 @@ test('loading and fallback fonts are distinguishable; title scope excludes Brows
   process.env.EXPO_PUBLIC_LAYOUT_EVIDENCE = '1';
   jest.mocked(isLoaded).mockReturnValue(false);
   jest.mocked(isLoading).mockReturnValueOnce(true).mockReturnValue(false);
-  const screen = await render(<LayoutEvidence screen="title" titleId={12} />);
+  const screen = await render(<LayoutEvidence screen="title" titleId={12} accountState="pending" />);
   const metadata = JSON.parse(screen.getByTestId('layout-evidence-title').props.accessibilityLabel);
   expect(metadata.titleId).toBe(12);
+  expect(metadata.accountState).toBe('pending');
   expect(Object.values(metadata.fonts)).toContain('loading');
   expect(Object.values(metadata.fonts)).toContain('fallback');
   expect(metadata.measurements).toEqual({});

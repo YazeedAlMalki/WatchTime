@@ -11,5 +11,8 @@
   },
   "browseUrl": "exp://REPLACE_WITH_METRO_HOST/--/browse",
   "titleUrl": "exp://REPLACE_WITH_METRO_HOST/--/title/1",
-  "expected": { "titleId": 1, "logicalWidth": 375, "fontScale": 1, "fontState": "loaded" }
+  "expected": {
+    "titleId": 1, "logicalWidth": 375, "fontScale": 1, "fontState": "loaded",
+    "accountState": "guest"
+  }
 }

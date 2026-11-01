@@ -4,6 +4,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assessScreen, classifyDevice, requiredProbes, validateConfig } from './evidence.mjs';
+import {
+  baselineKey, comparePngImages, makeBaselineIdentity, sameBaselineIdentity,
+  screenshotStateMatches,
+} from './baselines.mjs';
 
 const exec = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -14,6 +18,7 @@ const elementKey = 'element-6066-11e4-a52e-4f735466cecf';
 // The operator prepares Expo Go/WatchTime and the native Appium driver first.
 export async function run(config, {
   diagnostic = false,
+  approveBaseline = false,
   outputRoot = resolve(root, 'generated-artifacts/mobile-layout'),
 } = {}) {
   const platform = validateConfig(config);
@@ -31,6 +36,7 @@ export async function run(config, {
     ],
   };
   const images = new Map();
+  const captureMetadata = new Map();
   async function request(path, method = 'GET', body) {
     const response = await fetch(`${config.serverUrl.replace(/\/$/, '')}${path}`, {
       method, headers: { 'Content-Type': 'application/json' },
@@ -56,13 +62,14 @@ export async function run(config, {
     const attribute = platform === 'ios' ? 'label' : 'content-desc';
     return JSON.parse(await command(`/element/${id}/attribute/${attribute}`));
   };
-  const screenshot = async (name) => {
+  const screenshot = async (name, metadata) => {
     const base64 = await command('/screenshot');
     const png = Buffer.from(base64, 'base64');
     if (png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
       throw new Error('Appium did not return a PNG screenshot');
     }
     images.set(`${name}.png`, png);
+    captureMetadata.set(`${name}.png`, metadata);
   };
   try {
     const created = await request('/session', 'POST', {
@@ -122,7 +129,7 @@ export async function run(config, {
         result.observations = assessScreen(screen, metadata, config.expected, platform);
         result.status = result.observations.every((o) => o.status === 'pass') ? 'pass' : 'fail';
         if (screen === 'title') {
-          await screenshot('title-top');
+          await screenshot('title-top', metadata);
           result.screenshots.push('title-top.png');
           // Bring the action row into view without pressing a mutating action.
           if (platform === 'ios') {
@@ -139,7 +146,7 @@ export async function run(config, {
         result.observations.push({ name: 'capture', status: 'fail', detail: error.message });
       }
       try {
-        await screenshot(screen);
+        await screenshot(screen, result.metadata);
         result.screenshots.push(`${screen}.png`);
       } catch {
         result.status = 'blocked';
@@ -159,11 +166,91 @@ export async function run(config, {
       catch { report.cleanup = 'Session cleanup failed; stop it on the local Appium server'; }
     }
   }
-  report.finishedAt = new Date().toISOString();
-  // Classification is driver-derived, never supplied by the operator.
   const output = resolve(outputRoot, classification, platform,
     report.startedAt.replace(/[:.]/g, '-'));
+  const baselineRoot = resolve(outputRoot, 'baselines');
   await mkdir(output, { recursive: true });
+  const identities = new Map([...images.keys()].map((name) => {
+    const identity = makeBaselineIdentity(platform, report.device, captureMetadata.get(name));
+    return [name, identity];
+  }));
+  const completeIdentity = [...identities.values()].every(Boolean) &&
+    new Set([...identities.values()].map((identity) => baselineKey(identity))).size === 1;
+  if (approveBaseline) {
+    if (classification !== 'physical' || !report.physicalEvidence ||
+        !report.screens.every((screen) => screen.status === 'pass') ||
+        !images.size || !completeIdentity) {
+      report.baseline = {
+        status: 'not-approved',
+        reason: 'Approval requires a verified physical device, passing measurements and consistent device/account metadata.',
+      };
+    } else {
+      const identity = identities.values().next().value;
+      const key = baselineKey(identity);
+      const directory = resolve(baselineRoot, key);
+      await mkdir(directory, { recursive: true });
+      const screenshotFiles = {};
+      for (const [name, png] of images) {
+        await writeFile(resolve(directory, name), png);
+        const metadata = captureMetadata.get(name);
+        screenshotFiles[name] = {
+          file: name,
+          screen: metadata.screen,
+          titleId: metadata.titleId ?? null,
+          accountState: metadata.accountState,
+        };
+      }
+      await writeFile(resolve(directory, 'baseline.json'), `${JSON.stringify({
+        schemaVersion: 1,
+        approval: 'explicit --approve-baseline',
+        approvedAt: new Date().toISOString(),
+        identity,
+        screenshots: screenshotFiles,
+      }, null, 2)}\n`);
+      report.baseline = { status: 'approved', key };
+    }
+  } else if (classification !== 'physical') {
+    report.baseline = { status: 'not-compared', reason: 'Only verified physical-device captures can use physical baselines.' };
+  } else if (!completeIdentity) {
+    report.baseline = { status: 'not-compared', reason: 'Device or account identity metadata is incomplete or inconsistent.' };
+  } else {
+    const identity = identities.values().next().value;
+    const key = baselineKey(identity);
+    const directory = resolve(baselineRoot, key);
+    try {
+      const manifest = JSON.parse(await readFile(resolve(directory, 'baseline.json'), 'utf8'));
+      if (manifest.schemaVersion !== 1 || !sameBaselineIdentity(manifest.identity, identity)) {
+        throw new Error('Baseline identity does not match this capture');
+      }
+      report.imageComparisons = [];
+      for (const [name, png] of images) {
+        const baselineScreenshot = manifest.screenshots?.[name];
+        const metadata = captureMetadata.get(name);
+        if (!screenshotStateMatches(baselineScreenshot, name, metadata)) {
+          report.imageComparisons.push({ screenshot: name, status: 'not-compared', reason: 'No approved baseline exists for this screen state.' });
+          continue;
+        }
+        const compared = comparePngImages(await readFile(resolve(directory, baselineScreenshot.file)), png);
+        const comparison = { screenshot: name, baselineKey: key, ...compared };
+        if (compared.diffPng) {
+          const diffName = name.replace(/\.png$/, '-diff.png');
+          await writeFile(resolve(output, diffName), compared.diffPng);
+          comparison.diffScreenshot = diffName;
+          delete comparison.diffPng;
+        }
+        report.imageComparisons.push(comparison);
+      }
+      report.baseline = { status: 'matched', key };
+    } catch (error) {
+      report.baseline = {
+        status: error.code === 'ENOENT' ? 'no-match' : 'incompatible',
+        key,
+        reason: error.code === 'ENOENT' ? 'No approved physical baseline matches this device and account state.' : error.message,
+      };
+    }
+  }
+  report.finishedAt = new Date().toISOString();
+  // Classification is driver-derived, never supplied by the operator.
   for (const [name, png] of images) await writeFile(resolve(output, name), png);
   await writeFile(resolve(output, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log(`Layout evidence: ${report.status}; ${classification}; ${output}`);
@@ -173,11 +260,14 @@ export async function run(config, {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args[0] !== '--run' || !args[1]) {
-    console.log('Opt-in only: pnpm test:device-layout --run /path/to/local-config.json [--diagnostic]');
+    console.log('Opt-in only: pnpm test:device-layout --run /path/to/local-config.json [--diagnostic] [--approve-baseline]');
     console.log('See docs/watchtime-mobile-layout-testing.md. No devices or providers were contacted.');
   } else {
     try {
-      const report = await run(JSON.parse(await readFile(args[1], 'utf8')), { diagnostic: args.includes('--diagnostic') });
+      const report = await run(JSON.parse(await readFile(args[1], 'utf8')), {
+        diagnostic: args.includes('--diagnostic'),
+        approveBaseline: args.includes('--approve-baseline'),
+      });
       process.exitCode = report.status === 'pass' ? 0 : 1;
     } catch (error) {
       console.error(error.message);

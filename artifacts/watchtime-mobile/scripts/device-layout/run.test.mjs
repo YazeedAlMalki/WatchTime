@@ -5,13 +5,49 @@ import { createServer } from 'node:http';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import { run } from './run.mjs';
 import { requiredProbes } from './evidence.mjs';
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const typeBuffer = Buffer.from(type);
+  const result = Buffer.alloc(data.length + 12);
+  result.writeUInt32BE(data.length, 0);
+  typeBuffer.copy(result, 4);
+  data.copy(result, 8);
+  result.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), data.length + 8);
+  return result;
+}
+
+function pixelPng(red, green, blue) {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(1, 0);
+  header.writeUInt32BE(1, 4);
+  header[8] = 8;
+  header[9] = 6;
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(Buffer.from([0, red, green, blue, 255]))),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
 
 test('runner captures both screens, records simulator separately and always deletes session', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'watchtime-synthetic-layout-'));
   let screen = 'browse';
   let deleted = false;
+  let isSimulator = true;
+  let screenshotBase64 = pixelPng(20, 40, 60).toString('base64');
   const server = createServer(async (request, response) => {
     let body = '';
     for await (const part of request) body += part;
@@ -23,7 +59,7 @@ test('runner captures both screens, records simulator separately and always dele
       deleted = true;
       value = null;
     } else if (request.url.endsWith('/execute/sync')) {
-      if (data.script === 'mobile: deviceInfo') value = { model: 'Synthetic iPhone', isSimulator: 1 };
+      if (data.script === 'mobile: deviceInfo') value = { ProductType: 'Synthetic iPhone', isSimulator: isSimulator ? 1 : 0 };
       else {
         if (data.script === 'mobile: deepLink') screen = data.args[0].url.includes('title') ? 'title' : 'browse';
         value = null;
@@ -32,7 +68,7 @@ test('runner captures both screens, records simulator separately and always dele
       value = { 'element-6066-11e4-a52e-4f735466cecf': 'element-id' };
     } else if (request.url.includes('/attribute/')) {
       value = JSON.stringify({
-        version: 1, screen, contentReady: true, platform: 'ios', osVersion: '26.0',
+        version: 1, screen, contentReady: true, platform: 'ios', osVersion: '26.0', accountState: 'guest',
         titleId: 12, logicalWidth: 375, logicalHeight: 812, fontScale: 1, pixelRatio: 3,
         fonts: { regular: 'loaded', medium: 'loaded', semibold: 'loaded', bold: 'loaded' },
         measurements: Object.fromEntries(requiredProbes[screen].map((id) => [
@@ -40,7 +76,7 @@ test('runner captures both screens, records simulator separately and always dele
         ])),
       });
     } else if (request.url.endsWith('/screenshot')) {
-      value = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9WQAAAAASUVORK5CYII=';
+      value = screenshotBase64;
     } else {
       response.writeHead(404);
       response.end(JSON.stringify({ value: { error: 'unknown command' } }));
@@ -54,7 +90,7 @@ test('runner captures both screens, records simulator separately and always dele
     serverUrl: `http://127.0.0.1:${server.address().port}`, appId: 'host.exp.Exponent',
     capabilities: { platformName: 'iOS' },
     browseUrl: 'exp://localhost/--/browse', titleUrl: 'exp://localhost/--/title/12',
-    expected: { titleId: 12, logicalWidth: 375, fontScale: 1, fontState: 'loaded' },
+    expected: { titleId: 12, logicalWidth: 375, fontScale: 1, fontState: 'loaded', accountState: 'guest' },
   };
   try {
     const report = await run(config, { outputRoot: directory });
@@ -64,6 +100,7 @@ test('runner captures both screens, records simulator separately and always dele
     assert.equal(report.screens.length, 2);
     assert.ok(report.screens.every((s) => s.status === 'pass'));
     assert.equal(report.visualReview, 'required');
+    assert.equal(report.baseline.status, 'not-compared');
     assert.equal(report.nativeAcceptance, 'not-performed');
     assert.equal(deleted, true);
     const [timestamp] = await readdir(join(directory, 'simulator/ios'));
@@ -73,6 +110,28 @@ test('runner captures both screens, records simulator separately and always dele
     const diagnostic = await run(config, { outputRoot: directory, diagnostic: true });
     assert.equal(diagnostic.status, 'pass');
     assert.equal(diagnostic.physicalEvidence, false);
+    isSimulator = false;
+    const approved = await run(config, { outputRoot: directory, approveBaseline: true });
+    assert.equal(approved.status, 'pass');
+    assert.equal(approved.physicalEvidence, true);
+    assert.equal(approved.baseline.status, 'approved');
+    assert.equal(approved.visualReview, 'required');
+    const unchanged = await run(config, { outputRoot: directory });
+    assert.equal(unchanged.baseline.status, 'matched');
+    assert.deepEqual(unchanged.imageComparisons.map(({ status }) => status), [
+      'unchanged', 'unchanged', 'unchanged',
+    ]);
+    screenshotBase64 = pixelPng(220, 40, 60).toString('base64');
+    const changed = await run(config, { outputRoot: directory });
+    assert.equal(changed.imageComparisons.length, 3);
+    assert.ok(changed.imageComparisons.every((comparison) =>
+      comparison.status === 'changed' && comparison.diffScreenshot));
+    const physicalRuns = await readdir(join(directory, 'physical/ios'));
+    const latestRun = physicalRuns.sort().at(-1);
+    const diffFiles = await readdir(join(directory, 'physical/ios', latestRun));
+    assert.ok(diffFiles.includes('browse-diff.png'));
+    assert.ok(diffFiles.includes('title-top-diff.png'));
+    assert.ok(diffFiles.includes('title-diff.png'));
     // Failure after session creation must still delete and save a blocked report.
     deleted = false;
     server.removeAllListeners('request');

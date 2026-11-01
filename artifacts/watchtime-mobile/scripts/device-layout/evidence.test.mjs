@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assessScreen, classifyDevice, requiredProbes, validateConfig } from './evidence.mjs';
 
-const expected = { titleId: 12, logicalWidth: 375, fontScale: 1.3, fontState: 'loaded' };
+const expected = {
+  titleId: 12, logicalWidth: 375, fontScale: 1.3, fontState: 'loaded', accountState: 'guest',
+};
 const config = {
   serverUrl: 'http://127.0.0.1:4723', appId: 'com.watchtime.mobile',
   capabilities: { platformName: 'iOS' },
@@ -10,7 +12,7 @@ const config = {
 };
 const metadata = (screen) => ({
   version: 1, screen, platform: 'ios', contentReady: true, titleId: 12,
-  logicalWidth: 375, fontScale: 1.3,
+  logicalWidth: 375, fontScale: 1.3, accountState: 'guest',
   fonts: Object.fromEntries(['regular', 'medium', 'semibold', 'bold'].map((f) => [f, 'loaded'])),
   measurements: Object.fromEntries(requiredProbes[screen].map((id) => [
     id, { width: 100, height: 40, lines: [{ x: 0, y: 0, width: 98, height: 20 }, { x: 0, y: 20, width: 90, height: 20 }] },
@@ -36,6 +38,9 @@ test('only local credential-free opt-in endpoints and native links are accepted'
   assert.throws(() => validateConfig({ ...config, browseUrl: 'https://localhost/browse' }));
   assert.throws(() => validateConfig({ ...config, titleUrl: 'watchtime-mobile:///title/99' }));
   assert.throws(() => validateConfig({ ...config, expected: {} }));
+  assert.throws(() => validateConfig({
+    ...config, expected: { ...expected, accountState: 'pending' },
+  }));
   assert.throws(() => validateConfig({ ...config, capabilities: { platformName: 'iOS', browserName: 'Safari' } }));
 });
 
@@ -56,6 +61,8 @@ for (const screen of ['browse', 'title']) {
       (data) => { data.fonts.regular = 'fallback'; },
       (data) => { data.logicalWidth = 430; },
       (data) => { data.fontScale = 1; },
+      (data) => { data.accountState = 'signed-in'; },
+      (data) => { data.accountState = 'pending'; },
       (data) => { data.platform = 'web'; },
       (data) => { data.measurements[requiredProbes[screen][0]].lines[0].height = NaN; },
     ]) {

@@ -17,6 +17,7 @@ import { Chip, EmptyState, ErrorState, Loading, PosterCard } from '@/components/
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
 import { LayoutEvidence } from '@/components/layout-evidence';
+import { useAppAuth } from '@/lib/app-auth';
 
 const TYPES: { label: string; value: ListTitlesParams['type'] | undefined }[] = [
   { label: 'All', value: undefined },
@@ -34,6 +35,7 @@ const SORTS: { label: string; value: NonNullable<ListTitlesParams['sort']> }[] =
 
 export default function BrowseScreen() {
   const c = useColors();
+  const { isLoaded, isSignedIn } = useAppAuth();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -139,7 +141,11 @@ export default function BrowseScreen() {
           renderItem={({ item }) => <PosterCard title={item} width={104} />}
         />
       )}
-      <LayoutEvidence screen="browse" contentReady={titles.isSuccess && (titles.data?.length ?? 0) > 0} />
+      <LayoutEvidence
+        screen="browse"
+        contentReady={titles.isSuccess && (titles.data?.length ?? 0) > 0}
+        accountState={!isLoaded ? 'pending' : isSignedIn ? 'signed-in' : 'guest'}
+      />
     </View>
   );
 }

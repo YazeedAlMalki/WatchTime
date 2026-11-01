@@ -847,7 +847,7 @@ export default function TitleDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const titleId = Number(id);
-  const { isSignedIn, isAuthAvailable, userId } = useAppAuth();
+  const { isLoaded, isSignedIn, isAuthAvailable, userId } = useAppAuth();
   const queryClient = useQueryClient();
 
   const title = useGetTitle(titleId, {
@@ -966,7 +966,11 @@ export default function TitleDetailScreen() {
       </View>
 
       <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
-        <LayoutEvidence screen="title" titleId={titleId} />
+        <LayoutEvidence
+          screen="title"
+          titleId={titleId}
+          accountState={!isLoaded ? 'pending' : isSignedIn ? 'signed-in' : 'guest'}
+        />
         <EvidenceText evidenceId="title-heading" style={{ color: c.foreground, fontSize: 24, fontFamily: 'Inter_700Bold' }}>
           {t.name}
         </EvidenceText>
