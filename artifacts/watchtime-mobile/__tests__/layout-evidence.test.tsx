@@ -66,3 +66,34 @@ test('loading and fallback fonts are distinguishable; title scope excludes Brows
   expect(Object.values(metadata.fonts)).toContain('fallback');
   expect(metadata.measurements).toEqual({});
 });
+
+test.each(['home', 'my-shows', 'safety'] as const)(
+  '%s evidence reports its own screen state and scoped text probes',
+  async (screenName) => {
+    process.env.EXPO_PUBLIC_LAYOUT_EVIDENCE = '1';
+    jest.useFakeTimers();
+    const probeId = `${screenName}-probe`;
+    const screen = await render(<>
+      <EvidenceText evidenceId={probeId} testID="probe">{screenName}</EvidenceText>
+      <LayoutEvidence
+        screen={screenName}
+        contentReady
+        {...(screenName === 'safety' ? { titleId: 12 } : {})}
+        accountState="guest"
+      />
+    </>);
+    await fireEvent(screen.getByTestId('probe'), 'layout', {
+      nativeEvent: { layout: { x: 0, y: 0, width: 80, height: 20 } },
+    });
+    await fireEvent(screen.getByTestId('probe'), 'textLayout', {
+      nativeEvent: { lines: [{ x: 0, y: 0, width: 60, height: 18 }] },
+    });
+    await act(async () => { jest.advanceTimersByTime(500); });
+    const metadata = JSON.parse(
+      screen.getByTestId(`layout-evidence-${screenName}`).props.accessibilityLabel,
+    );
+    expect(metadata.screen).toBe(screenName);
+    expect(metadata.contentReady).toBe(true);
+    expect(metadata.measurements[probeId].lines).toHaveLength(1);
+  },
+);

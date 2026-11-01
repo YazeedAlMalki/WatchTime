@@ -39,6 +39,7 @@ import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
 import { markStartup } from '@/lib/startup-metrics';
 import { startHomeStartup } from '@/lib/home-startup';
+import { EvidenceText, LayoutEvidence } from '@/components/layout-evidence';
 
 function UpNextCard({ show }: { show: TrackedShow }) {
   const c = useColors();
@@ -263,7 +264,7 @@ function SignedInHome({ startupReady, userId }: { startupReady: boolean; userId:
       }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
     >
-      <SectionHeader title="Up Next" />
+      <SectionHeader title="Up Next" evidenceId="home-primary-heading" />
       {shows.isError && shows.data === undefined ? (
         <View testID="up-next-error">
           <ErrorState message="Couldn't load Up Next" retryAccessibilityLabel="Retry Up Next" onRetry={() => void shows.refetch()} />
@@ -362,6 +363,11 @@ function SignedInHome({ startupReady, userId }: { startupReady: boolean; userId:
           ))}
         </>
       )}
+      <LayoutEvidence
+        screen="home"
+        contentReady={startupReady && shows.isSuccess && watchlist.isSuccess && recs.isSuccess}
+        accountState="signed-in"
+      />
     </ScrollView>
   );
 }
@@ -414,9 +420,9 @@ function SignedOutHome({
       }}
     >
       <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
-        <Text style={{ color: c.foreground, fontSize: 26, fontFamily: 'Inter_700Bold' }}>
+        <EvidenceText evidenceId="home-intro" style={{ color: c.foreground, fontSize: 26, fontFamily: 'Inter_700Bold' }}>
           Track your shows.
-        </Text>
+        </EvidenceText>
         <Text style={{ color: c.mutedForeground, fontSize: 15, fontFamily: 'Inter_400Regular', marginTop: 6 }}>
           Episode-level tracking, watchlists and content safety info — sign in to sync with your WatchTime account.
         </Text>
@@ -446,7 +452,7 @@ function SignedOutHome({
         </Pressable>
       </View>
 
-      <SectionHeader title="Trending Now" />
+      <SectionHeader title="Trending Now" evidenceId="home-primary-heading" />
       {trending.isLoading && trending.data === undefined ? (
         <Loading />
       ) : trending.isError && trending.data === undefined ? (
@@ -471,6 +477,11 @@ function SignedOutHome({
           />
         </>
       )}
+      <LayoutEvidence
+        screen="home"
+        contentReady={startupReady && trending.isSuccess}
+        accountState="guest"
+      />
     </ScrollView>
   );
 }

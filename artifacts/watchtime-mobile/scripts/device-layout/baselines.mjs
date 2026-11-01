@@ -36,7 +36,11 @@ export function sameBaselineIdentity(left, right) {
 }
 
 export function screenshotStateMatches(baselineScreenshot, name, metadata) {
-  const expectedScreen = name.startsWith('title') ? 'title' : 'browse';
+  const expectedScreen = name.startsWith('title') ? 'title'
+    : name.startsWith('safety') ? 'safety'
+      : name.startsWith('my-shows') ? 'my-shows'
+        : name.startsWith('home') ? 'home'
+          : 'browse';
   return baselineScreenshot?.file === name &&
     baselineScreenshot?.screen === expectedScreen &&
     baselineScreenshot?.screen === metadata?.screen &&

@@ -57,11 +57,15 @@ service as part of these steps.
    Replace the UDID locally (do not commit it), use the current Metro URL from
    the phone preview, and choose a real **movie** ID with a long name from Browse.
    Movie detail is required so both Watchlist and Mark watched can be measured.
-   Put that ID in both `titleUrl` and `expected.titleId`.
-   Expo Go links use `exp://HOST/--/browse` and `exp://HOST/--/title/ID`;
+   Put that ID in `titleUrl`, `safetyUrl` and `expected.titleId`; `safetyUrl`
+   opens the same movie, and the runner scrolls to its real Content Safety section.
+   Home uses `exp://HOST/--/`, and My Shows uses `exp://HOST/--/my-shows`.
+   Expo Go links use `exp://HOST/--/browse`, `exp://HOST/--/title/ID`,
+   `exp://HOST/--/` and `exp://HOST/--/my-shows`;
    use `exps:` when the current Expo link requires TLS. Existing development
-   builds can use `watchtime-mobile:///browse` and `watchtime-mobile:///title/ID`,
-   with their already configured app identifier instead of Expo Go's identifier.
+   builds can use `watchtime-mobile:///browse`, `watchtime-mobile:///`,
+   `watchtime-mobile:///my-shows` and `watchtime-mobile:///title/ID`, with the
+   same title link in `safetyUrl` and their configured app identifier.
 3. Record the expected logical width, actual OS text scale, and account state in
    the config. `accountState` is `guest` or `signed-in`; auth that is still
    loading is not a valid capture. The instrumentation records only that state,
@@ -80,9 +84,12 @@ service as part of these steps.
    ```
 
    This creates its own WebDriver session and closes it in a finally block.
-   It navigates to Browse, waits for loaded content and stable measurements,
-   captures Browse, navigates to the specified movie, captures the top, scrolls
-   to the action row without pressing it and captures title detail again.
+   It navigates to Browse, the specified movie, Home, My Shows, and the movie's
+   Content Safety section. Each screen must report loaded readiness and stable
+   text measurements before its screenshot is accepted. The title screen
+   captures its top, then scrolls to the action row without pressing anything.
+   Safety uses the configured real movie and returned safety data; the route
+   does not add catalog fixtures or change watch history.
    If a startup, scroll or capture step fails, the report is blocked/failing,
    not a successful typography check. Where possible it captures the error UI.
    If session cleanup fails, close that session on the local Appium server.
@@ -113,14 +120,20 @@ Files are automatically written to:
 generated-artifacts/mobile-layout/<physical|simulator|unverified-native|browser>/<ios|android>/<timestamp>/
   report.json
   browse.png
+  home.png
+  my-shows.png
   title-top.png
   title.png
+  safety.png
   *-diff.png                         # only when a matching baseline exists
 generated-artifacts/mobile-layout/baselines/<identity-hash>/
   baseline.json
   browse.png
+  home.png
+  my-shows.png
   title-top.png
   title.png
+  safety.png
 ```
 
 The directory is ignored by both Git and deployment packaging. Keep or transfer
@@ -156,9 +169,12 @@ Requested device names alone never prove hardware:
 `status: pass` means **automated measurement checks only**. `visualReview`
 remains `required`; `nativeAcceptance` remains `not-performed`.
 Automatic checks catch measured line overflow/missing measurements for Browse's
-All, TV Shows and Documentaries chips, the full title heading, Watchlist and
-Mark watched labels. They also reject mismatched font state, width, font scale,
-wrong title, unloaded catalog, and nonnative metadata.
+All, TV Shows and Documentaries chips; Home's leading section heading; My Shows'
+leading heading and, for signed-in accounts, its TV Shows heading and filters;
+the full title heading, Watchlist and Mark watched labels; and the safety
+heading, regional-rating heading, Report issue and Contribute labels. They also
+reject mismatched font state, width, font scale, wrong title, unready screen
+content, and nonnative metadata.
 
 Review the automatically captured screenshots for glyph clipping, parent/view
 clipping, overlaps, tap-target visibility, ellipses on action labels and the
@@ -184,6 +200,7 @@ pnpm --filter @workspace/watchtime-mobile exec jest --runInBand layout-evidence
 ```
 
 When moving/changing tested labels, preserve their evidence identifiers or update
-the required probe list with the layout change. Other screens are not covered.
+the required probe list with the layout change. This expansion does not complete
+the outstanding one-off native acceptance check.
 No automatic CI device job is enabled: the route is intentionally opt-in and
 requires externally available hardware.

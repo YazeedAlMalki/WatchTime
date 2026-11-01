@@ -1,7 +1,26 @@
 export const requiredProbes = {
   browse: ['browse-chip-All', 'browse-chip-TV Shows', 'browse-chip-Documentaries'],
   title: ['title-heading', 'title-watchlist', 'title-watched'],
+  home: ['home-primary-heading'],
+  'my-shows': ['my-shows-primary-heading'],
+  safety: ['safety-heading', 'safety-rating-heading', 'safety-report', 'safety-contribute'],
 };
+const signedInProbes = {
+  'my-shows': [
+    'my-shows-primary-heading',
+    'my-shows-filter-all',
+    'my-shows-filter-up-next',
+    'my-shows-filter-caught-up',
+  ],
+};
+
+export function probesFor(screen, expected) {
+  return expected.accountState === 'signed-in'
+    ? [...requiredProbes[screen], ...(signedInProbes[screen] ?? [])].filter(
+      (probe, index, probes) => probes.indexOf(probe) === index,
+    )
+    : requiredProbes[screen];
+}
 
 // Deliberately do not infer hardware from a device name or requested capabilities.
 export function classifyDevice(platform, info, usbPhysical = false, browserName = '') {
@@ -21,15 +40,16 @@ export function validateConfig(config) {
   }
   const platform = String(config.capabilities?.platformName).toLowerCase();
   if (!['ios', 'android'].includes(platform)) throw new Error('platformName must be iOS or Android');
-  for (const key of ['browseUrl', 'titleUrl']) {
+  for (const key of ['browseUrl', 'titleUrl', 'homeUrl', 'myShowsUrl', 'safetyUrl']) {
     if (!config[key] || !['exp:', 'exps:', 'watchtime-mobile:'].includes(new URL(config[key]).protocol)) {
       throw new Error(`${key} must be a WatchTime or Expo native deep link`);
     }
   }
   if (!config.appId || typeof config.appId !== 'string') throw new Error('appId is required');
   if (!Number.isInteger(config.expected?.titleId) || config.expected.titleId < 1 ||
-      !config.titleUrl.endsWith(`/title/${config.expected.titleId}`)) {
-    throw new Error('expected.titleId must identify a real movie matching the titleUrl');
+      !config.titleUrl.endsWith(`/title/${config.expected.titleId}`) ||
+      !config.safetyUrl.endsWith(`/title/${config.expected.titleId}`)) {
+    throw new Error('expected.titleId must identify a real movie matching titleUrl and safetyUrl');
   }
   if (!(config.expected?.logicalWidth > 0) || !(config.expected?.fontScale > 0) ||
       !['loaded', 'fallback'].includes(config.expected?.fontState)) {
@@ -47,9 +67,13 @@ export function assessScreen(screen, metadata, expected, platform) {
   const check = (name, pass, detail) => observations.push({ name, status: pass ? 'pass' : 'fail', detail });
   check('native screen', metadata.version === 1 && metadata.screen === screen &&
     metadata.platform === platform, `${metadata.platform}/${metadata.screen}`);
-  check('content loaded', metadata.contentReady === true, 'Requires loaded catalog/title, not loading or error UI');
-  if (screen === 'title') check('movie identity', metadata.titleId === expected.titleId,
-    `actual ${metadata.titleId}; expected ${expected.titleId}`);
+  check(`${screen} content ready`, metadata.contentReady === true, 'Requires loaded catalog/title, not loading or error UI');
+  if (screen === 'title' || screen === 'safety') {
+    check('movie identity', metadata.titleId === expected.titleId,
+      `actual ${metadata.titleId}; expected ${expected.titleId}`);
+    check('movie detail', metadata.titleType === 'movie',
+      `actual ${metadata.titleType}; expected movie`);
+  }
   check('logical width', Number.isFinite(metadata.logicalWidth) &&
     Math.abs(metadata.logicalWidth - expected.logicalWidth) < 1,
   `actual ${metadata.logicalWidth}; expected ${expected.logicalWidth}`);
@@ -61,7 +85,7 @@ export function assessScreen(screen, metadata, expected, platform) {
     JSON.stringify(metadata.fonts));
   check('account state', metadata.accountState === expected.accountState,
     `actual ${metadata.accountState}; expected ${expected.accountState}`);
-  for (const id of requiredProbes[screen]) {
+  for (const id of probesFor(screen, expected)) {
     const measurement = metadata.measurements?.[id];
     const measured = measurement && Number.isFinite(measurement.width) && measurement.width > 0 &&
       Number.isFinite(measurement.height) && measurement.height > 0 &&

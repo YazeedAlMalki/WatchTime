@@ -10,7 +10,10 @@
     "appium:newCommandTimeout": 120
   },
   "browseUrl": "exp://REPLACE_WITH_METRO_HOST/--/browse",
+  "homeUrl": "exp://REPLACE_WITH_METRO_HOST/--/",
+  "myShowsUrl": "exp://REPLACE_WITH_METRO_HOST/--/my-shows",
   "titleUrl": "exp://REPLACE_WITH_METRO_HOST/--/title/1",
+  "safetyUrl": "exp://REPLACE_WITH_METRO_HOST/--/title/1",
   "expected": {
     "titleId": 1, "logicalWidth": 375, "fontScale": 1, "fontState": "loaded",
     "accountState": "guest"

@@ -49,13 +49,16 @@ export function EvidenceText({ evidenceId, ...props }: TextProps & { evidenceId:
 }
 
 type EvidenceProps = {
-  screen: 'browse' | 'title';
+  screen: 'browse' | 'title' | 'home' | 'my-shows' | 'safety';
   contentReady?: boolean;
   titleId?: number;
+  titleType?: string;
   accountState?: 'guest' | 'signed-in' | 'pending';
 };
 
-function ActiveEvidence({ screen, contentReady = true, titleId, accountState = 'pending' }: EvidenceProps) {
+function ActiveEvidence({
+  screen, contentReady = true, titleId, titleType, accountState = 'pending',
+}: EvidenceProps) {
   const dimensions = useWindowDimensions();
   const [, tick] = useState(0);
   useEffect(() => {
@@ -67,6 +70,7 @@ function ActiveEvidence({ screen, contentReady = true, titleId, accountState = '
     screen,
     contentReady,
     titleId,
+    titleType,
     accountState,
     platform: Platform.OS,
     osVersion: String(Platform.Version),

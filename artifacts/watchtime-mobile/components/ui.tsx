@@ -15,21 +15,20 @@ import colors from '@/constants/colors';
 import type { Title } from '@workspace/api-client-react';
 import { EvidenceText } from './layout-evidence';
 
-export function SectionHeader({ title }: { title: string }) {
+export function SectionHeader({ title, evidenceId }: { title: string; evidenceId?: string }) {
   const c = useColors();
+  const textStyle = {
+    color: c.foreground,
+    fontSize: 20,
+    fontFamily: 'Inter_700Bold',
+    marginHorizontal: 16,
+    marginTop: 24,
+    marginBottom: 12,
+  } as const;
   return (
-    <Text
-      style={{
-        color: c.foreground,
-        fontSize: 20,
-        fontFamily: 'Inter_700Bold',
-        marginHorizontal: 16,
-        marginTop: 24,
-        marginBottom: 12,
-      }}
-    >
-      {title}
-    </Text>
+    evidenceId
+      ? <EvidenceText evidenceId={evidenceId} style={textStyle}>{title}</EvidenceText>
+      : <Text style={textStyle}>{title}</Text>
   );
 }
 
@@ -103,25 +102,26 @@ export function EmptyState({
   icon,
   title,
   subtitle,
+  evidenceId,
 }: {
   icon: keyof typeof Feather.glyphMap;
   title: string;
   subtitle?: string;
+  evidenceId?: string;
 }) {
   const c = useColors();
+  const titleStyle = {
+    color: c.foreground,
+    fontSize: 16,
+    fontFamily: 'Inter_600SemiBold',
+    marginTop: 12,
+  } as const;
   return (
     <View style={styles.empty}>
       <Feather name={icon} size={36} color={c.mutedForeground} />
-      <Text
-        style={{
-          color: c.foreground,
-          fontSize: 16,
-          fontFamily: 'Inter_600SemiBold',
-          marginTop: 12,
-        }}
-      >
-        {title}
-      </Text>
+      {evidenceId
+        ? <EvidenceText evidenceId={evidenceId} style={titleStyle}>{title}</EvidenceText>
+        : <Text style={titleStyle}>{title}</Text>}
       {subtitle ? (
         <Text
           style={{

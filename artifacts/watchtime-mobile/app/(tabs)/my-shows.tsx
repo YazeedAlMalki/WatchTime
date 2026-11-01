@@ -42,6 +42,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { EmptyState, ErrorState, Loading, PosterCard } from '@/components/ui';
 import { useColors } from '@/hooks/useColors';
 import colors from '@/constants/colors';
+import { EvidenceText, LayoutEvidence } from '@/components/layout-evidence';
 
 // ─── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -93,15 +94,28 @@ function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
             },
           ]}
         >
-          <Text
-            style={{
-              fontFamily: active === key ? 'Inter_600SemiBold' : 'Inter_400Regular',
-              fontSize: 14,
-              color: active === key ? c.foreground : c.mutedForeground,
-            }}
-          >
-            {label}
-          </Text>
+          {key === 'shows' ? (
+            <EvidenceText
+              evidenceId="my-shows-primary-heading"
+              style={{
+                fontFamily: active === key ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                fontSize: 14,
+                color: active === key ? c.foreground : c.mutedForeground,
+              }}
+            >
+              {label}
+            </EvidenceText>
+          ) : (
+            <Text
+              style={{
+                fontFamily: active === key ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                fontSize: 14,
+                color: active === key ? c.foreground : c.mutedForeground,
+              }}
+            >
+              {label}
+            </Text>
+          )}
         </Pressable>
       ))}
     </View>
@@ -326,7 +340,7 @@ export default function MyShowsScreen() {
   const queryClient = useQueryClient();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
-  const { isSignedIn, isAuthAvailable, userId } = useAppAuth();
+  const { isLoaded, isSignedIn, isAuthAvailable, userId } = useAppAuth();
   const [activeTab, setActiveTab] = useState<Tab>('shows');
   const [showSearch, setShowSearch] = useState('');
   const [debouncedShowSearch, setDebouncedShowSearch] = useState('');
@@ -438,10 +452,16 @@ export default function MyShowsScreen() {
   if (!isSignedIn) {
     return (
       <View style={{ flex: 1, backgroundColor: c.background, justifyContent: 'center' }}>
+        <LayoutEvidence
+          screen="my-shows"
+          contentReady={isLoaded}
+          accountState={!isLoaded ? 'pending' : 'guest'}
+        />
         <EmptyState
           icon="play-circle"
           title="Sign in to see My Shows"
           subtitle="Track what you've watched and pick up where you left off."
+          evidenceId="my-shows-primary-heading"
         />
         <Pressable
           testID="my-shows-sign-in"
@@ -486,6 +506,14 @@ export default function MyShowsScreen() {
       keyboardVerticalOffset={0}
     >
       <View style={{ flex: 1, backgroundColor: c.background }}>
+      <LayoutEvidence
+        screen="my-shows"
+        contentReady={
+          isLoaded && shows.isSuccess &&
+          (showFilter === 'caught-up' || !!debouncedShowSearch || inProgress.isSuccess)
+        }
+        accountState={!isLoaded ? 'pending' : 'signed-in'}
+      />
       <TabBar active={activeTab} onChange={setActiveTab} />
 
       {/* Search bar + filter chips — TV Shows tab only */}
@@ -539,9 +567,9 @@ export default function MyShowsScreen() {
                     { backgroundColor: active ? c.primary : c.secondary, borderColor: active ? c.primary : c.border },
                   ]}
                 >
-                  <Text style={{ color: active ? c.primaryForeground : c.foreground, fontSize: 13, fontFamily: 'Inter_500Medium' }}>
+                  <EvidenceText evidenceId={`my-shows-filter-${chip.key}`} style={{ color: active ? c.primaryForeground : c.foreground, fontSize: 13, fontFamily: 'Inter_500Medium' }}>
                     {chip.label}
-                  </Text>
+                  </EvidenceText>
                 </Pressable>
               );
             })}

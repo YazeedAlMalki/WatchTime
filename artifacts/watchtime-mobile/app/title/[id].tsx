@@ -529,11 +529,13 @@ function SafetySection({
   isSignedIn,
   isAuthAvailable,
   isMovie,
+  accountState,
 }: {
   titleId: number;
   isSignedIn: boolean;
   isAuthAvailable: boolean;
   isMovie: boolean;
+  accountState: 'guest' | 'signed-in' | 'pending';
 }) {
   const c = useColors();
   const router = useRouter();
@@ -541,13 +543,27 @@ function SafetySection({
   const [showReport, setShowReport] = useState(false);
   const [showContribute, setShowContribute] = useState(false);
 
-  if (safety.isLoading) return <Loading />;
+  if (safety.isLoading) return (
+    <View>
+      <LayoutEvidence screen="safety" titleId={titleId} contentReady={false} accountState={accountState} />
+      <Loading />
+    </View>
+  );
   if (safety.isError) {
-    return <ErrorState onRetry={() => safety.refetch()} message="Couldn't load safety info" />;
+    return (
+      <View>
+        <LayoutEvidence screen="safety" titleId={titleId} contentReady={false} accountState={accountState} />
+        <ErrorState onRetry={() => safety.refetch()} message="Couldn't load safety info" />
+      </View>
+    );
   }
 
   const info = safety.data;
-  if (!info) return null;
+  if (!info) return (
+    <View>
+      <LayoutEvidence screen="safety" titleId={titleId} contentReady={false} accountState={accountState} />
+    </View>
+  );
 
   const handleReportPress = () => {
     if (!isSignedIn) {
@@ -575,6 +591,7 @@ function SafetySection({
 
   return (
     <View style={{ paddingHorizontal: 16 }}>
+      <LayoutEvidence screen="safety" titleId={titleId} contentReady={safety.isSuccess && !!info} accountState={accountState} />
       {/* Action buttons – visible to all users; signed-out users are redirected to sign in */}
       <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
         <Pressable
@@ -586,9 +603,9 @@ function SafetySection({
           ]}
         >
           <Feather name="flag" size={13} color={c.mutedForeground} />
-          <Text style={{ color: c.foreground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
+          <EvidenceText evidenceId="safety-report" style={{ color: c.foreground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
             Report issue
-          </Text>
+          </EvidenceText>
           {!isSignedIn ? (
             <Feather name="lock" size={11} color={c.mutedForeground} />
           ) : null}
@@ -602,9 +619,9 @@ function SafetySection({
           ]}
         >
           <Feather name="plus" size={13} color={c.primaryForeground} />
-          <Text style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
+          <EvidenceText evidenceId="safety-contribute" style={{ color: c.primaryForeground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
             Contribute
-          </Text>
+          </EvidenceText>
           {!isSignedIn ? (
             <Feather name="lock" size={11} color={c.primaryForeground} />
           ) : null}
@@ -613,9 +630,9 @@ function SafetySection({
 
       {/* Summary chips */}
       <View style={[styles.regionalRating, { backgroundColor: c.card, borderColor: c.primary }]}>
-        <Text style={{ color: c.primary, fontSize: 11, fontFamily: 'Inter_700Bold', textTransform: 'uppercase' }}>
+        <EvidenceText evidenceId="safety-rating-heading" style={{ color: c.primary, fontSize: 11, fontFamily: 'Inter_700Bold', textTransform: 'uppercase' }}>
           Your regional rating
-        </Text>
+        </EvidenceText>
         {info.preferredRating ? (
           <>
             <Text style={{ color: c.foreground, fontSize: 24, fontFamily: 'Inter_700Bold', marginTop: 5 }}>
@@ -966,9 +983,10 @@ export default function TitleDetailScreen() {
       </View>
 
       <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
-        <LayoutEvidence
+      <LayoutEvidence
           screen="title"
           titleId={titleId}
+        titleType={t.type}
           accountState={!isLoaded ? 'pending' : isSignedIn ? 'signed-in' : 'guest'}
         />
         <EvidenceText evidenceId="title-heading" style={{ color: c.foreground, fontSize: 24, fontFamily: 'Inter_700Bold' }}>
@@ -1155,13 +1173,16 @@ export default function TitleDetailScreen() {
       ) : null}
 
       {/* Content Safety */}
-      <SectionHeader title="Content Safety" />
-      <SafetySection
-        titleId={titleId}
-        isSignedIn={!!isSignedIn}
-        isAuthAvailable={isAuthAvailable}
-        isMovie={t.type === 'movie'}
-      />
+      <View testID="safety-section">
+        <SectionHeader title="Content Safety" evidenceId="safety-heading" />
+        <SafetySection
+          titleId={titleId}
+          isSignedIn={!!isSignedIn}
+          isAuthAvailable={isAuthAvailable}
+          isMovie={t.type === 'movie'}
+          accountState={!isLoaded ? 'pending' : isSignedIn ? 'signed-in' : 'guest'}
+        />
+      </View>
 
       {/* Similar */}
       {(similar.data ?? []).length > 0 ? (

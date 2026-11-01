@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assessScreen, classifyDevice, requiredProbes, validateConfig } from './evidence.mjs';
+import { assessScreen, classifyDevice, probesFor, validateConfig } from './evidence.mjs';
 import {
   baselineKey, comparePngImages, makeBaselineIdentity, sameBaselineIdentity,
   screenshotStateMatches,
@@ -71,6 +71,28 @@ export async function run(config, {
     images.set(`${name}.png`, png);
     captureMetadata.set(`${name}.png`, metadata);
   };
+  const scrollToVisible = async (testID) => {
+    if (platform === 'ios') {
+      await execute('mobile: scroll', { elementId: await find(testID), toVisible: true });
+    } else {
+      await command('/element', 'POST', {
+        using: '-android uiautomator',
+        value: `new UiScrollable(new UiSelector().scrollable(true)).scrollIntoView(new UiSelector().resourceId("${testID}"))`,
+      });
+    }
+  };
+  const waitForTarget = async (testID) => {
+    const deadline = Date.now() + 35_000;
+    while (Date.now() < deadline) {
+      try {
+        await find(testID);
+        return;
+      } catch {
+        await sleep(600);
+      }
+    }
+    throw new Error(`Screen target ${testID} did not become available`);
+  };
   try {
     const created = await request('/session', 'POST', {
       capabilities: { alwaysMatch: config.capabilities, firstMatch: [{}] },
@@ -101,14 +123,25 @@ export async function run(config, {
       classification,
       proof: platform === 'ios' ? { isSimulator: info.isSimulator ?? null } : { usbPhysical },
     };
-    for (const screen of ['browse', 'title']) {
+    const screens = [
+      { screen: 'browse', url: config.browseUrl },
+      { screen: 'title', url: config.titleUrl, scrollAfter: 'title-primary-actions' },
+      { screen: 'home', url: config.homeUrl },
+      { screen: 'my-shows', url: config.myShowsUrl },
+      { screen: 'safety', url: config.safetyUrl, scrollBefore: 'safety-section' },
+    ];
+    for (const { screen, url, scrollBefore, scrollAfter } of screens) {
       const result = { screen, status: 'blocked', observations: [], screenshots: [] };
       report.screens.push(result);
       try {
         await execute('mobile: deepLink', {
-          url: config[`${screen}Url`],
+          url,
           ...(platform === 'ios' ? { bundleId: config.appId } : { package: config.appId }),
         });
+        if (scrollBefore) {
+          await waitForTarget(scrollBefore);
+          await scrollToVisible(scrollBefore);
+        }
         let metadata;
         let previous = '';
         const deadline = Date.now() + 35_000;
@@ -116,38 +149,36 @@ export async function run(config, {
           try {
             const current = await getMetadata(screen);
             const serialized = JSON.stringify(current);
-            const complete = current.contentReady === true &&
-              (screen !== 'title' || current.titleId === config.expected.titleId) &&
-              requiredProbes[screen].every((id) => current.measurements?.[id]?.lines?.length);
+            const complete = current.version === 1 && current.screen === screen &&
+              current.platform === platform && current.contentReady === true &&
+              (!['title', 'safety'].includes(screen) || current.titleId === config.expected.titleId) &&
+              (!['title', 'safety'].includes(screen) || current.titleType === 'movie') &&
+              probesFor(screen, config.expected).every((id) => current.measurements?.[id]?.lines?.length);
             if (complete && serialized === previous) { metadata = current; break; }
             previous = serialized;
           } catch { /* Startup/navigation/metadata readiness is bounded by deadline. */ }
           await sleep(600);
         }
-        if (!metadata) throw new Error('No stable native measurements; enable instrumentation and select a movie title with both actions');
+        if (!metadata) throw new Error(`No stable native measurements for ${screen}; check screen readiness and required text probes`);
         result.metadata = metadata;
         result.observations = assessScreen(screen, metadata, config.expected, platform);
         result.status = result.observations.every((o) => o.status === 'pass') ? 'pass' : 'fail';
         if (screen === 'title') {
           await screenshot('title-top', metadata);
           result.screenshots.push('title-top.png');
-          // Bring the action row into view without pressing a mutating action.
-          if (platform === 'ios') {
-            await execute('mobile: scroll', { elementId: await find('title-primary-actions'), toVisible: true });
-          } else {
-            await command('/element', 'POST', {
-              using: '-android uiautomator',
-              value: 'new UiScrollable(new UiSelector().scrollable(true)).scrollIntoView(new UiSelector().resourceId("title-primary-actions"))',
-            });
-          }
+        }
+        if (scrollAfter) {
+          // Scroll to controls for measurement only; never activate a mutating action.
+          await scrollToVisible(scrollAfter);
         }
       } catch (error) {
         result.status = 'blocked';
         result.observations.push({ name: 'capture', status: 'fail', detail: error.message });
       }
       try {
+        const screenshotName = `${screen}.png`;
         await screenshot(screen, result.metadata);
-        result.screenshots.push(`${screen}.png`);
+        result.screenshots.push(screenshotName);
       } catch {
         result.status = 'blocked';
         result.observations.push({ name: 'screenshot', status: 'fail', detail: 'Screenshot unavailable' });

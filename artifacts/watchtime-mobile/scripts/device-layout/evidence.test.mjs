@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assessScreen, classifyDevice, requiredProbes, validateConfig } from './evidence.mjs';
+import { assessScreen, classifyDevice, probesFor, validateConfig } from './evidence.mjs';
 
 const expected = {
   titleId: 12, logicalWidth: 375, fontScale: 1.3, fontState: 'loaded', accountState: 'guest',
@@ -8,13 +8,15 @@ const expected = {
 const config = {
   serverUrl: 'http://127.0.0.1:4723', appId: 'com.watchtime.mobile',
   capabilities: { platformName: 'iOS' },
-  browseUrl: 'watchtime-mobile:///browse', titleUrl: 'watchtime-mobile:///title/12', expected,
+  browseUrl: 'watchtime-mobile:///browse', titleUrl: 'watchtime-mobile:///title/12',
+  homeUrl: 'watchtime-mobile:///', myShowsUrl: 'watchtime-mobile:///my-shows',
+  safetyUrl: 'watchtime-mobile:///title/12', expected,
 };
 const metadata = (screen) => ({
-  version: 1, screen, platform: 'ios', contentReady: true, titleId: 12,
+  version: 1, screen, platform: 'ios', contentReady: true, titleId: 12, titleType: 'movie',
   logicalWidth: 375, fontScale: 1.3, accountState: 'guest',
   fonts: Object.fromEntries(['regular', 'medium', 'semibold', 'bold'].map((f) => [f, 'loaded'])),
-  measurements: Object.fromEntries(requiredProbes[screen].map((id) => [
+  measurements: Object.fromEntries(probesFor(screen, expected).map((id) => [
     id, { width: 100, height: 40, lines: [{ x: 0, y: 0, width: 98, height: 20 }, { x: 0, y: 20, width: 90, height: 20 }] },
   ])),
 });
@@ -37,6 +39,8 @@ test('only local credential-free opt-in endpoints and native links are accepted'
   }
   assert.throws(() => validateConfig({ ...config, browseUrl: 'https://localhost/browse' }));
   assert.throws(() => validateConfig({ ...config, titleUrl: 'watchtime-mobile:///title/99' }));
+  assert.throws(() => validateConfig({ ...config, safetyUrl: 'watchtime-mobile:///title/99' }));
+  assert.throws(() => validateConfig({ ...config, myShowsUrl: '' }));
   assert.throws(() => validateConfig({ ...config, expected: {} }));
   assert.throws(() => validateConfig({
     ...config, expected: { ...expected, accountState: 'pending' },
@@ -44,18 +48,18 @@ test('only local credential-free opt-in endpoints and native links are accepted'
   assert.throws(() => validateConfig({ ...config, capabilities: { platformName: 'iOS', browserName: 'Safari' } }));
 });
 
-for (const screen of ['browse', 'title']) {
+for (const screen of ['browse', 'title', 'home', 'my-shows', 'safety']) {
   test(`${screen}: wrapped native text fits; width/height clipping fail`, () => {
     assert.equal(passes(screen, metadata(screen)), true);
     for (const dimension of ['width', 'height']) {
       const data = metadata(screen);
-      data.measurements[requiredProbes[screen][0]][dimension] = 10;
+      data.measurements[probesFor(screen, expected)[0]][dimension] = 10;
       assert.equal(passes(screen, data), false);
     }
   });
   test(`${screen}: missing measurements, content, mismatched font/width/scale fail`, () => {
     for (const change of [
-      (data) => { delete data.measurements[requiredProbes[screen][0]]; },
+      (data) => { delete data.measurements[probesFor(screen, expected)[0]]; },
       (data) => { data.contentReady = false; },
       (data) => { data.fonts.regular = 'loading'; },
       (data) => { data.fonts.regular = 'fallback'; },
@@ -64,7 +68,7 @@ for (const screen of ['browse', 'title']) {
       (data) => { data.accountState = 'signed-in'; },
       (data) => { data.accountState = 'pending'; },
       (data) => { data.platform = 'web'; },
-      (data) => { data.measurements[requiredProbes[screen][0]].lines[0].height = NaN; },
+      (data) => { data.measurements[probesFor(screen, expected)[0]].lines[0].height = NaN; },
     ]) {
       const data = metadata(screen);
       change(data);
@@ -76,7 +80,16 @@ test('wrong title is not evidence; explicitly requested fallback is recorded sep
   const data = metadata('title');
   data.titleId = 99;
   assert.equal(passes('title', data), false);
+  const safety = metadata('safety');
+  safety.titleId = 99;
+  assert.equal(passes('safety', safety), false);
+  safety.titleId = expected.titleId;
+  safety.titleType = 'tv';
+  assert.equal(passes('safety', safety), false);
   data.titleId = expected.titleId;
   data.fonts = Object.fromEntries(Object.keys(data.fonts).map((f) => [f, 'fallback']));
   assert.equal(assessScreen('title', data, { ...expected, fontState: 'fallback' }, 'ios').every((o) => o.status === 'pass'), true);
+});
+test('signed-out My Shows only requires its sign-in gate heading', () => {
+  assert.deepEqual(probesFor('my-shows', { accountState: 'guest' }), ['my-shows-primary-heading']);
 });
