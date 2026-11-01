@@ -1266,6 +1266,144 @@ describe("catalog refresh recovery", () => {
     }
   });
 
+  it("records a skipped result after same-run recovery rolls back", async () => {
+    // Model recovery in another API process, without the startup's activeRunIds.
+    vi.resetModules();
+    vi.doMock("@workspace/db", () => databaseModule);
+    const { recoverInterruptedRuns: recoverFromOtherProcess } = await import("./catalog-refresh");
+    let finishStartup!: () => void;
+    const startupGate = new Promise<void>((resolve) => { finishStartup = resolve; });
+    let rollbackRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => { rollbackRecovery = resolve; });
+    let signalRecoveryWritten!: (run: typeof catalogSyncRunsTable.$inferSelect) => void;
+    const recoveryWritten = new Promise<Parameters<typeof signalRecoveryWritten>[0]>((resolve) => {
+      signalRecoveryWritten = resolve;
+    });
+    let signalStartupFinished!: () => void;
+    const startupCompletion = new Promise<void>((resolve) => { signalStartupFinished = resolve; });
+    const recoveryError = new Error("unable to commit catalog recovery");
+    const transaction = db.transaction.bind(db);
+    const items = sourceItems.slice(0, 2);
+    let runId: number | undefined;
+    const transactionSpy = vi.spyOn(db, "transaction")
+      .mockImplementationOnce(async (callback, config) => {
+        await startupGate;
+        return transaction(callback, config);
+      })
+      .mockImplementationOnce((callback, config) =>
+        transaction(async (tx) => {
+          await callback(tx);
+          const [writtenRun] = await tx.select().from(catalogSyncRunsTable)
+            .where(eq(catalogSyncRunsTable.id, runId!));
+          signalRecoveryWritten(writtenRun);
+          await recoveryGate;
+          throw recoveryError;
+        }, config),
+      );
+    const cleanupSpy = vi.spyOn(db, "delete").mockImplementationOnce(() => {
+      signalStartupFinished();
+      return {
+        where: () => ({ returning: async () => [] }),
+      } as unknown as ReturnType<typeof db.delete>;
+    });
+    const lockProbe = await pool.connect();
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    runCatalogSyncMock.mockResolvedValueOnce(null);
+    let recoveryOutcome: Promise<unknown> | undefined;
+
+    try {
+      runId = await startCatalogRefresh("manual", items);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(transactionSpy).toHaveBeenCalledTimes(1));
+      await db.update(catalogSyncRunsTable).set({
+        createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
+      }).where(eq(catalogSyncRunsTable.id, runId));
+      const [queuedRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      const queuedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+
+      // Attach the rejection handler before releasing recovery to roll back.
+      recoveryOutcome = recoverFromOtherProcess().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const uncommittedRun = await recoveryWritten;
+      expect(uncommittedRun.status).toBe("failed");
+      expect(uncommittedRun.error).toBe(
+        "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles",
+      );
+      expect(uncommittedRun.finishedAt).toBeInstanceOf(Date);
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId))).toEqual([queuedRun]);
+
+      finishStartup();
+      // A real ungranted lock proves startup is waiting on recovery's lease.
+      await vi.waitFor(async () => {
+        const waiting = await lockProbe.query(
+          `select 1 from pg_locks
+           where locktype = 'advisory'
+             and database = (select oid from pg_database where datname = current_database())
+             and classid = hashtext('watchtime:catalog-refresh-worker')::oid
+             and objid = $1::oid and objsubid = 2 and not granted`,
+          [runId],
+        );
+        expect(waiting.rows).toHaveLength(1);
+      });
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+      expect(cleanupSpy).not.toHaveBeenCalled();
+
+      // Ensure the skipped result cannot reuse recovery's rolled-back timestamp.
+      await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime()));
+      rollbackRecovery();
+      await expect(recoveryOutcome).resolves.toBe(recoveryError);
+      await vi.waitFor(() => expect(runCatalogSyncMock).toHaveBeenCalledTimes(1));
+      expect(runCatalogSyncMock).toHaveBeenCalledWith(
+        { dryRun: false, allowPartial: true }, items, expect.any(Function), false,
+      );
+      await startupCompletion;
+      await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+
+      const [skippedRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(skippedRun).toMatchObject({
+        status: "skipped",
+        error: "Another catalog refresh is already running",
+        processedItems: 0,
+        succeededItems: 0,
+        failedItems: 0,
+        episodesUpdated: 0,
+        finishedAt: expect.any(Date),
+      });
+      expect(skippedRun.error).not.toBe(uncommittedRun.error);
+      expect(skippedRun.finishedAt!.getTime()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime());
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id))
+        .toEqual(queuedItems);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      finishStartup();
+      rollbackRecovery();
+      try {
+        await recoveryOutcome;
+        if (runId !== undefined) {
+          await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+        }
+      } finally {
+        process.off("unhandledRejection", onUnhandledRejection);
+        transactionSpy.mockRestore();
+        cleanupSpy.mockRestore();
+        lockProbe.release();
+        runCatalogSyncMock.mockReset();
+        vi.doUnmock("@workspace/db");
+        vi.resetModules();
+      }
+    }
+  });
+
   it("continues a waiting startup after recovery rolls back without retaining recovery diagnostics", async () => {
     // Model recovery in another API process, without the startup's activeRunIds.
     vi.resetModules();
