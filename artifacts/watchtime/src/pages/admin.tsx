@@ -125,7 +125,29 @@ export default function AdminPage() {
     aliasPage,
     aliasCursor,
   } = readAdminContentUrl(search);
+  const [hasVisitedContentTab, setHasVisitedContentTab] = useState(
+    tab === "content",
+  );
+  const contentAliasReviewFilters = React.useRef({ q, ownership });
+  const contentReviewQuery =
+    tab === "content" ? q : contentAliasReviewFilters.current.q;
+  const contentReviewOwnership =
+    tab === "content" ? ownership : contentAliasReviewFilters.current.ownership;
+  React.useEffect(() => {
+    if (tab === "content") {
+      setHasVisitedContentTab(true);
+      contentAliasReviewFilters.current = { q, ownership };
+    }
+  }, [tab, q, ownership]);
   const selectTab = (nextTab: string) => {
+    if (nextTab === "content") {
+      setHasVisitedContentTab(true);
+      const filters = contentAliasReviewFilters.current;
+      setLocation(
+        adminContentUrl(search, "content", region, filters.q, filters.ownership),
+      );
+      return;
+    }
     setLocation(adminContentUrl(search, nextTab as AdminTab, region));
   };
   const selectRegion = (nextRegion: RatingRegion) => {
@@ -477,13 +499,17 @@ export default function AdminPage() {
         </TabsContent>
 
         {/* Content */}
-        <TabsContent value="content" className="outline-none">
+        <TabsContent
+          value="content"
+          forceMount={hasVisitedContentTab ? true : undefined}
+          className="outline-none"
+        >
           <ContentTab
             ratingRegion={region}
             onRatingRegionChange={selectRegion}
-            q={q}
+            q={contentReviewQuery}
             onSearchChange={selectContentSearch}
-            aliasOwnership={ownership}
+            aliasOwnership={contentReviewOwnership}
             onAliasOwnershipChange={selectAliasOwnership}
             malformedRefreshTimestamp={malformedRefreshTimestamp}
             malformedRegionalClassification={malformedRegionalClassification}
@@ -502,8 +528,8 @@ export default function AdminPage() {
               search,
               "content",
               region,
-              q,
-              ownership,
+              contentReviewQuery,
+              contentReviewOwnership,
               undefined,
               malformedRefreshTimestamp,
               contentOffset,
@@ -2978,6 +3004,26 @@ export function AliasReview({
   const [isRefreshingAliasViews, setIsRefreshingAliasViews] = useState(false);
   const [isAliasRefreshTimedOut, setIsAliasRefreshTimedOut] = useState(false);
   const aliasRefreshAttempt = useRef(0);
+  const previousAliasReviewFilters = useRef({
+    q: q.trim(),
+    ownership,
+  });
+  React.useEffect(() => {
+    const nextFilters = { q: q.trim(), ownership };
+    const previousFilters = previousAliasReviewFilters.current;
+    if (
+      previousFilters.q === nextFilters.q &&
+      previousFilters.ownership === nextFilters.ownership
+    ) {
+      return;
+    }
+    previousAliasReviewFilters.current = nextFilters;
+    aliasRefreshAttempt.current += 1;
+    setRefreshError(null);
+    setIsCollisionResultsStale(false);
+    setIsAliasRefreshTimedOut(false);
+    setIsRefreshingAliasViews(false);
+  }, [q, ownership]);
 
   const formatRefreshFailures = (failedRequests: ReviewRefreshRequest[]) => {
     const requestNames = failedRequests.map((request) =>

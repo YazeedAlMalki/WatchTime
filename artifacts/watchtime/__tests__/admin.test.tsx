@@ -1221,6 +1221,99 @@ describe("admin alternate-title review", () => {
     expect(refreshedRow?.textContent).not.toContain(initialAlias.alias);
   });
 
+  it("clears failed-refresh review state when a new alias search replaces it", async () => {
+    const nextSearchAlias: AdminContentAlias = {
+      ...initialAlias,
+      id: 18,
+      titleId: 102,
+      titleName: "The Harbor",
+      alias: "Different Search Result",
+    };
+    const savedRecord: AdminContentAliasRecord = {
+      id: initialAlias.id,
+      titleId: initialAlias.titleId,
+      alias: "Updated Local Title",
+      normalizedAlias: "updated local title",
+      language: initialAlias.language,
+      sourceName: initialAlias.sourceName,
+      sourceUrl: initialAlias.sourceUrl,
+      isEditorial: true,
+      createdAt: initialAlias.updatedAt,
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    let replaceReview!: (
+      search: string,
+      aliases: AdminContentAlias[],
+    ) => void;
+    mocks.updateMutation.mutate.mockImplementation(
+      async (
+        _variables: unknown,
+        options?: {
+          onSuccess?: (record?: AdminContentAliasRecord) => Promise<void>;
+        },
+      ) => {
+        await options?.onSuccess?.(savedRecord);
+      },
+    );
+    setRefreshFailures(["aliases"]);
+
+    function SearchableAliasReview() {
+      const [search, setSearch] = React.useState("Local Title");
+      const [aliases, setAliases] = React.useState([initialAlias]);
+      replaceReview = (nextSearch, nextAliases) => {
+        setSearch(nextSearch);
+        setAliases(nextAliases);
+      };
+      return (
+        <AliasReview
+          aliases={aliases}
+          q={search}
+          aliasTotal={aliases.length}
+          isLoading={false}
+          isError={false}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="all"
+          onOwnershipChange={() => {}}
+        />
+      );
+    }
+
+    act(() => root.render(<SearchableAliasReview />));
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain("Saved correction preview");
+    expect(button(container, "Retry refresh")).toBeTruthy();
+
+    act(() => replaceReview(nextSearchAlias.alias, [nextSearchAlias]));
+    await flushEffects();
+
+    expect(container.textContent).not.toContain("Alternate-title refresh failed");
+    expect(container.textContent).not.toContain("Saved correction preview");
+    expect(container.textContent).toContain("1 aliases");
+    expect(container.querySelector("tbody tr")?.textContent).toContain(
+      nextSearchAlias.alias,
+    );
+    expect(container.querySelector("tbody tr")?.textContent).not.toContain(
+      savedRecord.alias,
+    );
+    expect(
+      Array.from(container.querySelectorAll("button")).some(
+        (candidate) => candidate.textContent?.trim() === "Retry refresh",
+      ),
+    ).toBe(false);
+  });
+
   it("keeps duplicate and canonical-title conflicts visible to the admin", () => {
     const errors = [
       "That alternate title already belongs to another catalog title.",

@@ -6,8 +6,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getListAdminContentAliasesQueryKey } from "@workspace/api-client-react";
 import { Toaster } from "@/components/ui/toaster";
 
-const { deleteAliasMutate } = vi.hoisted(() => ({
+const { deleteAliasMutate, updateAliasMutate, lookupAliasCollisions } = vi.hoisted(() => ({
   deleteAliasMutate: vi.fn(),
+  updateAliasMutate: vi.fn(),
+  lookupAliasCollisions: vi.fn().mockResolvedValue([]),
 }));
 
 // Keep the generated alias-list hook and HTTP client intact so retry and
@@ -26,8 +28,9 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
     useSearchAdminContent: () => ({ data: [], isLoading: false, isError: false }),
     useRefreshAdminContent: () => ({ isPending: false, mutate: vi.fn() }),
     useRefreshAdminContentBatch: () => ({ isPending: false, mutate: vi.fn() }),
-    useUpdateAdminContentAlias: () => ({ isPending: false, mutate: vi.fn() }),
+    useUpdateAdminContentAlias: () => ({ isPending: false, mutate: updateAliasMutate }),
     useDeleteAdminContentAlias: () => ({ isPending: false, mutate: deleteAliasMutate }),
+    lookupAdminContentAliasCollisions: lookupAliasCollisions,
   };
 });
 
@@ -37,6 +40,128 @@ import AdminPage from "@/pages/admin";
 
 afterEach(() => {
   deleteAliasMutate.mockReset();
+  updateAliasMutate.mockReset();
+  lookupAliasCollisions.mockReset();
+  lookupAliasCollisions.mockResolvedValue([]);
+});
+
+it("keeps a failed saved-correction review available after switching admin tabs", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&q=Local%20Title",
+  );
+  const originalFetch = window.fetch;
+  const requests: URL[] = [];
+  let failRefresh = false;
+  const originalAlias = {
+    id: 17,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie",
+    titleYear: 2019,
+    alias: "Shared Local Title",
+    language: "en",
+    sourceName: "Editorial test",
+    sourceUrl: "https://example.test/source",
+    providerCitations: [],
+    isEditorial: true,
+    collision: true,
+    collisionTitleCount: 2,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  };
+  const savedAliasRecord = {
+    id: originalAlias.id,
+    titleId: originalAlias.titleId,
+    alias: "Updated Local Title",
+    normalizedAlias: "updated local title",
+    language: "fr",
+    sourceName: originalAlias.sourceName,
+    sourceUrl: "https://example.test/updated",
+    isEditorial: true,
+    createdAt: originalAlias.updatedAt,
+    updatedAt: "2026-09-17T00:00:00.000Z",
+  };
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input.toString(),
+      location.origin,
+    );
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    if (failRefresh) {
+      return new Response(JSON.stringify({ error: "Alias refresh unavailable" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const alias = requests.length === 1 ? originalAlias : {
+      ...originalAlias,
+      alias: savedAliasRecord.alias,
+      language: savedAliasRecord.language,
+      sourceUrl: savedAliasRecord.sourceUrl,
+      updatedAt: savedAliasRecord.updatedAt,
+      collision: false,
+      collisionTitleCount: 1,
+    };
+    return new Response(JSON.stringify({
+      items: [alias],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  updateAliasMutate.mockImplementation(
+    (_variables: unknown, options: { onSuccess?: (record: typeof savedAliasRecord) => unknown }) => {
+      failRefresh = true;
+      void options.onSuccess?.(savedAliasRecord);
+    },
+  );
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Shared Local Title")).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Edit" }));
+    await userEvent.fill(
+      page.getByRole("textbox", { name: "Alternate title for The Lighthouse" }),
+      savedAliasRecord.alias,
+    );
+    await userEvent.click(page.getByRole("button", { name: "Save" }));
+    await expect.element(page.getByText("Alternate-title refresh failed")).toBeVisible();
+    await expect.element(page.getByText("1 aliases")).toBeVisible();
+    await expect.element(page.getByText("Saved correction preview", { exact: true })).toBeVisible();
+
+    await userEvent.click(page.getByRole("tab", { name: "Dashboard" }));
+    await userEvent.click(page.getByRole("tab", { name: "Content" }));
+
+    await expect.element(page.getByText("Alternate-title refresh failed")).toBeVisible();
+    await expect.element(page.getByText("The alternate-title list may be stale")).toBeVisible();
+    await expect.element(page.getByText("Your saved correction is shown in the table below, but its review details may be out of date.")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Retry refresh" })).toBeEnabled();
+    await expect.element(page.getByText("1 aliases")).toBeVisible();
+    await expect.element(page.getByText("Updated Local Title")).toBeVisible();
+
+    failRefresh = false;
+    await userEvent.click(page.getByRole("button", { name: "Retry refresh" }));
+    await expect.element(page.getByText("Alternate-title refresh failed")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Updated Local Title")).toBeVisible();
+    await expect.element(page.getByText("Saved correction preview", { exact: true })).not.toBeInTheDocument();
+    expect(requests).toHaveLength(3);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
 });
 
 it("distinguishes an alias-list failure from an empty result and retries the current filters", async () => {

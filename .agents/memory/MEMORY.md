@@ -49,3 +49,4 @@
 - [Mood store persistence test scopes](mood-store-persistence-test-scopes.md) — set the expected guest or account scope explicitly; the store singleton retains scope across tests.
 - [Paginated query recovery tests](paginated-query-recovery-tests.md) — multi-page fallback after invalidation needs event-loop yielding and enough polling time.
 - [Radix slider accessible labels](radix-slider-accessibility.md) — pass accessible names and value text to the slider thumb, not only its root.
+- [Admin content tab state](admin-content-tab-state.md) — keeping the Content panel mounted is not enough; tab URLs drop alias search and ownership, so retain and restore them too.
