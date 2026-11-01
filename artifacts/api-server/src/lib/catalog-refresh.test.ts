@@ -1772,6 +1772,243 @@ describe("catalog refresh recovery", () => {
     }
   });
 
+  it("keeps mixed provider results when the same waiting startup resumes after recovery rolls back", async () => {
+    // Model recovery in another API process, sharing the database so its
+    // uncommitted failure writes can be observed and then rolled back.
+    vi.resetModules();
+    vi.doMock("@workspace/db", () => databaseModule);
+    const { recoverInterruptedRuns: recoverFromOtherProcess } = await import("./catalog-refresh");
+    let finishStartup!: () => void;
+    const startupGate = new Promise<void>((resolve) => { finishStartup = resolve; });
+    let rollbackRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => { rollbackRecovery = resolve; });
+    let signalRecoveryWritten!: (snapshot: {
+      run: typeof catalogSyncRunsTable.$inferSelect;
+      items: typeof catalogSyncItemsTable.$inferSelect[];
+    }) => void;
+    const recoveryWritten = new Promise<Parameters<typeof signalRecoveryWritten>[0]>((resolve) => {
+      signalRecoveryWritten = resolve;
+    });
+    let resumeProgress!: () => void;
+    const progressGate = new Promise<void>((resolve) => { resumeProgress = resolve; });
+    let finishSync!: () => void;
+    const syncGate = new Promise<void>((resolve) => { finishSync = resolve; });
+    let signalProgressWritten!: () => void;
+    const progressWritten = new Promise<void>((resolve) => { signalProgressWritten = resolve; });
+    let signalCleanup!: () => void;
+    const cleanupReached = new Promise<void>((resolve) => { signalCleanup = resolve; });
+    const recoveryError = new Error("unable to commit recovery before partial provider result");
+    const items = [
+      sourceItems[0],
+      sourceItems.find((item) => item.source === "tvmaze" && item !== sourceItems[0])!,
+      sourceItems.find((item) => item.source === "wikipedia")!,
+    ];
+    expect(items).toHaveLength(3);
+    expect(items.map((item) => item.source)).toEqual(["tvmaze", "tvmaze", "wikipedia"]);
+    const providerErrors = [
+      "TVMaze episode lookup timed out",
+      "Wikipedia article lookup returned no result",
+    ];
+    const transaction = db.transaction.bind(db);
+    let runId: number | undefined;
+    const transactionSpy = vi.spyOn(db, "transaction")
+      .mockImplementationOnce(async (callback, config) => {
+        await startupGate;
+        return transaction(callback, config);
+      })
+      .mockImplementationOnce((callback, config) =>
+        transaction(async (tx) => {
+          await callback(tx);
+          const [writtenRun] = await tx.select().from(catalogSyncRunsTable)
+            .where(eq(catalogSyncRunsTable.id, runId!));
+          const writtenItems = await tx.select().from(catalogSyncItemsTable)
+            .where(eq(catalogSyncItemsTable.runId, runId!)).orderBy(catalogSyncItemsTable.id);
+          signalRecoveryWritten({ run: writtenRun, items: writtenItems });
+          await recoveryGate;
+          throw recoveryError;
+        }, config),
+      );
+    // Reaching pruning proves the resumed worker released local ownership.
+    const cleanupSpy = vi.spyOn(db, "delete").mockImplementationOnce(() => {
+      signalCleanup();
+      return {
+        where: () => ({ returning: async () => [] }),
+      } as unknown as ReturnType<typeof db.delete>;
+    });
+    const lockProbe = await pool.connect();
+    runCatalogSyncMock.mockImplementation(async (
+      ...[_options, selected, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+    ) => {
+      if (!selected || !onProgress) throw new Error("Expected explicit titles and progress callback");
+      const [successfulItem, tvmazeFailure, wikipediaFailure] = selected;
+      await progressGate;
+      await onProgress({
+        item: successfulItem, status: "running", attempted: 1, succeeded: 0, episodes: 0,
+      });
+      await onProgress({
+        item: successfulItem, status: "succeeded", attempted: 1, succeeded: 1, episodes: 4,
+      });
+      await onProgress({
+        item: tvmazeFailure, status: "running", attempted: 2, succeeded: 1, episodes: 4,
+      });
+      await onProgress({
+        item: tvmazeFailure, status: "failed", attempted: 2, succeeded: 1, episodes: 4,
+        error: providerErrors[0],
+      });
+      await onProgress({
+        item: wikipediaFailure, status: "running", attempted: 3, succeeded: 1, episodes: 4,
+      });
+      await onProgress({
+        item: wikipediaFailure, status: "failed", attempted: 3, succeeded: 1, episodes: 4,
+        error: providerErrors[1],
+      });
+      signalProgressWritten();
+      await syncGate;
+      return {
+        selected: 3,
+        succeeded: 1,
+        episodes: 4,
+        failures: [
+          { key: tvmazeFailure.key, title: tvmazeFailure.name, provider: "TVMaze", error: providerErrors[0] },
+          { key: wikipediaFailure.key, title: wikipediaFailure.name, provider: "Wikipedia", error: providerErrors[1] },
+        ],
+      };
+    });
+    let recoveryOutcome: Promise<unknown> | undefined;
+    try {
+      runId = await startCatalogRefresh("manual", items);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(transactionSpy).toHaveBeenCalledTimes(1));
+      await db.update(catalogSyncRunsTable).set({
+        createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
+      }).where(eq(catalogSyncRunsTable.id, runId));
+      const [queuedRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      const queuedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(queuedItems.map((item) => item.itemKey)).toEqual(items.map((item) => item.key));
+
+      // Handle recovery's deliberate rejection before allowing it to roll back.
+      recoveryOutcome = recoverFromOtherProcess().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const {
+        run: uncommittedRun,
+        items: uncommittedItems,
+      } = await recoveryWritten;
+      expect(uncommittedRun).toMatchObject({
+        status: "failed", startedAt: null,
+        error: "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles",
+      });
+      expect(uncommittedRun.finishedAt).toBeInstanceOf(Date);
+      expect(uncommittedItems).toHaveLength(items.length);
+      for (const item of uncommittedItems) {
+        expect(item).toMatchObject({
+          status: "failed", error: uncommittedRun.error, startedAt: null,
+        });
+        expect(item.finishedAt).toBeInstanceOf(Date);
+      }
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId))).toEqual([queuedRun]);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id)).toEqual(queuedItems);
+
+      finishStartup();
+      await vi.waitFor(async () => {
+        const waiting = await lockProbe.query(
+          `select 1 from pg_locks
+           where locktype = 'advisory'
+             and database = (select oid from pg_database where datname = current_database())
+             and classid = hashtext('watchtime:catalog-refresh-worker')::oid
+             and objid = $1::oid and objsubid = 2 and not granted`,
+          [runId],
+        );
+        expect(waiting.rows).toHaveLength(1);
+      });
+      expect(runCatalogSyncMock).not.toHaveBeenCalled();
+      expect(cleanupSpy).not.toHaveBeenCalled();
+
+      // Completion timestamps must belong to the provider run, not recovery's
+      // discarded failure writes, even on a fast database.
+      await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime()));
+      rollbackRecovery();
+      await expect(recoveryOutcome).resolves.toBe(recoveryError);
+      await vi.waitFor(() => expect(runCatalogSyncMock).toHaveBeenCalledTimes(1));
+      expect(runCatalogSyncMock).toHaveBeenCalledExactlyOnceWith(
+        { dryRun: false, allowPartial: true }, items, expect.any(Function), false,
+      );
+      const [runningRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(runningRun).toMatchObject({
+        status: "running", error: null, finishedAt: null,
+        totalItems: 3, processedItems: 0, succeededItems: 0, failedItems: 0, episodesUpdated: 0,
+      });
+      expect(runningRun.startedAt).toBeInstanceOf(Date);
+      expect(runningRun.startedAt!.getTime()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime());
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id)).toEqual(queuedItems);
+
+      resumeProgress();
+      await progressWritten;
+      const progressedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(progressedItems).toHaveLength(3);
+      expect(progressedItems.map((item) => item.provider)).toEqual(["TVMaze", "TVMaze", "Wikipedia"]);
+      expect(progressedItems.map((item) => item.status)).toEqual(["succeeded", "failed", "failed"]);
+      expect(progressedItems.map((item) => item.error)).toEqual([null, ...providerErrors]);
+      for (const item of progressedItems) {
+        expect(item.startedAt).toBeInstanceOf(Date);
+        expect(item.startedAt!.getTime()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime());
+        expect(item.finishedAt).toBeInstanceOf(Date);
+        expect(item.finishedAt!.getTime()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime());
+      }
+      const [progressedRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(progressedRun).toMatchObject({
+        status: "running", error: null, finishedAt: null,
+        totalItems: 3, processedItems: 3, succeededItems: 1, failedItems: 2, episodesUpdated: 4,
+      });
+      expect(cleanupSpy).not.toHaveBeenCalled();
+
+      const providerCompletionAt = Date.now();
+      finishSync();
+      await cleanupReached;
+      const [partialRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(partialRun).toMatchObject({
+        status: "partial", error: providerErrors[0], startedAt: runningRun.startedAt,
+        totalItems: 3, processedItems: 3, succeededItems: 1, failedItems: 2, episodesUpdated: 4,
+      });
+      expect(partialRun.finishedAt).toBeInstanceOf(Date);
+      expect(partialRun.finishedAt!.getTime()).toBeGreaterThan(uncommittedRun.finishedAt!.getTime());
+      expect(partialRun.finishedAt!.getTime()).toBeGreaterThanOrEqual(providerCompletionAt);
+      const completedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(completedItems).toEqual(progressedItems);
+      expect(runCatalogSyncMock).toHaveBeenCalledTimes(1);
+      expect(cleanupSpy).toHaveBeenCalledExactlyOnceWith(catalogSyncRunsTable);
+    } finally {
+      finishStartup();
+      rollbackRecovery();
+      resumeProgress();
+      finishSync();
+      try {
+        await recoveryOutcome;
+        if (runId !== undefined) {
+          await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+        }
+      } finally {
+        transactionSpy.mockRestore();
+        cleanupSpy.mockRestore();
+        lockProbe.release();
+        runCatalogSyncMock.mockReset();
+        vi.doUnmock("@workspace/db");
+        vi.resetModules();
+      }
+    }
+  });
+
   it("waits for in-progress recovery to commit before a delayed startup resumes", async () => {
     // Model another API process: share the real database, but load a separate
     // refresh module so recovery cannot see the delayed worker's local set.
