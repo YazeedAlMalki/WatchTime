@@ -3555,57 +3555,57 @@ export function AliasReview({
         </div>
       )}
       {refreshError && (
-        <div
-          role={isRefreshingAliasViews ? "status" : "alert"}
-          className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/20 dark:text-orange-300"
-        >
-          <div>
-            <p className="font-semibold">
-              {isRefreshingAliasViews
-                ? "Refreshing alternate-title views"
-                : isAliasRefreshTimedOut
-                  ? "Alternate-title refresh is taking longer than expected"
-                  : "Alternate-title refresh failed"}
-            </p>
-            <p>
-              {isRefreshingAliasViews ? (
-                "A newer refresh is in progress. Earlier requests cannot replace its status."
-              ) : (
-                <>
-                  {describeRefreshStaleness(refreshError)}{" "}
-                  {isAliasRefreshTimedOut
-                    ? "A previous refresh is still pending. Its results are not being treated as current; retry to start a new check. "
-                    : ""}
-                  {savedAliasPreviews.length > 0 &&
-                  refreshError.includes("aliases")
-                    ? "Your saved correction is shown in the table below, but its review details may be out of date. "
-                    : ""}
-                  {isAliasRefreshTimedOut
-                    ? "If the earlier request finishes after a retry, it will not replace the newer status."
-                    : `${formatRefreshFailures(refreshError)} Retry the refresh to check the latest correction and collision information.`}
-                </>
-              )}
-            </p>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="shrink-0 gap-1.5"
-            onClick={() =>
-              void refreshAliasViews(
-                refreshError ?? ["aliases", "catalog"],
-              )
-            }
-            disabled={isRefreshingAliasViews}
+        <>
+          <div
+            role="alert"
+            data-testid="status-alias-refresh-warning"
+            className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/20 dark:text-orange-300"
           >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${
-                isRefreshingAliasViews ? "animate-spin" : ""
-              }`}
-            />
-            {isRefreshingAliasViews ? "Retrying…" : "Retry refresh"}
-          </Button>
-        </div>
+            <div>
+              <p className="font-semibold">Alternate-title refresh failed</p>
+              <p>
+                {describeRefreshStaleness(refreshError)}{" "}
+                {savedAliasPreviews.length > 0 &&
+                refreshError.includes("aliases")
+                  ? "Your saved correction is shown in the table below, but its review details may be out of date. "
+                  : ""}
+                {formatRefreshFailures(refreshError)} Retry the refresh to check
+                the latest correction and collision information.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0 gap-1.5"
+              data-testid="button-retry-alias-refresh"
+              onClick={() =>
+                void refreshAliasViews(
+                  refreshError ?? ["aliases", "catalog"],
+                )
+              }
+              disabled={isRefreshingAliasViews}
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${
+                  isRefreshingAliasViews ? "animate-spin" : ""
+                }`}
+              />
+              Retry refresh
+            </Button>
+          </div>
+          {(isRefreshingAliasViews || isAliasRefreshTimedOut) && (
+            <p
+              role="status"
+              aria-live="polite"
+              data-testid="status-alias-refresh-progress"
+              className="sr-only"
+            >
+              {isRefreshingAliasViews
+                ? "Refreshing alternate-title views. A newer refresh is in progress. Earlier requests cannot replace its status."
+                : "Alternate-title refresh is taking longer than expected. A previous refresh is still pending. Its results are not being treated as current. If the earlier request finishes after a retry, it will not replace the newer status."}
+            </p>
+          )}
+        </>
       )}
       {conflictAlias && (
         <div
@@ -3858,6 +3858,11 @@ export function AliasReview({
                 <tr
                   key={alias.id}
                   ref={linkedAliasId === alias.id ? linkedRowRef : undefined}
+                  aria-label={
+                    isSavedAliasPreviewUnrefreshed(alias.id)
+                      ? `Saved correction preview: ${alias.alias}`
+                      : undefined
+                  }
                   className={
                     linkedAliasId === alias.id
                       ? "bg-primary/10 ring-2 ring-inset ring-primary/50"

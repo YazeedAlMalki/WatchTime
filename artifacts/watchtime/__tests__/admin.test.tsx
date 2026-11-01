@@ -1143,6 +1143,8 @@ describe("admin alternate-title review", () => {
     let updateFilteredAliases!: () => void;
     let setAliasLoadError!: (hasError: boolean) => void;
     let failAliasRefresh = true;
+    let holdRetryRefresh = false;
+    let resolveRetryRefresh!: () => void;
     function FilteredAliasReview() {
       const [aliases, setAliases] = React.useState([initialAlias]);
       const [total, setTotal] = React.useState(1);
@@ -1173,6 +1175,14 @@ describe("admin alternate-title review", () => {
           if (failAliasRefresh) {
             setAliasLoadError(true);
             return Promise.reject(new Error("alias refresh unavailable"));
+          }
+          if (holdRetryRefresh) {
+            return new Promise<void>((resolve) => {
+              resolveRetryRefresh = () => {
+                updateFilteredAliases();
+                resolve();
+              };
+            });
           }
           updateFilteredAliases();
         }
@@ -1207,11 +1217,45 @@ describe("admin alternate-title review", () => {
     const previewRow = container.querySelector("tbody tr");
     expect(previewRow?.textContent).toContain("Updated Local Title");
     expect(previewRow?.textContent).toContain("Saved correction preview");
+    expect(previewRow?.getAttribute("aria-label")).toBe(
+      "Saved correction preview: Updated Local Title",
+    );
     expect(previewRow?.textContent).not.toContain(initialAlias.alias);
+    const refreshWarning = container.querySelector<HTMLElement>(
+      '[data-testid="status-alias-refresh-warning"]',
+    );
+    expect(refreshWarning?.getAttribute("role")).toBe("alert");
+    expect(refreshWarning?.textContent).toContain(
+      "Your saved correction is shown in the table below, but its review details may be out of date.",
+    );
+    const originalWarningText = refreshWarning?.textContent;
 
     failAliasRefresh = false;
+    holdRetryRefresh = true;
     act(() => button(container, "Retry refresh").click());
-    await flushEffects();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector('[data-testid="status-alias-refresh-warning"]')
+        ?.textContent,
+    ).toBe(originalWarningText);
+    expect(
+      container.querySelector('[data-testid="status-alias-refresh-warning"]')
+        ?.getAttribute("role"),
+    ).toBe("alert");
+    expect(button(container, "Retry refresh").disabled).toBe(true);
+    expect(
+      container.querySelector('[data-testid="status-alias-refresh-progress"]')
+        ?.textContent,
+    ).toContain("Refreshing alternate-title views");
+
+    await act(async () => {
+      resolveRetryRefresh();
+      await Promise.resolve();
+    });
 
     expect(container.textContent).not.toContain("Alternate-title refresh failed");
     expect(container.textContent).toContain("1 aliases");
@@ -1995,7 +2039,7 @@ describe("admin alternate-title review", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(button(container, "Retrying…").disabled).toBe(true);
+    expect(button(container, "Retry refresh").disabled).toBe(true);
     expect(container.textContent).toContain("Refreshing alternate-title views");
     expect(container.textContent).toContain(
       "A newer refresh is in progress. Earlier requests cannot replace its status.",
@@ -2003,9 +2047,7 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).not.toContain(
       "Alternate-title refresh is taking longer than expected",
     );
-    expect(container.textContent).not.toContain(
-      "Alternate-title refresh failed",
-    );
+    expect(container.textContent).toContain("Alternate-title refresh failed");
     expect(refreshCall).toBe(2);
 
     await act(async () => {
@@ -2014,7 +2056,7 @@ describe("admin alternate-title review", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(button(container, "Retrying…").disabled).toBe(true);
+    expect(button(container, "Retry refresh").disabled).toBe(true);
     expect(container.textContent).toContain("Refreshing alternate-title views");
     expect(container.textContent).toContain(
       "A newer refresh is in progress. Earlier requests cannot replace its status.",
@@ -2022,9 +2064,7 @@ describe("admin alternate-title review", () => {
     expect(container.textContent).not.toContain(
       "Alternate-title refresh is taking longer than expected",
     );
-    expect(container.textContent).not.toContain(
-      "Alternate-title refresh failed",
-    );
+    expect(container.textContent).toContain("Alternate-title refresh failed");
 
     await act(async () => {
       resolveRetryRefresh();
