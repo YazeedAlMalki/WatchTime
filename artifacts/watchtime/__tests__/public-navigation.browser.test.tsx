@@ -42,6 +42,71 @@ function expectNavbarFitsViewport() {
   expect(first.right).toBeLessThanOrEqual(second.left);
 }
 
+function desktopNavigationIsVisible() {
+  const desktopLinks = container.querySelector(".public-navbar-desktop-links");
+  if (!desktopLinks) throw new Error("Desktop public navigation did not render");
+  return getComputedStyle(desktopLinks).display !== "none";
+}
+
+async function findDesktopNavigationSwitch() {
+  const minWidth = 320;
+  const maxWidth = 3200;
+  await page.viewport(minWidth, 844);
+  if (desktopNavigationIsVisible()) {
+    throw new Error("Desktop public navigation unexpectedly appears at the narrow viewport");
+  }
+
+  await page.viewport(maxWidth, 844);
+  if (!desktopNavigationIsVisible()) return undefined;
+
+  let low = minWidth;
+  let high = maxWidth;
+  while (high - low > 1) {
+    const midpoint = Math.floor((low + high) / 2);
+    await page.viewport(midpoint, 844);
+    if (desktopNavigationIsVisible()) {
+      high = midpoint;
+    } else {
+      low = midpoint;
+    }
+  }
+  return high;
+}
+
+async function expectNavigationModeReachable(desktop: boolean) {
+  expectNavbarFitsViewport();
+
+  if (desktop) {
+    await expect.element(page.getByRole("link", { name: "Browse", exact: true })).toBeVisible();
+    await expect.element(page.getByRole("link", { name: "Sign In", exact: true })).toBeVisible();
+    return;
+  }
+
+  const trigger = page.getByRole("button", { name: "Open navigation" });
+  await expect.element(trigger).toBeVisible();
+  await userEvent.click(trigger);
+
+  const dialog = container.querySelector("dialog");
+  if (!dialog) throw new Error("Public navigation dialog did not render");
+  const browse = container.querySelector<HTMLElement>('[data-testid="link-public-browse"]');
+  const signIn = container.querySelector<HTMLElement>('[data-testid="link-public-sign-in"]');
+  if (!browse || !signIn) throw new Error("Public Browse and Sign In links did not render");
+
+  await expect.element(page.getByTestId("link-public-browse")).toBeVisible();
+  await expect.element(page.getByTestId("link-public-sign-in")).toBeVisible();
+  expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  for (const link of [browse, signIn]) {
+    const bounds = link.getBoundingClientRect();
+    expect(bounds.left).toBeGreaterThanOrEqual(0);
+    expect(bounds.right).toBeLessThanOrEqual(window.innerWidth);
+  }
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(trigger).toHaveAttribute("aria-expanded", "false");
+  expectNavbarFitsViewport();
+}
+
 afterEach(async () => {
   root?.unmount();
   root = undefined;
@@ -248,6 +313,39 @@ it("keeps the full public navigation readable and separated at an enlarged text 
   enlargeNavigationText();
   expectNavbarFitsViewport();
 });
+
+it.each([1, 2, 4])(
+  "keeps public navigation reachable around the %i00%% text-size mode switch",
+  async (scale) => {
+    await page.viewport(390, 844);
+    document.body.append(container);
+    root = createRoot(container);
+    root.render(<PublicNavbar />);
+    enlargeNavigationText(scale);
+
+    const switchWidth = await findDesktopNavigationSwitch();
+    if (switchWidth === undefined) {
+      // At extreme text sizes the desktop links may never fit the capped header
+      // container. Check the media-query and max-container boundaries instead.
+      for (const width of [1279, 1280, 1535, 1536, 3200]) {
+        await page.viewport(width, 844);
+        expect(desktopNavigationIsVisible()).toBe(false);
+        await expectNavigationModeReachable(false);
+      }
+      return;
+    }
+
+    for (const [width, desktop] of [
+      [switchWidth - 1, false],
+      [switchWidth, true],
+      [switchWidth + 1, true],
+    ] as const) {
+      await page.viewport(width, 844);
+      expect(desktopNavigationIsVisible()).toBe(desktop);
+      await expectNavigationModeReachable(desktop);
+    }
+  },
+);
 
 it.each([320, 1280])(
   "keeps the public navigation reachable without horizontal overflow at 400%% text size and %ipx",
