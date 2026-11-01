@@ -407,10 +407,11 @@ describe("rate-limit background cleanup", () => {
     }
   });
 
-  it("preserves pending-batch age and stall reminders across last-store restarts", async () => {
+  it("preserves stalled-batch age and reminder throttling across a last-store restart", async () => {
     vi.useFakeTimers();
     vi.spyOn(performance, "now").mockImplementation(() => Date.now());
     let resolve!: (result: { rowCount: number }) => void;
+    let resolveNext!: (result: { rowCount: number }) => void;
     execute.mockImplementationOnce(() => new Promise<{ rowCount: number }>((done) => {
       resolve = done;
     })).mockResolvedValue({ rowCount: 0 });
@@ -419,21 +420,11 @@ describe("rate-limit background cleanup", () => {
 
     try {
       await vi.advanceTimersByTimeAsync(
-        RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS * 2,
+        RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS,
       );
       expect(warn).not.toHaveBeenCalled();
-      first.shutdown();
-      expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
       expect(execute).toHaveBeenCalledTimes(1);
-      expect(warn).not.toHaveBeenCalled();
-
-      const replacement = initializedStore();
-      replacement.init({ windowMs: 1_000 } as Options);
-      expect(vi.getTimerCount()).toBe(1);
-      await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS - 1);
-      expect(warn).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
       expect(warn).toHaveBeenCalledExactlyOnceWith(
         {
           event: "rate_limit_cleanup",
@@ -449,16 +440,15 @@ describe("rate-limit background cleanup", () => {
       expect(info).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(1);
 
-      // Restart again after the warning to exercise its reminder throttle too.
-      await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
-      replacement.shutdown();
+      // Replace the shared timer after the original batch has already stalled.
+      first.shutdown();
       expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
       const finalStore = initializedStore();
       finalStore.init({ windowMs: 1_000 } as Options);
       expect(vi.getTimerCount()).toBe(1);
       await vi.advanceTimersByTimeAsync(
-        RATE_LIMIT_CLEANUP_WARNING_INTERVAL_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS * 2 - 1,
+        RATE_LIMIT_CLEANUP_WARNING_INTERVAL_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS - 1,
       );
       expect(warn).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenCalledTimes(1);
@@ -489,17 +479,37 @@ describe("rate-limit background cleanup", () => {
       );
       expect(execute).toHaveBeenCalledTimes(1);
       expect(vi.getTimerCount()).toBe(1);
+
+      // A subsequent batch starts with a fresh stall threshold and warning throttle.
+      execute.mockImplementationOnce(() => new Promise<{ rowCount: number }>((done) => {
+        resolveNext = done;
+      }));
       await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS - 1);
       expect(execute).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(execute).toHaveBeenCalledTimes(2);
-      expect(info).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(
+        RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS - RATE_LIMIT_CLEANUP_INTERVAL_MS,
+      );
       expect(warn).toHaveBeenCalledTimes(2);
+      expect(execute).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+      expect(warn).toHaveBeenCalledTimes(3);
+      expect(warn).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          outcome: "stalled",
+          durationMs: RATE_LIMIT_CLEANUP_STALL_THRESHOLD_MS,
+        }),
+        expect.stringContaining("no overlapping batch will start"),
+      );
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(info).toHaveBeenCalledTimes(1);
       finalStore.shutdown();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       // Release module-level ownership even when an assertion fails.
       resolve({ rowCount: 0 });
+      resolveNext?.({ rowCount: 0 });
       await vi.advanceTimersByTimeAsync(0);
     }
   });
