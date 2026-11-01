@@ -3093,6 +3093,19 @@ export function AliasReview({
     return aliases?.find((candidate) => candidate.id === editingId) ?? null;
   };
 
+  const cancelEditing = () => {
+    const alias = getEditingAlias();
+    if (alias) {
+      setDraft({
+        alias: alias.alias,
+        language: alias.language ?? "",
+        sourceUrl: alias.sourceUrl ?? "",
+        expectedUpdatedAt: alias.updatedAt,
+      });
+    }
+    setEditingId(null);
+  };
+
   const hasUnsavedAliasChanges = () => {
     if (editingId === null) return false;
     const current = getEditingAlias();
@@ -3671,7 +3684,7 @@ export function AliasReview({
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() => setEditingId(null)}
+                      onClick={cancelEditing}
                       disabled={updateAlias.isPending}
                     >
                       Cancel
@@ -3938,7 +3951,7 @@ export function AliasReview({
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => setEditingId(null)}
+                            onClick={cancelEditing}
                             disabled={updateAlias.isPending}
                           >
                             Cancel

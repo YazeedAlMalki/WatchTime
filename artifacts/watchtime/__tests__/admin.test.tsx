@@ -617,7 +617,7 @@ describe("admin alternate-title review", () => {
     );
   });
 
-  it("keeps a saved correction visible when a successful refresh removes it from the active search", async () => {
+  it("keeps a saved correction pinned when canceled edits follow a successful refresh", async () => {
     let updateFilteredAliases!: () => void;
     const firstSavedRecord: AdminContentAliasRecord = {
       id: initialAlias.id,
@@ -705,6 +705,37 @@ describe("admin alternate-title review", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.textContent).toContain("Updated Local Title");
     expect(rows[0]?.textContent).not.toContain(initialAlias.alias);
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Uncommitted Local Title",
+      );
+      setInput(container, "Language for Updated Local Title", "es");
+      setInput(
+        container,
+        "Source link for Updated Local Title",
+        "https://example.test/unsaved-correction",
+      );
+      button(container, "Cancel").click();
+    });
+    await flushEffects();
+
+    expect(mocks.updateMutation.mutate).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("0 aliases");
+    expect(container.textContent).toContain(
+      "Saved correction: Updated Local Title is shown separately above the current page of filtered results. The result count and page navigation remain based on the filtered list.",
+    );
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(1);
+    const canceledRow = container.querySelector("tbody tr");
+    expect(canceledRow?.textContent).toContain("Updated Local Title");
+    expect(canceledRow?.textContent).toContain("fr");
+    expect(canceledRow?.textContent).not.toContain("Uncommitted Local Title");
+    expect(
+      canceledRow?.querySelector<HTMLAnchorElement>("a")?.getAttribute("href"),
+    ).toBe("https://example.test/first-correction");
 
     act(() => button(container, "Edit").click());
     expect(
