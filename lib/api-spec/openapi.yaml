@@ -2053,7 +2053,9 @@ components:
         titleId: { type: integer }
         titleName: { type: string }
         externalId: { type: ["string", "null"] }
+        items: { type: integer }
         classifications: { type: integer }
+        dataStatus: { type: string, enum: [saved, superseded] }
         status: { type: string, enum: [provider_unavailable, missing, error] }
         error: { type: string }
     AdminWikidataIdentityConflict:
@@ -2089,7 +2091,7 @@ components:
         reviewedAt: { type: string, format: date-time }
     AdminContentRefreshBatch:
       type: object
-      required: [id, provider, status, limit, offset, processed, mapped, missing, errors, nextOffset, catalogFingerprint, results, startedAt, completedAt]
+      required: [id, provider, status, limit, offset, processed, mapped, superseded, missing, errors, nextOffset, catalogFingerprint, results, startedAt, completedAt]
       properties:
         id: { type: integer }
         provider:
@@ -2102,6 +2104,7 @@ components:
         offset: { type: integer }
         processed: { type: integer }
         mapped: { type: integer }
+        superseded: { type: integer }
         missing: { type: integer }
         errors: { type: integer }
         nextOffset: { type: integer }
@@ -2115,7 +2118,7 @@ components:
         error: { type: ["string", "null"] }
     AdminContentRefreshBatchHistoryEntry:
       type: object
-      required: [id, provider, status, limit, offset, processed, mapped, missing, errors, nextOffset, completedAt]
+      required: [id, provider, status, limit, offset, processed, mapped, superseded, missing, errors, nextOffset, completedAt]
       properties:
         id: { type: integer }
         provider:
@@ -2128,6 +2131,7 @@ components:
         offset: { type: integer }
         processed: { type: integer }
         mapped: { type: integer }
+        superseded: { type: integer }
         missing: { type: integer }
         errors: { type: integer }
         nextOffset: { type: integer }

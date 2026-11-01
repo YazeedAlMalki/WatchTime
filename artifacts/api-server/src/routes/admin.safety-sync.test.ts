@@ -343,6 +343,56 @@ describe("admin safety sync status", () => {
       .toEqual([createdIds[0]]);
   });
 
+  it("reports superseded lookups as successful and includes them in batch history", async () => {
+    safetyBatchRefreshMock.mockImplementationOnce(
+      async ({ limit, offset }: { limit: number; offset: number }) => ({
+        offset,
+        limit,
+        processed: 1,
+        results: [{
+          ok: true,
+          titleId: 701,
+          titleName: "Newer safety data title",
+          externalId: "provider-title-701",
+          items: 3,
+          dataStatus: "superseded",
+        }],
+      }),
+    );
+
+    const batch = await request(app)
+      .post("/api/admin/content/refresh-batch")
+      .send({ provider: "does_the_dog_die", limit: 1, offset: 0 })
+      .expect(200);
+    runIds.push(batch.body.batchId);
+
+    expect(batch.body.results[0]).toMatchObject({
+      ok: true,
+      dataStatus: "superseded",
+    });
+    const status = await request(app)
+      .get("/api/admin/content/refresh-batch")
+      .expect(200);
+    expect(status.body.lastCompleted).toMatchObject({
+      id: batch.body.batchId,
+      mapped: 0,
+      superseded: 1,
+      missing: 0,
+      errors: 0,
+    });
+
+    const history = await request(app)
+      .get("/api/admin/content/refresh-batch/history?limit=20")
+      .expect(200);
+    expect(history.body.find((run: { id: number }) => run.id === batch.body.batchId))
+      .toMatchObject({
+        mapped: 0,
+        superseded: 1,
+        missing: 0,
+        errors: 0,
+      });
+  });
+
   it("returns a bounded history of completed and failed batches by completion time", async () => {
     const [olderCompletion] = await db.insert(safetySyncRunsTable).values({
       provider: "does_the_dog_die",

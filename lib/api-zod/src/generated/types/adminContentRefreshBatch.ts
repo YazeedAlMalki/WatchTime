@@ -17,6 +17,7 @@ export interface AdminContentRefreshBatch {
   offset: number;
   processed: number;
   mapped: number;
+  superseded: number;
   missing: number;
   errors: number;
   nextOffset: number;

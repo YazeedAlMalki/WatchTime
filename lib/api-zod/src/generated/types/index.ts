@@ -29,6 +29,7 @@ export * from './adminContentRefreshBatchStatusProperty';
 export * from './adminContentRefreshInput';
 export * from './adminContentRefreshInputProvider';
 export * from './adminContentRefreshResult';
+export * from './adminContentRefreshResultDataStatus';
 export * from './adminContentRefreshResultStatus';
 export * from './adminDashboard';
 export * from './adminRawClassification';

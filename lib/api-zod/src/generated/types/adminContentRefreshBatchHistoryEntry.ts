@@ -16,6 +16,7 @@ export interface AdminContentRefreshBatchHistoryEntry {
   offset: number;
   processed: number;
   mapped: number;
+  superseded: number;
   missing: number;
   errors: number;
   nextOffset: number;

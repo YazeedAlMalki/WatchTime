@@ -41,6 +41,7 @@ export type DoesTheDogDieRefreshResult = {
   titleName: string;
   externalId: string;
   items: number;
+  dataStatus: "saved" | "superseded";
 } | {
   ok: false;
   titleId: number;
@@ -477,6 +478,7 @@ export async function refreshDoesTheDogDieTitle(
     const details = await client.getItem(match.id);
     const stats = normalizeDoesTheDogDieTopicStats(details.topicItemStats);
     const items = normalizeDoesTheDogDieSafetyItems(stats);
+    let dataStatus: "saved" | "superseded" = "saved";
     await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('watchtime:catalog-sync'))`);
       const [lockedMapping] = await tx
@@ -530,6 +532,8 @@ export async function refreshDoesTheDogDieTitle(
       };
       if (existingRecord && isRefreshNewer(existingRecord.updatedAt, now)) {
         await tx.update(safetyRecordsTable).set(values).where(eq(safetyRecordsTable.id, existingRecord.id));
+      } else if (existingRecord) {
+        dataStatus = "superseded";
       } else if (!existingRecord) {
         await tx.insert(safetyRecordsTable).values(values);
       }
@@ -547,6 +551,7 @@ export async function refreshDoesTheDogDieTitle(
       titleName: title.name,
       externalId: String(match.id),
       items: items.length,
+      dataStatus,
     };
   } catch (caught) {
     const error = caught instanceof DoesTheDogDieError

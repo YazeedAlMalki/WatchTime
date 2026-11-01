@@ -862,6 +862,14 @@ export interface AdminContentAliasConflict {
   current: AdminContentAlias;
 }
 
+export type AdminContentRefreshResultDataStatus = typeof AdminContentRefreshResultDataStatus[keyof typeof AdminContentRefreshResultDataStatus];
+
+
+export const AdminContentRefreshResultDataStatus = {
+  saved: 'saved',
+  superseded: 'superseded',
+} as const;
+
 export type AdminContentRefreshResultStatus = typeof AdminContentRefreshResultStatus[keyof typeof AdminContentRefreshResultStatus];
 
 
@@ -877,7 +885,9 @@ export interface AdminContentRefreshResult {
   titleName: string;
   /** @nullable */
   externalId?: string | null;
+  items?: number;
   classifications?: number;
+  dataStatus?: AdminContentRefreshResultDataStatus;
   status?: AdminContentRefreshResultStatus;
   error?: string;
 }
@@ -943,6 +953,7 @@ export interface AdminContentRefreshBatch {
   offset: number;
   processed: number;
   mapped: number;
+  superseded: number;
   missing: number;
   errors: number;
   nextOffset: number;
@@ -980,6 +991,7 @@ export interface AdminContentRefreshBatchHistoryEntry {
   offset: number;
   processed: number;
   mapped: number;
+  superseded: number;
   missing: number;
   errors: number;
   nextOffset: number;

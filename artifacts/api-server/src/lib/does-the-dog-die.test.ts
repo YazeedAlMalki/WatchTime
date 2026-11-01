@@ -243,7 +243,12 @@ describe("Does the Dog Die refresh persistence", () => {
       }),
     };
     const result = await refreshDoesTheDogDieTitle(titleId, client);
-    expect(result).toMatchObject({ ok: true, externalId: "10752", items: 1 });
+    expect(result).toMatchObject({
+      ok: true,
+      externalId: "10752",
+      items: 1,
+      dataStatus: "saved",
+    });
     const [health] = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, provider));
     expect(health).toMatchObject({
@@ -449,7 +454,11 @@ describe("Does the Dog Die refresh persistence", () => {
       })).resolves.toMatchObject({ ok: true, externalId: "20752" });
 
       releaseOlderDetails();
-      await expect(olderRefresh).resolves.toMatchObject({ ok: true, externalId: "20751" });
+      await expect(olderRefresh).resolves.toMatchObject({
+        ok: true,
+        externalId: "20751",
+        dataStatus: "superseded",
+      });
 
       const [mapping] = await db.select().from(providerMappingsTable).where(and(
         eq(providerMappingsTable.titleId, titleId),
@@ -536,6 +545,7 @@ describe("Does the Dog Die batch refresh pagination", () => {
       titleName: `catalog-title-${titleId}`,
       externalId: `provider-title-${titleId}`,
       items: 0,
+      dataStatus: "saved" as const,
     });
 
     const firstBatch = await refreshDoesTheDogDieBatch({

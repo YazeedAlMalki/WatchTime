@@ -161,6 +161,7 @@ export type SafetySyncRunResult = {
   externalId?: string;
   items?: number;
   classifications?: number;
+  dataStatus?: "saved" | "superseded";
   status?: "provider_unavailable" | "missing" | "error";
   error?: string;
 };

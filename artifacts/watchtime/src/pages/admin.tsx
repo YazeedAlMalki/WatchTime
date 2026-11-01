@@ -1590,7 +1590,12 @@ function ContentTab({
           }
           qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
           if (result.ok) {
-            toast({ title: `Refreshed ${name}` });
+            toast(result.dataStatus === "superseded"
+              ? {
+                  title: "Lookup succeeded; newer data retained",
+                  description: `${name} was not overwritten by this older lookup.`,
+                }
+              : { title: `Refreshed ${name}` });
           } else {
             const message = (result as { error?: string }).error ??
               "The provider did not complete the refresh.";
@@ -1697,12 +1702,20 @@ function ContentTab({
 
   const batchSummary = batchResult
     ? {
-        mapped: batchResult.results.filter((result) => result.ok).length,
+        mapped: batchResult.results.filter(
+          (result) => result.ok && result.dataStatus !== "superseded",
+        ).length,
+        superseded: batchResult.results.filter(
+          (result) => result.ok && result.dataStatus === "superseded",
+        ).length,
         missing: batchResult.results.filter(
           (result) => !result.ok && result.status === "missing",
         ).length,
         errors: batchResult.results.filter(
-          (result) => !result.ok && result.status !== "missing",
+          (result) =>
+            !result.ok &&
+            result.status !== "missing" &&
+            result.dataStatus !== "superseded",
         ).length,
       }
     : null;
@@ -1917,6 +1930,11 @@ function ContentTab({
                 <span className="text-green-600 dark:text-green-400">
                   {batchSummary.mapped} mapped
                 </span>
+                {batchSummary.superseded > 0 && (
+                  <span className="text-amber-700 dark:text-amber-400">
+                    {batchSummary.superseded} newer data retained
+                  </span>
+                )}
                 <span className="text-orange-600 dark:text-orange-400">
                   {batchSummary.missing} missing
                 </span>
@@ -1949,7 +1967,13 @@ function ContentTab({
               <div className="space-y-1.5">
                 {batchResult.results.map((result) => {
                   const outcome = result.ok
-                    ? {
+                    ? result.dataStatus === "superseded"
+                      ? {
+                          label: "Newer data retained",
+                          className:
+                            "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+                        }
+                      : {
                         label: "Mapped",
                         className:
                           "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
@@ -1968,6 +1992,7 @@ function ContentTab({
                   return (
                     <div
                       key={result.titleId}
+                      data-testid={`status-safety-sync-result-${result.titleId}`}
                       className="flex flex-wrap items-center gap-2 rounded-xl bg-secondary/40 px-3 py-2 text-sm"
                     >
                       <span className="font-medium text-foreground">
@@ -1979,7 +2004,9 @@ function ContentTab({
                         {outcome.label}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {result.ok
+                        {result.ok && result.dataStatus === "superseded"
+                          ? "Lookup succeeded; newer safety data was kept."
+                          : result.ok
                           ? (result.externalId ?? "Provider mapping saved")
                           : (result.error ??
                             "Provider did not return a mapping")}
@@ -2061,6 +2088,11 @@ function ContentTab({
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                         <span>Processed {run.processed} of up to {run.limit}</span>
                         <span>{run.mapped} mapped</span>
+                        {run.superseded > 0 && (
+                          <span data-testid={`text-safety-sync-superseded-${run.id}`}>
+                            {run.superseded} newer data retained
+                          </span>
+                        )}
                         <span>{run.missing} missing</span>
                         <span>{run.errors} errors</span>
                         <span>

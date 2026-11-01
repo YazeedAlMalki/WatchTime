@@ -5,6 +5,7 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AdminContentRefreshResultDataStatus } from './adminContentRefreshResultDataStatus';
 import type { AdminContentRefreshResultStatus } from './adminContentRefreshResultStatus';
 
 export interface AdminContentRefreshResult {
@@ -13,7 +14,9 @@ export interface AdminContentRefreshResult {
   titleName: string;
   /** @nullable */
   externalId?: string | null;
+  items?: number;
   classifications?: number;
+  dataStatus?: AdminContentRefreshResultDataStatus;
   status?: AdminContentRefreshResultStatus;
   error?: string;
 }

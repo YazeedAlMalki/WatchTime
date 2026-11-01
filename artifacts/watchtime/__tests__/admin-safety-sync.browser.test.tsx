@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   batchMutate: vi.fn(),
   batchStatus: undefined as unknown,
   batchStatusListeners: new Set<() => void>(),
+  batchHistory: [] as unknown[],
   integrations: [] as unknown[],
   integrationListeners: new Set<() => void>(),
 }));
@@ -63,6 +64,11 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
         () => mocks.batchStatus,
       ),
     }),
+    useListAdminContentRefreshBatchHistory: () => ({
+      data: mocks.batchHistory,
+      isLoading: false,
+      isError: false,
+    }),
     useSearchAdminContent: () => ({
       data: [],
       isLoading: false,
@@ -74,6 +80,11 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
       isLoading: false,
       isError: false,
       isFetching: false,
+    }),
+    useListAdminWikidataIdentityConflicts: () => ({
+      data: { items: [], hasMore: false },
+      isLoading: false,
+      isError: false,
     }),
     useRefreshAdminContent: () => ({ isPending: false, mutate: vi.fn() }),
     useRefreshAdminContentBatch: () => ({
@@ -232,6 +243,76 @@ it("uses the returned batch offset and processed count for the next resume offse
     mocks.batchMutate.mockReset();
     mocks.batchStatus = undefined;
     mocks.batchStatusListeners.clear();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("shows successful superseded lookups as retained newer data in batch and history", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content");
+  mocks.batchStatus = {
+    lastCompleted: {
+      id: 812,
+      provider: "does_the_dog_die",
+      status: "completed",
+      limit: 1,
+      offset: 0,
+      processed: 1,
+      mapped: 0,
+      superseded: 1,
+      missing: 0,
+      errors: 0,
+      nextOffset: 1,
+      catalogFingerprint: "saved-catalog",
+      results: [{
+        ok: true,
+        titleId: 701,
+        titleName: "Retained safety data title",
+        externalId: "provider-title-701",
+        items: 3,
+        dataStatus: "superseded",
+      }],
+      startedAt: "2026-09-24T09:00:00.000Z",
+      completedAt: "2026-09-24T09:01:00.000Z",
+      error: null,
+    },
+    running: null,
+    interrupted: null,
+  };
+  mocks.batchHistory = [{
+    id: 812,
+    provider: "does_the_dog_die",
+    status: "completed",
+    limit: 1,
+    offset: 0,
+    processed: 1,
+    mapped: 0,
+    superseded: 1,
+    missing: 0,
+    errors: 0,
+    nextOffset: 1,
+    completedAt: "2026-09-24T09:01:00.000Z",
+    error: null,
+  }];
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Initial safety sync")).toBeVisible();
+    await expect.element(page.getByText("1 newer data retained")).toBeVisible();
+    await expect.element(page.getByText("Lookup succeeded; newer safety data was kept.")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Show history" }));
+    await expect.element(page.getByTestId("text-safety-sync-superseded-812")).toBeVisible();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.batchStatus = undefined;
+    mocks.batchStatusListeners.clear();
+    mocks.batchHistory = [];
     window.history.replaceState({}, "", previousUrl);
   }
 });

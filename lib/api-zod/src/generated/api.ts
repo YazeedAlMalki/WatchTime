@@ -1619,7 +1619,9 @@ export const RefreshAdminContentResponse = zod.object({
   "titleId": zod.int(),
   "titleName": zod.string(),
   "externalId": zod.string().nullish(),
+  "items": zod.int().optional(),
   "classifications": zod.int().optional(),
+  "dataStatus": zod.enum(['saved', 'superseded']).optional(),
   "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
   "error": zod.string().optional()
 })
@@ -1637,6 +1639,7 @@ export const GetAdminContentRefreshBatchResponse = zod.object({
   "offset": zod.int(),
   "processed": zod.int(),
   "mapped": zod.int(),
+  "superseded": zod.int(),
   "missing": zod.int(),
   "errors": zod.int(),
   "nextOffset": zod.int(),
@@ -1646,7 +1649,9 @@ export const GetAdminContentRefreshBatchResponse = zod.object({
   "titleId": zod.int(),
   "titleName": zod.string(),
   "externalId": zod.string().nullish(),
+  "items": zod.int().optional(),
   "classifications": zod.int().optional(),
+  "dataStatus": zod.enum(['saved', 'superseded']).optional(),
   "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
   "error": zod.string().optional()
 })),
@@ -1662,6 +1667,7 @@ export const GetAdminContentRefreshBatchResponse = zod.object({
   "offset": zod.int(),
   "processed": zod.int(),
   "mapped": zod.int(),
+  "superseded": zod.int(),
   "missing": zod.int(),
   "errors": zod.int(),
   "nextOffset": zod.int(),
@@ -1671,7 +1677,9 @@ export const GetAdminContentRefreshBatchResponse = zod.object({
   "titleId": zod.int(),
   "titleName": zod.string(),
   "externalId": zod.string().nullish(),
+  "items": zod.int().optional(),
   "classifications": zod.int().optional(),
+  "dataStatus": zod.enum(['saved', 'superseded']).optional(),
   "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
   "error": zod.string().optional()
 })),
@@ -1687,6 +1695,7 @@ export const GetAdminContentRefreshBatchResponse = zod.object({
   "offset": zod.int(),
   "processed": zod.int(),
   "mapped": zod.int(),
+  "superseded": zod.int(),
   "missing": zod.int(),
   "errors": zod.int(),
   "nextOffset": zod.int(),
@@ -1696,7 +1705,9 @@ export const GetAdminContentRefreshBatchResponse = zod.object({
   "titleId": zod.int(),
   "titleName": zod.string(),
   "externalId": zod.string().nullish(),
+  "items": zod.int().optional(),
   "classifications": zod.int().optional(),
+  "dataStatus": zod.enum(['saved', 'superseded']).optional(),
   "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
   "error": zod.string().optional()
 })),
@@ -1740,7 +1751,9 @@ export const RefreshAdminContentBatchResponse = zod.object({
   "titleId": zod.int(),
   "titleName": zod.string(),
   "externalId": zod.string().nullish(),
+  "items": zod.int().optional(),
   "classifications": zod.int().optional(),
+  "dataStatus": zod.enum(['saved', 'superseded']).optional(),
   "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
   "error": zod.string().optional()
 }))
@@ -1767,6 +1780,7 @@ export const ListAdminContentRefreshBatchHistoryResponseItem = zod.object({
   "offset": zod.int(),
   "processed": zod.int(),
   "mapped": zod.int(),
+  "superseded": zod.int(),
   "missing": zod.int(),
   "errors": zod.int(),
   "nextOffset": zod.int(),

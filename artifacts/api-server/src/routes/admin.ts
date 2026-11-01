@@ -1976,6 +1976,9 @@ router.post("/wikidata-identity-conflicts/:titleId/review", async (req, res): Pr
 });
 
 function serializeSafetySyncRun(run: typeof safetySyncRunsTable.$inferSelect) {
+  const superseded = run.results.filter(
+    (result) => result.ok && result.dataStatus === "superseded",
+  ).length;
   return {
     id: run.id,
     provider: run.provider,
@@ -1984,6 +1987,7 @@ function serializeSafetySyncRun(run: typeof safetySyncRunsTable.$inferSelect) {
     offset: run.offset,
     processed: run.processed,
     mapped: run.mapped,
+    superseded,
     missing: run.missing,
     errors: run.errors,
     nextOffset: run.offset + run.processed,
@@ -2142,11 +2146,21 @@ router.post("/content/refresh-batch", async (req, res) => {
     const result = provider === "wikidata"
       ? await refreshWikidataBatch({ limit, offset, titleSelection })
       : await refreshDoesTheDogDieBatch({ limit, offset, titleSelection });
-    const mapped = result.results.filter((item) => item.ok).length;
+    const mapped = result.results.filter(
+      (item) =>
+        item.ok &&
+        (!("dataStatus" in item) || item.dataStatus !== "superseded"),
+    ).length;
+    const superseded = result.results.filter(
+      (item) =>
+        item.ok &&
+        "dataStatus" in item &&
+        item.dataStatus === "superseded",
+    ).length;
     const missing = result.results.filter(
       (item) => !item.ok && item.status === "missing",
     ).length;
-    const errors = result.results.length - mapped - missing;
+    const errors = result.results.length - mapped - superseded - missing;
     await db
       .update(safetySyncRunsTable)
       .set({
@@ -2199,6 +2213,7 @@ router.get("/content/refresh-batch/history", async (req, res) => {
       mapped: safetySyncRunsTable.mapped,
       missing: safetySyncRunsTable.missing,
       errors: safetySyncRunsTable.errors,
+      results: safetySyncRunsTable.results,
       completedAt: safetySyncRunsTable.completedAt,
       error: safetySyncRunsTable.error,
     })
@@ -2219,6 +2234,9 @@ router.get("/content/refresh-batch/history", async (req, res) => {
     processed: run.processed,
     mapped: run.mapped,
     missing: run.missing,
+    superseded: run.results.filter(
+      (result) => result.ok && result.dataStatus === "superseded",
+    ).length,
     errors: run.errors,
     nextOffset: run.offset + run.processed,
     completedAt: run.completedAt?.toISOString() ?? null,
