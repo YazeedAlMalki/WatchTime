@@ -180,6 +180,115 @@ describe("rate-limit background cleanup", () => {
     },
   );
 
+  it.each(["success", "failure"] as const)(
+    "settles a pending %s without scheduling retries while all stores are stopped",
+    async (outcome) => {
+      vi.useFakeTimers();
+      vi.spyOn(performance, "now").mockImplementation(() => Date.now());
+      execute.mockResolvedValue({ rowCount: RATE_LIMIT_CLEANUP_BATCH_SIZE });
+      const first = initializedStore();
+      await vi.advanceTimersByTimeAsync(
+        RATE_LIMIT_CLEANUP_INTERVAL_MS * RATE_LIMIT_CLEANUP_CAP_WARNING_THRESHOLD,
+      );
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      let resolve!: (result: { rowCount: number }) => void;
+      let reject!: (reason: Error) => void;
+      execute.mockImplementationOnce(() => new Promise<{ rowCount: number }>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      }));
+      await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+      const callsBeforeSettlement = RATE_LIMIT_CLEANUP_CAP_WARNING_THRESHOLD + 1;
+      expect(execute).toHaveBeenCalledTimes(callsBeforeSettlement);
+
+      let settled = false;
+      try {
+        first.shutdown();
+        expect(vi.getTimerCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS * 2);
+        expect(execute).toHaveBeenCalledTimes(callsBeforeSettlement);
+        expect(vi.getTimerCount()).toBe(0);
+
+        if (outcome === "success") {
+          resolve({ rowCount: RATE_LIMIT_CLEANUP_BATCH_SIZE });
+        } else {
+          reject(new Error("database unavailable"));
+        }
+        settled = true;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(execute).toHaveBeenCalledTimes(callsBeforeSettlement);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(warn).toHaveBeenCalledTimes(outcome === "success" ? 1 : 2);
+        if (outcome === "success") {
+          expect(info).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              hitCap: true,
+              consecutiveCappedBatches: callsBeforeSettlement,
+            }),
+            expect.any(String),
+          );
+        } else {
+          expect(warn).toHaveBeenLastCalledWith(
+            expect.objectContaining({ outcome: "failure" }),
+            expect.stringContaining("Retrying on the next scheduled tick"),
+          );
+        }
+
+        const replacement = initializedStore();
+        expect(vi.getTimerCount()).toBe(1);
+        await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+        expect(execute).toHaveBeenCalledTimes(callsBeforeSettlement + 1);
+        expect(info).toHaveBeenLastCalledWith(
+          expect.objectContaining({ consecutiveCappedBatches: 1 }),
+          expect.any(String),
+        );
+        expect(warn).toHaveBeenCalledTimes(outcome === "success" ? 1 : 2);
+
+        await vi.advanceTimersByTimeAsync(
+          RATE_LIMIT_CLEANUP_INTERVAL_MS,
+        );
+        expect(execute).toHaveBeenCalledTimes(
+          callsBeforeSettlement + 2,
+        );
+        expect(info).toHaveBeenLastCalledWith(
+          expect.objectContaining({ consecutiveCappedBatches: 2 }),
+          expect.any(String),
+        );
+        expect(warn).toHaveBeenCalledTimes(outcome === "success" ? 1 : 2);
+        expect(vi.getTimerCount()).toBe(1);
+
+        await vi.advanceTimersByTimeAsync(RATE_LIMIT_CLEANUP_INTERVAL_MS);
+        expect(execute).toHaveBeenCalledTimes(
+          callsBeforeSettlement + RATE_LIMIT_CLEANUP_CAP_WARNING_THRESHOLD,
+        );
+        expect(info).toHaveBeenLastCalledWith(
+          expect.objectContaining({ consecutiveCappedBatches: RATE_LIMIT_CLEANUP_CAP_WARNING_THRESHOLD }),
+          expect.any(String),
+        );
+        // A new cap warning is due immediately at the fresh threshold, despite
+        // the warning from before shutdown still being inside its throttle window.
+        expect(warn).toHaveBeenCalledTimes(outcome === "success" ? 2 : 3);
+        expect(warn).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            hitCap: true,
+            consecutiveCappedBatches: RATE_LIMIT_CLEANUP_CAP_WARNING_THRESHOLD,
+          }),
+          expect.stringContaining("expired counters may be accumulating"),
+        );
+        expect(vi.getTimerCount()).toBe(1);
+        replacement.shutdown();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        if (!settled) {
+          resolve({ rowCount: 0 });
+          reject(new Error("test cleanup"));
+          await vi.advanceTimersByTimeAsync(0);
+        }
+      }
+    },
+  );
+
   it("starts a fresh cap-warning streak after full shutdown and an idle restart", async () => {
     vi.useFakeTimers();
     vi.spyOn(performance, "now").mockImplementation(() => Date.now());
