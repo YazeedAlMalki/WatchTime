@@ -485,6 +485,98 @@ describe("Does the Dog Die refresh persistence", () => {
     }
   });
 
+  it("keeps the first persisted title data when same-time lookups finish out of order", async () => {
+    let releaseFirstDetails!: () => void;
+    let signalFirstDetailsStarted!: () => void;
+    const firstDetailsGate = new Promise<void>((resolve) => {
+      releaseFirstDetails = resolve;
+    });
+    const firstDetailsStarted = new Promise<void>((resolve) => {
+      signalFirstDetailsStarted = resolve;
+    });
+    let firstRefresh: ReturnType<typeof refreshDoesTheDogDieTitle> | undefined;
+
+    await resetTitleDataOrderingBaseline();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const sameRefreshTime = new Date("2030-01-02T00:00:00.000Z");
+      vi.setSystemTime(sameRefreshTime);
+      firstRefresh = refreshDoesTheDogDieTitle(titleId, {
+        searchItems: async () => [item({ id: 30751 })],
+        getItem: async () => {
+          signalFirstDetailsStarted();
+          await firstDetailsGate;
+          return {
+            ...item({ id: 30751 }),
+            topicItemStats: [{
+              topicItemId: 1,
+              yesSum: 2,
+              noSum: 1,
+              numComments: 0,
+              topicId: 2,
+              topicName: "late lookup topic",
+              itemId: 30751,
+            }],
+          };
+        },
+      });
+      await firstDetailsStarted;
+
+      await expect(refreshDoesTheDogDieTitle(titleId, {
+        searchItems: async () => [item({ id: 30752 })],
+        getItem: async () => ({
+          ...item({ id: 30752 }),
+          topicItemStats: [{
+            topicItemId: 2,
+            yesSum: 8,
+            noSum: 1,
+            numComments: 3,
+            topicId: 3,
+            topicName: "first persisted topic",
+            itemId: 30752,
+          }],
+        }),
+      })).resolves.toMatchObject({ ok: true, externalId: "30752" });
+
+      const [firstMapping] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, titleId),
+        eq(providerMappingsTable.provider, provider),
+      ));
+      const [firstRecord] = await db.select().from(safetyRecordsTable).where(and(
+        eq(safetyRecordsTable.titleId, titleId),
+        eq(safetyRecordsTable.sourceName, provider),
+      ));
+      expect(firstMapping).toMatchObject({
+        externalId: "30752",
+        status: "mapped",
+        lastRefreshedAt: sameRefreshTime,
+      });
+      expect(firstRecord).toMatchObject({
+        url: "https://www.doesthedogdie.com/media/30752",
+        updatedAt: sameRefreshTime,
+      });
+      expect(firstRecord.items[0]).toMatchObject({ label: "first persisted topic", score: 8 });
+
+      releaseFirstDetails();
+      await expect(firstRefresh).resolves.toMatchObject({ ok: true, externalId: "30751" });
+
+      const [mappingAfterLateLookup] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, titleId),
+        eq(providerMappingsTable.provider, provider),
+      ));
+      const [recordAfterLateLookup] = await db.select().from(safetyRecordsTable).where(and(
+        eq(safetyRecordsTable.titleId, titleId),
+        eq(safetyRecordsTable.sourceName, provider),
+      ));
+      expect(mappingAfterLateLookup).toEqual(firstMapping);
+      expect(recordAfterLateLookup).toEqual(firstRecord);
+    } finally {
+      releaseFirstDetails();
+      if (firstRefresh) await firstRefresh.catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps attempt counters bounded while preserving their success ratio", async () => {
     await db.update(integrationHealthTable)
       .set({
