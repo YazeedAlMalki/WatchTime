@@ -400,11 +400,19 @@ describe("restored admin actions", () => {
         action: "resolved_report",
         entityType: "report",
         entityId: report.id,
+        details: expect.objectContaining({
+          statusBefore: "open",
+          statusAfter: "resolved",
+        }),
       }),
       expect.objectContaining({
         action: "feedback_reviewing",
         entityType: "feedback",
         entityId: feedback.id,
+        details: expect.objectContaining({
+          statusBefore: "new",
+          statusAfter: "reviewing",
+        }),
       }),
     ]));
   });

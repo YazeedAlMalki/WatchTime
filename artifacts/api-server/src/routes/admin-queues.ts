@@ -83,12 +83,19 @@ router.patch("/reports/:reportId", async (req, res) => {
     return res.status(400).json({ error: "Invalid report update" });
   }
   const updated = await db.transaction(async (tx) => {
+    const [existing] = await tx.select().from(reportsTable)
+      .where(eq(reportsTable.id, id)).for("update");
+    if (!existing) return null;
     const [row] = await tx.update(reportsTable).set({ status: parsed.data.status })
       .where(eq(reportsTable.id, id)).returning();
     if (!row) return null;
     await tx.insert(adminAuditLogTable).values({
       adminId: req.userId!, action: `${parsed.data.status}_report`,
-      entityType: "report", entityId: id, details: { titleId: row.titleId, reason: row.reason },
+      entityType: "report", entityId: id,
+      details: {
+        titleId: row.titleId, reason: row.reason,
+        statusBefore: existing.status, statusAfter: row.status,
+      },
     });
     return row;
   });
@@ -127,12 +134,19 @@ router.patch("/feedback/:feedbackId", async (req, res) => {
     return res.status(400).json({ error: "Invalid feedback update" });
   }
   const updated = await db.transaction(async (tx) => {
+    const [existing] = await tx.select().from(feedbackTable)
+      .where(eq(feedbackTable.id, id)).for("update");
+    if (!existing) return null;
     const [row] = await tx.update(feedbackTable).set({ status: parsed.data.status })
       .where(eq(feedbackTable.id, id)).returning();
     if (!row) return null;
     await tx.insert(adminAuditLogTable).values({
       adminId: req.userId!, action: `feedback_${parsed.data.status}`,
-      entityType: "feedback", entityId: id, details: { category: row.category },
+      entityType: "feedback", entityId: id,
+      details: {
+        category: row.category,
+        statusBefore: existing.status, statusAfter: row.status,
+      },
     });
     return row;
   });
