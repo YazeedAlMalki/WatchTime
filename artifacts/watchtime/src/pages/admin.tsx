@@ -2539,7 +2539,7 @@ function ContentTab({
       </div>
       {isLoading ? (
         <div className="h-32 flex items-center justify-center animate-pulse bg-secondary/30 rounded-2xl" />
-      ) : contentError ? (
+      ) : contentError && !content ? (
         <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
           <p className="font-medium text-foreground">
             Could not load titles for {malformedRegionalClassification
@@ -2576,6 +2576,15 @@ function ContentTab({
         />
       ) : (
         <div className="flex flex-col gap-3">
+          {contentError && (
+            <div
+              role="status"
+              className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-muted-foreground"
+            >
+              The latest refresh failed. Showing the last successfully loaded
+              results while trying again.
+            </div>
+          )}
           {visibleContent.map((item) => (
             <div
               key={`${item.id}-${item.unclassifiedRating?.recordId ?? item.selectedRating?.region ?? ratingRegion}`}

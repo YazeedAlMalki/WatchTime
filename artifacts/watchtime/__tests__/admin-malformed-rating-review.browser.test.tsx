@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   refreshMutate: vi.fn(),
   searchResults: [] as ReturnType<typeof malformedRating>[],
   earlierPageResults: [] as ReturnType<typeof malformedRating>[],
+  searchFailuresRemaining: 0,
+  holdNextSearchResponse: false,
+  releaseSearchResponse: undefined as (() => void) | undefined,
   searchEnabled: false,
   refetchIntervalOverride: undefined as number | undefined,
   configuredRefetchInterval: undefined as number | undefined,
@@ -40,31 +43,43 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
         options?.query?.refetchOnWindowFocus;
       return useQuery({
         queryKey: api.getSearchAdminContentQueryKey(params),
-        queryFn: async () => params?.malformedRegionalClassification
-          ? [{
-              id: 901,
-              name: "Unsupported rating fixture",
-              type: "movie" as const,
-              mappings: [],
-              selectedRating: null,
-              unclassifiedRating: {
-                provider: "Fixture Provider",
-                recordId: 902,
-                classifications: [{
-                  category: "UNSUPPORTED_SYSTEM",
-                  label: "12",
-                  score: null,
-                  maxScore: null,
-                  description: null,
-                  severity: null,
-                }],
-                rawUpdatedAt: "infinity",
-                sourceUrl: "https://provider.example/ratings/902",
-              },
-            }]
-          : params?.offset === 0 && mocks.earlierPageResults.length > 0
-            ? mocks.earlierPageResults
-            : mocks.searchResults,
+        queryFn: async () => {
+          if (mocks.searchFailuresRemaining > 0) {
+            mocks.searchFailuresRemaining -= 1;
+            throw new Error("Temporary review lookup failure");
+          }
+          if (mocks.holdNextSearchResponse) {
+            mocks.holdNextSearchResponse = false;
+            await new Promise<void>((resolve) => {
+              mocks.releaseSearchResponse = resolve;
+            });
+          }
+          return params?.malformedRegionalClassification
+            ? [{
+                id: 901,
+                name: "Unsupported rating fixture",
+                type: "movie" as const,
+                mappings: [],
+                selectedRating: null,
+                unclassifiedRating: {
+                  provider: "Fixture Provider",
+                  recordId: 902,
+                  classifications: [{
+                    category: "UNSUPPORTED_SYSTEM",
+                    label: "12",
+                    score: null,
+                    maxScore: null,
+                    description: null,
+                    severity: null,
+                  }],
+                  rawUpdatedAt: "infinity",
+                  sourceUrl: "https://provider.example/ratings/902",
+                },
+              }]
+            : params?.offset === 0 && mocks.earlierPageResults.length > 0
+              ? mocks.earlierPageResults
+            : mocks.searchResults;
+        },
         enabled: mocks.searchEnabled,
         ...options?.query,
         ...(mocks.refetchIntervalOverride === undefined
@@ -327,7 +342,16 @@ it("refreshes an open review after another admin repairs a rating", async () => 
       malformedRating(1102, "Unrelated Wikidata title"),
       malformedRating(1103, "Unrelated provider title", "Does the Dog Die?"),
     ];
+    mocks.searchFailuresRemaining = 1;
+    mocks.holdNextSearchResponse = true;
 
+    await expect.element(page.getByText(/The latest refresh failed/)).toBeVisible();
+    await expect.element(page.getByText("Repaired title", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Unrelated Wikidata title", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Unrelated provider title", { exact: true })).toBeVisible();
+
+    // The next automatic poll succeeds with the repaired record removed.
+    mocks.releaseSearchResponse?.();
     await expect.element(page.getByText("Repaired title", { exact: true }))
       .not.toBeInTheDocument();
     await expect.element(page.getByText("Unrelated Wikidata title", { exact: true })).toBeVisible();
@@ -344,6 +368,10 @@ it("refreshes an open review after another admin repairs a rating", async () => 
     container.remove();
     client.clear();
     mocks.searchResults = [];
+    mocks.searchFailuresRemaining = 0;
+    mocks.releaseSearchResponse?.();
+    mocks.releaseSearchResponse = undefined;
+    mocks.holdNextSearchResponse = false;
     mocks.searchEnabled = false;
     mocks.refetchIntervalOverride = undefined;
     mocks.configuredRefetchInterval = undefined;
