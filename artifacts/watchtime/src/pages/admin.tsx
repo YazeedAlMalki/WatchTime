@@ -1469,6 +1469,7 @@ function ContentTab({
   const {
     data: content,
     isLoading,
+    isSuccess: contentSuccess,
     isError: contentError,
     isFetching: contentFetching,
     refetch: retryContent,
@@ -1483,6 +1484,24 @@ function ContentTab({
   const visibleContent = content?.slice(0, contentPageSize) ?? [];
   const hasNextContentPage = hasContentFilters &&
     (content?.length ?? 0) > contentPageSize;
+  useEffect(() => {
+    if (
+      malformedRefreshTimestamp &&
+      contentSuccess &&
+      !contentFetching &&
+      content?.length === 0 &&
+      contentOffset > 0
+    ) {
+      onContentOffsetChange(Math.max(0, contentOffset - contentPageSize));
+    }
+  }, [
+    content,
+    contentFetching,
+    contentOffset,
+    contentSuccess,
+    malformedRefreshTimestamp,
+    onContentOffsetChange,
+  ]);
   const {
     data: aliasesPage,
     isLoading: aliasesLoading,

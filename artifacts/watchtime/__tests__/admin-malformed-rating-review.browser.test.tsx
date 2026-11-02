@@ -8,6 +8,7 @@ import { getSearchAdminContentQueryKey } from "@workspace/api-client-react";
 const mocks = vi.hoisted(() => ({
   refreshMutate: vi.fn(),
   searchResults: [] as ReturnType<typeof malformedRating>[],
+  earlierPageResults: [] as ReturnType<typeof malformedRating>[],
   searchEnabled: false,
   refetchIntervalOverride: undefined as number | undefined,
   configuredRefetchInterval: undefined as number | undefined,
@@ -61,7 +62,9 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
                 sourceUrl: "https://provider.example/ratings/902",
               },
             }]
-          : mocks.searchResults,
+          : params?.offset === 0 && mocks.earlierPageResults.length > 0
+            ? mocks.earlierPageResults
+            : mocks.searchResults,
         enabled: mocks.searchEnabled,
         ...options?.query,
         ...(mocks.refetchIntervalOverride === undefined
@@ -349,6 +352,80 @@ it("refreshes an open review after another admin repairs a rating", async () => 
   }
 });
 
+it("returns to the previous filtered review page only after a remote repair empties it", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata&offset=50",
+  );
+  mocks.searchResults = [
+    malformedRating(1201, "Repaired title"),
+    malformedRating(1202, "Remaining title"),
+  ];
+  mocks.earlierPageResults = Array.from({ length: 50 }, (_, index) =>
+    malformedRating(index + 1, `Earlier malformed title ${index + 1}`),
+  );
+  mocks.searchEnabled = true;
+  mocks.refetchIntervalOverride = 25;
+
+  const activeParams = {
+    region: "US" as const,
+    malformedRefreshTimestamp: true,
+    malformedRefreshTimestampProvider: "Wikidata",
+    offset: 50,
+  };
+  const previousParams = { ...activeParams, offset: 0 };
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  });
+  client.setQueryData(
+    getSearchAdminContentQueryKey(previousParams),
+    mocks.earlierPageResults,
+  );
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Repaired title", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Remaining title", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Page 2", { exact: true })).toBeVisible();
+
+    // Another admin repairs one result; the remaining result keeps this page active.
+    mocks.searchResults = [malformedRating(1202, "Remaining title")];
+    await expect.element(page.getByText("Repaired title", { exact: true }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText("Remaining title", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Page 2", { exact: true })).toBeVisible();
+
+    // A later poll sees the last result repaired and returns to the prior page.
+    mocks.searchResults = [];
+    await expect.element(page.getByText("Page 1", { exact: true })).toBeVisible();
+    await expect.element(
+      page.getByText("Earlier malformed title 1", { exact: true }),
+    ).toBeVisible();
+    expect(location.search).toContain("region=US");
+    expect(location.search).toContain("malformedRefreshTimestampProvider=Wikidata");
+    expect(location.search).toContain("malformedRefreshTimestamp=true");
+    expect(client.getQueryData(
+      getSearchAdminContentQueryKey(previousParams),
+    )).toEqual(mocks.earlierPageResults);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.searchResults = [];
+    mocks.earlierPageResults = [];
+    mocks.searchEnabled = false;
+    mocks.refetchIntervalOverride = undefined;
+    mocks.configuredRefetchInterval = undefined;
+    mocks.configuredRefetchOnWindowFocus = undefined;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("keeps a failed Wikidata refresh visible with its region and allows another attempt", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState(
@@ -419,6 +496,7 @@ it("keeps a failed Wikidata refresh visible with its region and allows another a
     client.clear();
     mocks.refreshMutate.mockReset();
     mocks.searchResults = [];
+    mocks.earlierPageResults = [];
     mocks.searchEnabled = false;
     mocks.refetchIntervalOverride = undefined;
     mocks.configuredRefetchInterval = undefined;
