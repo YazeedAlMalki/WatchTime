@@ -910,6 +910,84 @@ describe("admin Content review timestamp filter", () => {
     expect(audit).toHaveLength(2);
   });
 
+  it("pages every unclassified provider record once in stable order", async () => {
+    const fixturePrefix = "unclassified-rating-pages-fixture-20261101";
+    const titles = await db.insert(titlesTable).values(
+      Array.from({ length: 52 }, (_, index) => ({
+        name: `${fixturePrefix}-${String(index).padStart(3, "0")}`,
+        type: "movie" as const,
+        popularity: 10_000 - index,
+      })),
+    ).returning({
+      id: titlesTable.id,
+      name: titlesTable.name,
+      popularity: titlesTable.popularity,
+    });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    const providerNames = ["First Page Provider", "Second Page Provider"];
+    const ratingValues = titles.flatMap((title, index) =>
+      providerNames.slice(0, index === 0 ? 1 : 2).map((provider) => ({
+        titleId: title.id,
+        sourceName: provider,
+        status: "available" as const,
+        isCommunity: false,
+        tier: 1,
+        url: `https://provider.example/ratings/${title.id}/${provider.replaceAll(" ", "-")}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{
+          category: "UNSUPPORTED_SYSTEM",
+          label: `${provider} ${title.name}`,
+          score: null,
+          maxScore: null,
+          description: null,
+        }],
+      })),
+    );
+    const ratings = await db.insert(safetyRecordsTable).values(ratingValues)
+      .returning({
+        id: safetyRecordsTable.id,
+        titleId: safetyRecordsTable.titleId,
+        sourceName: safetyRecordsTable.sourceName,
+      });
+    await markMalformedTimestamp(ratings.map(({ id }) => id));
+
+    const expected = [...ratings]
+      .sort((left, right) => {
+        const leftTitle = titles.find(({ id }) => id === left.titleId)!;
+        const rightTitle = titles.find(({ id }) => id === right.titleId)!;
+        return (rightTitle.popularity ?? 0) - (leftTitle.popularity ?? 0) || left.id - right.id;
+      })
+      .map((rating) => ({
+        titleId: rating.titleId,
+        recordId: rating.id,
+        provider: rating.sourceName,
+      }));
+    const query = `/api/admin/content?q=${fixturePrefix}&malformedRegionalClassification=true`;
+    const pageResponses = await Promise.all([0, 50, 100, 150].map((offset) =>
+      request(app)
+        .get(`${query}&offset=${offset}`)
+        .expect(200),
+    ));
+
+    expect(pageResponses.map(({ body }) => body.length)).toEqual([51, 51, 3, 0]);
+    const visibleEntries = pageResponses.slice(0, 3).flatMap(({ body }) =>
+      body.slice(0, 50).map((item: any) => ({
+        titleId: item.id,
+        recordId: item.unclassifiedRating.recordId,
+        provider: item.unclassifiedRating.provider,
+      })),
+    );
+    expect(visibleEntries).toEqual(expected);
+    expect(new Set(visibleEntries.map(({ recordId }) => recordId)).size)
+      .toBe(ratings.length);
+    expect(pageResponses[0].body[50].unclassifiedRating.recordId)
+      .toBe(pageResponses[1].body[0].unclassifiedRating.recordId);
+    expect(pageResponses[2].body.map((item: any) => item.unclassifiedRating.recordId))
+      .toEqual(expected.slice(100).map(({ recordId }) => recordId));
+    expect(pageResponses[3].body).toEqual([]);
+  });
+
   it("loads mappings only for malformed-timestamp results and preserves mapping values", async () => {
     const fixturePrefix = "timestamp-mapping-filter-fixture-20261018";
     const candidateCount = 251;

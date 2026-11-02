@@ -129,6 +129,30 @@ describe("admin content URL", () => {
     );
     expect(readAdminContentUrl(new URL(secondPage, "https://example.test").search))
       .toMatchObject({ malformedRegionalClassification: true, contentOffset: 50 });
+    const thirdPage = adminContentUrl(
+      new URL(secondPage, "https://example.test").search,
+      "content",
+      "US",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      100,
+    );
+    const pageBeyondResults = adminContentUrl(
+      new URL(thirdPage, "https://example.test").search,
+      "content",
+      "US",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      150,
+    );
+    expect(readAdminContentUrl(new URL(thirdPage, "https://example.test").search))
+      .toMatchObject({ malformedRegionalClassification: true, contentOffset: 100 });
+    expect(readAdminContentUrl(new URL(pageBeyondResults, "https://example.test").search))
+      .toMatchObject({ malformedRegionalClassification: true, contentOffset: 150 });
     expect(adminContentUrl(new URL(reviewUrl, "https://example.test").search, "reports", "US"))
       .not.toContain("malformedRegionalClassification");
   });

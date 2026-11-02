@@ -149,6 +149,59 @@ it("shows raw provider and classification details for an unclassified malformed 
     window.history.replaceState({}, "", previousUrl);
   }
 });
+
+it("shows the final partial unclassified page without offering an empty next page", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&malformedRegionalClassification=true&malformedRefreshTimestampProvider=Fixture+Provider&offset=100",
+  );
+  const params = {
+    region: "US" as const,
+    malformedRegionalClassification: true,
+    malformedRefreshTimestampProvider: "Fixture Provider",
+    offset: 100,
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(
+    getSearchAdminContentQueryKey(params),
+    Array.from({ length: 3 }, (_, index) => ({
+      id: 1_000 + index,
+      name: `Final unclassified title ${index + 1}`,
+      type: "movie" as const,
+      mappings: [],
+      selectedRating: null,
+      unclassifiedRating: {
+        provider: "Fixture Provider",
+        recordId: 2_000 + index,
+        classifications: [],
+        rawUpdatedAt: "infinity",
+        sourceUrl: null,
+      },
+    })),
+  );
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+
+    await expect.element(page.getByText("Final unclassified title 1", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Final unclassified title 2", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Final unclassified title 3", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Page 3", { exact: true })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Previous page" })).not.toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Next page" })).toBeDisabled();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 function malformedRating(
   id: number,
   name: string,
