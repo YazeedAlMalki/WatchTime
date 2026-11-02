@@ -12,14 +12,18 @@ import {
   titlesTable,
   usersTable,
 } from "@workspace/db";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, getTableName, inArray, sql } from "drizzle-orm";
 
 const startCatalogRefresh = vi.hoisted(() => vi.fn());
 const retryFailedCatalogTitles = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 const refreshWikidataTitle = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, titleId: 1 }));
 const refreshDoesTheDogDieTitle = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, titleId: 1 }));
 
-vi.mock("../lib/catalog-refresh", () => ({ startCatalogRefresh, retryFailedCatalogTitles }));
+vi.mock("../lib/catalog-refresh", () => ({
+  startCatalogRefresh,
+  retryFailedCatalogTitles,
+  STALE_QUEUED_REFRESH_MS: 5 * 60 * 1000,
+}));
 vi.mock("../lib/wikidata", () => ({
   refreshWikidataTitle,
   refreshWikidataBatch: vi.fn(),
@@ -60,6 +64,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.clearAllMocks();
   await db.delete(adminAuditLogTable).where(eq(adminAuditLogTable.adminId, adminId));
   await db.delete(feedbackTable).where(eq(feedbackTable.userId, adminId));
@@ -415,6 +420,96 @@ describe("restored admin actions", () => {
         }),
       }),
     ]));
+  });
+
+  it.each([
+    {
+      kind: "report",
+      status: "open",
+      nextStatus: "resolved",
+      entityType: "report",
+      action: "resolved_report",
+      createFixture: async () => {
+        const [report] = await db.insert(reportsTable).values({
+          userId: adminId,
+          titleId,
+          reason: "wrong_title",
+          status: "open",
+        }).returning();
+        reportIds.push(report.id);
+        return { id: report.id, readStatus: async () => {
+          const [saved] = await db.select().from(reportsTable)
+            .where(eq(reportsTable.id, report.id));
+          return saved.status;
+        } };
+      },
+      path: (id: number) => `/api/admin/reports/${id}`,
+    },
+    {
+      kind: "feedback",
+      status: "new",
+      nextStatus: "reviewing",
+      entityType: "feedback",
+      action: "feedback_reviewing",
+      createFixture: async () => {
+        const [feedback] = await db.insert(feedbackTable).values({
+          userId: adminId,
+          category: "bug",
+          message: "audit rollback test",
+          status: "new",
+        }).returning();
+        return { id: feedback.id, readStatus: async () => {
+          const [saved] = await db.select().from(feedbackTable)
+            .where(eq(feedbackTable.id, feedback.id));
+          return saved.status;
+        } };
+      },
+      path: (id: number) => `/api/admin/feedback/${id}`,
+    },
+  ])("rolls back a $kind status update when its audit insert fails", async ({
+    status, nextStatus, entityType, action, createFixture, path,
+  }) => {
+    const fixture = await createFixture();
+    const realTransaction = db.transaction.bind(db);
+    let attemptedAudit: typeof adminAuditLogTable.$inferInsert | undefined;
+    const transactionSpy = vi.spyOn(db, "transaction");
+    transactionSpy.mockImplementationOnce(
+      (fn: Parameters<typeof db.transaction>[0]) => realTransaction((tx) => {
+        const wrapped = new Proxy(tx, {
+          get(target, prop) {
+            if (prop === "insert") {
+              return (table: Parameters<typeof tx.insert>[0]) => {
+                if (getTableName(table) === getTableName(adminAuditLogTable)) {
+                  return { values: async (audit: typeof adminAuditLogTable.$inferInsert) => {
+                    attemptedAudit = audit;
+                    throw new Error("simulated audit insert failure");
+                  } };
+                }
+                return target.insert(table);
+              };
+            }
+            const value = Reflect.get(target, prop);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return fn(wrapped);
+      }) as ReturnType<typeof db.transaction>,
+    );
+
+    await request(app).patch(path(fixture.id)).send({ status: nextStatus }).expect(500);
+
+    expect(transactionSpy).toHaveBeenCalledOnce();
+    expect(attemptedAudit).toMatchObject({
+      adminId,
+      action,
+      entityType,
+      entityId: fixture.id,
+    });
+    expect(await fixture.readStatus()).toBe(status);
+    expect(await db.select().from(adminAuditLogTable).where(and(
+      eq(adminAuditLogTable.entityType, entityType),
+      eq(adminAuditLogTable.entityId, fixture.id),
+    ))).toEqual([]);
   });
 
   it("rejects report and feedback pagination outside the supported bounds", async () => {
