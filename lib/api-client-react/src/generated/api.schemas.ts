@@ -1192,6 +1192,56 @@ export interface ContentMapping {
   unclassifiedRating?: AdminUnclassifiedRating | null;
 }
 
+export type AdminUnclassifiedRatingCorrectionCategory = typeof AdminUnclassifiedRatingCorrectionCategory[keyof typeof AdminUnclassifiedRatingCorrectionCategory];
+
+
+export const AdminUnclassifiedRatingCorrectionCategory = {
+  MPAA: 'MPAA',
+  BBFC: 'BBFC',
+  FSK: 'FSK',
+  CNC: 'CNC',
+  Australian_Classification: 'Australian Classification',
+  ClassInd: 'ClassInd',
+} as const;
+
+export interface AdminUnclassifiedRatingCorrection {
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  expectedUpdatedAt: string;
+  /** @minimum 0 */
+  classificationIndex: number;
+  category: AdminUnclassifiedRatingCorrectionCategory;
+}
+
+export interface AdminUnclassifiedRatingDismissal {
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  expectedUpdatedAt: string;
+  /**
+     * @minLength 3
+     * @maxLength 500
+     */
+  reason: string;
+}
+
+export type AdminUnclassifiedRatingResolutionAction = typeof AdminUnclassifiedRatingResolutionAction[keyof typeof AdminUnclassifiedRatingResolutionAction];
+
+
+export const AdminUnclassifiedRatingResolutionAction = {
+  corrected: 'corrected',
+  dismissed: 'dismissed',
+} as const;
+
+export interface AdminUnclassifiedRatingResolution {
+  recordId: number;
+  action: AdminUnclassifiedRatingResolutionAction;
+  status: string;
+}
+
 export interface AnalyticsPoint {
   date: string;
   value: number;

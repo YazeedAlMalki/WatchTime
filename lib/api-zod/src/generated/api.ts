@@ -1407,6 +1407,64 @@ export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseIt
 
 
 /**
+ * @summary Correct one unsupported classification system
+ */
+
+
+
+export const CorrectAdminUnclassifiedRatingParams = zod.object({
+  "id": zod.coerce.number().int().min(1)
+})
+
+export const correctAdminUnclassifiedRatingBodyExpectedUpdatedAtMax = 128;
+
+export const correctAdminUnclassifiedRatingBodyClassificationIndexMin = 0;
+
+
+
+export const CorrectAdminUnclassifiedRatingBody = zod.object({
+  "expectedUpdatedAt": zod.string().min(1).max(correctAdminUnclassifiedRatingBodyExpectedUpdatedAtMax),
+  "classificationIndex": zod.int().min(correctAdminUnclassifiedRatingBodyClassificationIndexMin),
+  "category": zod.enum(['MPAA', 'BBFC', 'FSK', 'CNC', 'Australian Classification', 'ClassInd'])
+})
+
+export const CorrectAdminUnclassifiedRatingResponse = zod.object({
+  "recordId": zod.int(),
+  "action": zod.enum(['corrected', 'dismissed']),
+  "status": zod.string()
+})
+
+
+/**
+ * @summary Dismiss an unsupported classification record
+ */
+
+
+
+export const DismissAdminUnclassifiedRatingParams = zod.object({
+  "id": zod.coerce.number().int().min(1)
+})
+
+export const dismissAdminUnclassifiedRatingBodyExpectedUpdatedAtMax = 128;
+
+export const dismissAdminUnclassifiedRatingBodyReasonMin = 3;
+export const dismissAdminUnclassifiedRatingBodyReasonMax = 500;
+
+
+
+export const DismissAdminUnclassifiedRatingBody = zod.object({
+  "expectedUpdatedAt": zod.string().min(1).max(dismissAdminUnclassifiedRatingBodyExpectedUpdatedAtMax),
+  "reason": zod.string().min(dismissAdminUnclassifiedRatingBodyReasonMin).max(dismissAdminUnclassifiedRatingBodyReasonMax)
+})
+
+export const DismissAdminUnclassifiedRatingResponse = zod.object({
+  "recordId": zod.int(),
+  "action": zod.enum(['corrected', 'dismissed']),
+  "status": zod.string()
+})
+
+
+/**
  * @summary List Wikidata identity conflicts for admin review
  */
 export const listAdminWikidataIdentityConflictsQueryStatusDefault = `pending`;

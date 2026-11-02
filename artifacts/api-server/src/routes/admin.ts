@@ -54,6 +54,12 @@ import {
   ListAdminWikidataIdentityConflictsResponse,
   ReviewAdminWikidataIdentityConflictResponse,
   SearchAdminContentQueryParams,
+  CorrectAdminUnclassifiedRatingParams,
+  CorrectAdminUnclassifiedRatingBody,
+  CorrectAdminUnclassifiedRatingResponse,
+  DismissAdminUnclassifiedRatingParams,
+  DismissAdminUnclassifiedRatingBody,
+  DismissAdminUnclassifiedRatingResponse,
   LookupAdminContentAliasCollisionsBody,
   LookupAdminContentAliasCollisionsResponse,
 } from "@workspace/api-zod";
@@ -96,6 +102,8 @@ const JS_DATE_LIMIT_MS = 8_640_000_000_000_000;
 const CONTENT_ALIAS_EXPORT_BATCH_SIZE = 500;
 export const CONTENT_ALIAS_EXPORT_MAX_DURATION_MS = 30_000;
 const AUDIT_LOG_EXPORT_BATCH_SIZE = 500;
+const SUPPORTED_RATING_SYSTEMS: Set<string> =
+  new Set(RATING_REGIONS.map(({ system }) => system));
 const AUDIT_LOG_DEFAULT_LIMIT = 50;
 const AUDIT_LOG_MAX_LIMIT = 200;
 const AUDIT_LOG_MAX_OFFSET = 1_000_000;
@@ -1007,6 +1015,187 @@ router.get("/content", async (req, res) => {
     pageEntries.map(({ region: selectedRegion }) => selectedRegion),
     malformedRefreshTimestampProvider || "Wikidata",
   ));
+});
+
+type UnclassifiedRatingResolution =
+  | {
+      action: "correct";
+      classificationIndex: number;
+      category: string;
+    }
+  | {
+      action: "dismiss";
+      reason: string;
+    };
+
+async function resolveUnclassifiedRating(
+  adminId: string,
+  recordId: number,
+  expectedUpdatedAt: string,
+  resolution: UnclassifiedRatingResolution,
+) {
+  return db.transaction(async (tx) => {
+    const [record] = await tx
+      .select({
+        id: safetyRecordsTable.id,
+        titleId: safetyRecordsTable.titleId,
+        seasonNumber: safetyRecordsTable.seasonNumber,
+        episodeNumber: safetyRecordsTable.episodeNumber,
+        sourceName: safetyRecordsTable.sourceName,
+        isCommunity: safetyRecordsTable.isCommunity,
+        status: safetyRecordsTable.status,
+        items: safetyRecordsTable.items,
+        rawUpdatedAt: sql<string>`${safetyRecordsTable.updatedAt}::text`,
+      })
+      .from(safetyRecordsTable)
+      .where(eq(safetyRecordsTable.id, recordId))
+      .for("update");
+    if (!record) return { kind: "not_found" } as const;
+
+    const items = record.items;
+    const hasSupportedClassification =
+      Array.isArray(items) &&
+      items.some((item) =>
+        item !== null &&
+        typeof item === "object" &&
+        typeof item.category === "string" &&
+        SUPPORTED_RATING_SYSTEMS.has(item.category),
+      );
+    if (
+      record.rawUpdatedAt !== expectedUpdatedAt ||
+      record.status !== "available" ||
+      record.isCommunity ||
+      record.seasonNumber !== null ||
+      record.episodeNumber !== null ||
+      !hasMalformedTimestamp(record.rawUpdatedAt) ||
+      !Array.isArray(items) ||
+      hasSupportedClassification
+    ) {
+      return { kind: "conflict" } as const;
+    }
+
+    let nextStatus = record.status;
+    let previousCategory: unknown = null;
+    if (resolution.action === "correct") {
+      const target = items[resolution.classificationIndex];
+      if (
+        !target ||
+        typeof target !== "object" ||
+        resolution.classificationIndex < 0 ||
+        resolution.classificationIndex >= items.length
+      ) {
+        return { kind: "invalid_item" } as const;
+      }
+      previousCategory = target.category ?? null;
+      const correctedItems = items.map((item, index) =>
+        index === resolution.classificationIndex
+          ? { ...item, category: resolution.category }
+          : item,
+      );
+      await tx
+        .update(safetyRecordsTable)
+        .set({ items: correctedItems })
+        .where(eq(safetyRecordsTable.id, record.id));
+      await tx.insert(adminAuditLogTable).values({
+        adminId,
+        action: "correct_safety_classification",
+        entityType: "content",
+        entityId: record.id,
+        details: {
+          titleId: record.titleId,
+          provider: record.sourceName,
+          classificationIndex: resolution.classificationIndex,
+          previousCategory,
+          category: resolution.category,
+          expectedUpdatedAt,
+        },
+      });
+      return { kind: "resolved", recordId: record.id, action: "corrected", status: nextStatus } as const;
+    }
+
+    nextStatus = "dismissed";
+    await tx
+      .update(safetyRecordsTable)
+      .set({ status: nextStatus })
+      .where(eq(safetyRecordsTable.id, record.id));
+    await tx.insert(adminAuditLogTable).values({
+      adminId,
+      action: "dismiss_safety_classification",
+      entityType: "content",
+      entityId: record.id,
+      details: {
+        titleId: record.titleId,
+        provider: record.sourceName,
+        reason: resolution.reason,
+        expectedUpdatedAt,
+      },
+    });
+    return { kind: "resolved", recordId: record.id, action: "dismissed", status: nextStatus } as const;
+  });
+}
+
+router.post("/unclassified-ratings/:id/correct", async (req, res): Promise<void> => {
+  const params = CorrectAdminUnclassifiedRatingParams.safeParse(req.params);
+  const body = CorrectAdminUnclassifiedRatingBody.safeParse(req.body);
+  if (!params.success || !body.success) {
+    res.status(400).json({ error: "Invalid unclassified rating correction" });
+    return;
+  }
+  const result = await resolveUnclassifiedRating(
+    req.userId!,
+    params.data.id,
+    body.data.expectedUpdatedAt,
+    {
+      action: "correct",
+      classificationIndex: body.data.classificationIndex,
+      category: body.data.category,
+    },
+  );
+  if (result.kind === "not_found") {
+    res.status(404).json({ error: "Safety record not found" });
+    return;
+  }
+  if (result.kind === "invalid_item") {
+    res.status(400).json({ error: "Classification item does not exist" });
+    return;
+  }
+  if (result.kind === "conflict") {
+    res.status(409).json({ error: "Safety record changed or is no longer eligible for review" });
+    return;
+  }
+  res.json(CorrectAdminUnclassifiedRatingResponse.parse({
+    recordId: result.recordId,
+    action: result.action,
+    status: result.status,
+  }));
+});
+
+router.post("/unclassified-ratings/:id/dismiss", async (req, res): Promise<void> => {
+  const params = DismissAdminUnclassifiedRatingParams.safeParse(req.params);
+  const body = DismissAdminUnclassifiedRatingBody.safeParse(req.body);
+  if (!params.success || !body.success || body.data.reason.trim().length < 3) {
+    res.status(400).json({ error: "Invalid unclassified rating dismissal" });
+    return;
+  }
+  const result = await resolveUnclassifiedRating(
+    req.userId!,
+    params.data.id,
+    body.data.expectedUpdatedAt,
+    { action: "dismiss", reason: body.data.reason.trim() },
+  );
+  if (result.kind === "not_found") {
+    res.status(404).json({ error: "Safety record not found" });
+    return;
+  }
+  if (result.kind === "conflict") {
+    res.status(409).json({ error: "Safety record changed or is no longer eligible for review" });
+    return;
+  }
+  res.json(DismissAdminUnclassifiedRatingResponse.parse({
+    recordId: result.recordId,
+    action: result.action,
+    status: result.status,
+  }));
 });
 
 const normalizeAlias = (value: string) =>

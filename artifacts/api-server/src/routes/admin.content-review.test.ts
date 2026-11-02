@@ -1,12 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import {
   db,
+  adminAuditLogTable,
   integrationHealthTable,
   pool,
   providerMappingsTable,
   safetyRecordsTable,
   titlesTable,
+  usersTable,
   wikidataIdentityConflictsTable,
 } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -28,7 +30,16 @@ import app from "../app";
 const titleIds: number[] = [];
 const integrationHealthIds: number[] = [];
 
+beforeAll(async () => {
+  await db.insert(usersTable).values({
+    id: "test-admin",
+    email: "admin-content-review@example.test",
+  }).onConflictDoNothing();
+});
+
 afterEach(async () => {
+  await db.delete(adminAuditLogTable)
+    .where(eq(adminAuditLogTable.adminId, "test-admin"));
   if (titleIds.length) {
     await db.delete(titlesTable).where(inArray(titlesTable.id, titleIds.splice(0)));
   }
@@ -36,6 +47,10 @@ afterEach(async () => {
     await db.delete(integrationHealthTable)
       .where(inArray(integrationHealthTable.id, integrationHealthIds.splice(0)));
   }
+});
+
+afterAll(async () => {
+  await db.delete(usersTable).where(eq(usersTable.id, "test-admin"));
 });
 
 async function markMalformedTimestamp(recordIds: number[]) {
@@ -749,6 +764,150 @@ describe("admin Content review timestamp filter", () => {
       .expect(200);
     expect(regionalReview.body.map((item: any) => item.name))
       .toEqual([`${fixturePrefix}-us-classified`]);
+  });
+
+  it("corrects or dismisses an unclassified rating with an audit record and stale-write protection", async () => {
+    const fixturePrefix = "unclassified-resolution-fixture";
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-corrected`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-dismissed`, type: "movie", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+    const records = await db.insert(safetyRecordsTable).values([
+      {
+        titleId: titles[0].id,
+        sourceName: "Wikidata",
+        status: "available",
+        isCommunity: false,
+        url: "https://www.wikidata.org/wiki/Qunclassified-resolution-correct",
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{
+          category: "UNSUPPORTED_SYSTEM",
+          label: "12A",
+          score: null,
+          maxScore: null,
+          description: null,
+        }],
+      },
+      {
+        titleId: titles[1].id,
+        sourceName: "Wikidata",
+        status: "available",
+        isCommunity: false,
+        url: "https://www.wikidata.org/wiki/Qunclassified-resolution-dismiss",
+        updatedAt: new Date("2026-10-02T00:00:00.000Z"),
+        items: [{
+          category: "UNKNOWN",
+          label: "R",
+          score: 17,
+          maxScore: 20,
+          description: "Original provider description",
+        }],
+      },
+    ]).returning({ id: safetyRecordsTable.id });
+    await markMalformedTimestamp(records.map(({ id }) => id));
+
+    const reviewUrl =
+      `/api/admin/content?q=${fixturePrefix}&malformedRegionalClassification=true&malformedRefreshTimestampProvider=Wikidata`;
+    const review = await request(app).get(reviewUrl).expect(200);
+    expect(review.body.map((entry: any) => entry.unclassifiedRating.recordId))
+      .toEqual([records[0].id, records[1].id]);
+    const expectedUpdatedAt = review.body[0].unclassifiedRating.rawUpdatedAt;
+
+    await request(app)
+      .post(`/api/admin/unclassified-ratings/${records[0].id}/correct`)
+      .send({
+        expectedUpdatedAt: "2026-10-01T00:00:00.000Z",
+        classificationIndex: 0,
+        category: "BBFC",
+      })
+      .expect(409);
+    await request(app)
+      .post(`/api/admin/unclassified-ratings/${records[0].id}/correct`)
+      .send({ expectedUpdatedAt, classificationIndex: 0, category: "NOT_A_SYSTEM" })
+      .expect(400);
+    await request(app)
+      .post(`/api/admin/unclassified-ratings/${records[0].id}/correct`)
+      .send({ expectedUpdatedAt, classificationIndex: 2, category: "BBFC" })
+      .expect(400);
+
+    await request(app)
+      .post(`/api/admin/unclassified-ratings/${records[0].id}/correct`)
+      .send({ expectedUpdatedAt, classificationIndex: 0, category: "BBFC" })
+      .expect(200, {
+        recordId: records[0].id,
+        action: "corrected",
+        status: "available",
+      });
+    await request(app)
+      .post(`/api/admin/unclassified-ratings/${records[1].id}/dismiss`)
+      .send({
+        expectedUpdatedAt: review.body[1].unclassifiedRating.rawUpdatedAt,
+        reason: "Confirmed unsupported by source",
+      })
+      .expect(200, {
+        recordId: records[1].id,
+        action: "dismissed",
+        status: "dismissed",
+      });
+
+    const correctedRecord = await db.select().from(safetyRecordsTable)
+      .where(eq(safetyRecordsTable.id, records[0].id));
+    expect(correctedRecord[0].items).toEqual([{
+      category: "BBFC",
+      label: "12A",
+      score: null,
+      maxScore: null,
+      description: null,
+    }]);
+    const dismissedRecord = await db.select().from(safetyRecordsTable)
+      .where(eq(safetyRecordsTable.id, records[1].id));
+    expect(dismissedRecord[0].status).toBe("dismissed");
+    expect(await request(app).get(reviewUrl).expect(200).then(({ body }) => body)).toEqual([]);
+
+    const ukReview = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=GB&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata`)
+      .expect(200);
+    expect(ukReview.body.map((entry: any) => entry.name))
+      .toEqual([`${fixturePrefix}-corrected`]);
+    expect(ukReview.body[0].selectedRating).toMatchObject({
+      region: "GB",
+      system: "BBFC",
+      label: "12A",
+      recordId: records[0].id,
+    });
+    const usReview = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata`)
+      .expect(200);
+    expect(usReview.body).toEqual([]);
+
+    const audit = await db.select().from(adminAuditLogTable)
+      .where(eq(adminAuditLogTable.adminId, "test-admin"));
+    expect(audit).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "correct_safety_classification",
+        entityType: "content",
+        entityId: records[0].id,
+        details: expect.objectContaining({
+          titleId: titles[0].id,
+          provider: "Wikidata",
+          classificationIndex: 0,
+          previousCategory: "UNSUPPORTED_SYSTEM",
+          category: "BBFC",
+        }),
+      }),
+      expect.objectContaining({
+        action: "dismiss_safety_classification",
+        entityType: "content",
+        entityId: records[1].id,
+        details: expect.objectContaining({
+          titleId: titles[1].id,
+          provider: "Wikidata",
+          reason: "Confirmed unsupported by source",
+        }),
+      }),
+    ]));
+    expect(audit).toHaveLength(2);
   });
 
   it("loads mappings only for malformed-timestamp results and preserves mapping values", async () => {

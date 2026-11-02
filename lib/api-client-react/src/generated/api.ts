@@ -32,6 +32,9 @@ import type {
   AdminContentRefreshInput,
   AdminContentRefreshResult,
   AdminDashboard,
+  AdminUnclassifiedRatingCorrection,
+  AdminUnclassifiedRatingDismissal,
+  AdminUnclassifiedRatingResolution,
   AdminWikidataIdentityConflictPage,
   AdminWikidataIdentityConflictReview,
   AnalyticsSummary,
@@ -3631,6 +3634,150 @@ export function useSearchAdminContent<TData = Awaited<ReturnType<typeof searchAd
 
 
 
+
+export const getCorrectAdminUnclassifiedRatingUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/unclassified-ratings/${id}/correct`
+}
+
+/**
+ * @summary Correct one unsupported classification system
+ */
+export const correctAdminUnclassifiedRating = async (id: number,
+    adminUnclassifiedRatingCorrection: AdminUnclassifiedRatingCorrection, options?: Parameters<typeof customFetch>[1]): Promise<AdminUnclassifiedRatingResolution> => {
+
+  return customFetch<AdminUnclassifiedRatingResolution>(getCorrectAdminUnclassifiedRatingUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminUnclassifiedRatingCorrection)
+  }
+);}
+
+
+
+
+
+export const getCorrectAdminUnclassifiedRatingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof correctAdminUnclassifiedRating>>, TError,{id: number;data: BodyType<AdminUnclassifiedRatingCorrection>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof correctAdminUnclassifiedRating>>, TError,{id: number;data: BodyType<AdminUnclassifiedRatingCorrection>}, TContext> => {
+
+const mutationKey = ['correctAdminUnclassifiedRating'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof correctAdminUnclassifiedRating>>, {id: number;data: BodyType<AdminUnclassifiedRatingCorrection>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  correctAdminUnclassifiedRating(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CorrectAdminUnclassifiedRatingMutationResult = NonNullable<Awaited<ReturnType<typeof correctAdminUnclassifiedRating>>>
+    export type CorrectAdminUnclassifiedRatingMutationBody = BodyType<AdminUnclassifiedRatingCorrection>
+    export type CorrectAdminUnclassifiedRatingMutationError = ErrorType<void>
+
+    /**
+ * @summary Correct one unsupported classification system
+ */
+export const useCorrectAdminUnclassifiedRating = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof correctAdminUnclassifiedRating>>, TError,{id: number;data: BodyType<AdminUnclassifiedRatingCorrection>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof correctAdminUnclassifiedRating>>,
+        TError,
+        {id: number;data: BodyType<AdminUnclassifiedRatingCorrection>},
+        TContext
+      > => {
+      return useMutation(getCorrectAdminUnclassifiedRatingMutationOptions(options));
+    }
+
+export const getDismissAdminUnclassifiedRatingUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/unclassified-ratings/${id}/dismiss`
+}
+
+/**
+ * @summary Dismiss an unsupported classification record
+ */
+export const dismissAdminUnclassifiedRating = async (id: number,
+    adminUnclassifiedRatingDismissal: AdminUnclassifiedRatingDismissal, options?: Parameters<typeof customFetch>[1]): Promise<AdminUnclassifiedRatingResolution> => {
+
+  return customFetch<AdminUnclassifiedRatingResolution>(getDismissAdminUnclassifiedRatingUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminUnclassifiedRatingDismissal)
+  }
+);}
+
+
+
+
+
+export const getDismissAdminUnclassifiedRatingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dismissAdminUnclassifiedRating>>, TError,{id: number;data: BodyType<AdminUnclassifiedRatingDismissal>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof dismissAdminUnclassifiedRating>>, TError,{id: number;data: BodyType<AdminUnclassifiedRatingDismissal>}, TContext> => {
+
+const mutationKey = ['dismissAdminUnclassifiedRating'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof dismissAdminUnclassifiedRating>>, {id: number;data: BodyType<AdminUnclassifiedRatingDismissal>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  dismissAdminUnclassifiedRating(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DismissAdminUnclassifiedRatingMutationResult = NonNullable<Awaited<ReturnType<typeof dismissAdminUnclassifiedRating>>>
+    export type DismissAdminUnclassifiedRatingMutationBody = BodyType<AdminUnclassifiedRatingDismissal>
+    export type DismissAdminUnclassifiedRatingMutationError = ErrorType<void>
+
+    /**
+ * @summary Dismiss an unsupported classification record
+ */
+export const useDismissAdminUnclassifiedRating = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dismissAdminUnclassifiedRating>>, TError,{id: number;data: BodyType<AdminUnclassifiedRatingDismissal>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof dismissAdminUnclassifiedRating>>,
+        TError,
+        {id: number;data: BodyType<AdminUnclassifiedRatingDismissal>},
+        TContext
+      > => {
+      return useMutation(getDismissAdminUnclassifiedRatingMutationOptions(options));
+    }
 
 export const getListAdminWikidataIdentityConflictsUrl = (params?: ListAdminWikidataIdentityConflictsParams,) => {
   const normalizedParams = new URLSearchParams();

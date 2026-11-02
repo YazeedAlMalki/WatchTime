@@ -1027,6 +1027,68 @@ paths:
                   $ref: "#/components/schemas/ContentMapping"
         "403":
           description: Forbidden
+  /admin/unclassified-ratings/{id}/correct:
+    post:
+      operationId: correctAdminUnclassifiedRating
+      tags: [admin]
+      summary: Correct one unsupported classification system
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUnclassifiedRatingCorrection"
+      responses:
+        "200":
+          description: Classification corrected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUnclassifiedRatingResolution"
+        "400":
+          description: Invalid correction
+        "404":
+          description: Safety record not found
+        "409":
+          description: Safety record changed or is no longer eligible for review
+        "403":
+          description: Forbidden
+  /admin/unclassified-ratings/{id}/dismiss:
+    post:
+      operationId: dismissAdminUnclassifiedRating
+      tags: [admin]
+      summary: Dismiss an unsupported classification record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUnclassifiedRatingDismissal"
+      responses:
+        "200":
+          description: Record dismissed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUnclassifiedRatingResolution"
+        "400":
+          description: Invalid dismissal
+        "404":
+          description: Safety record not found
+        "409":
+          description: Safety record changed or is no longer eligible for review
+        "403":
+          description: Forbidden
   /admin/wikidata-identity-conflicts:
     get:
       operationId: listAdminWikidataIdentityConflicts
@@ -2260,6 +2322,28 @@ components:
             $ref: "#/components/schemas/AdminRawClassification"
         rawUpdatedAt: { type: string }
         sourceUrl: { type: ["string", "null"] }
+    AdminUnclassifiedRatingCorrection:
+      type: object
+      required: [expectedUpdatedAt, classificationIndex, category]
+      properties:
+        expectedUpdatedAt: { type: string, minLength: 1, maxLength: 128 }
+        classificationIndex: { type: integer, minimum: 0 }
+        category:
+          type: string
+          enum: [MPAA, BBFC, FSK, CNC, "Australian Classification", ClassInd]
+    AdminUnclassifiedRatingDismissal:
+      type: object
+      required: [expectedUpdatedAt, reason]
+      properties:
+        expectedUpdatedAt: { type: string, minLength: 1, maxLength: 128 }
+        reason: { type: string, minLength: 3, maxLength: 500 }
+    AdminUnclassifiedRatingResolution:
+      type: object
+      required: [recordId, action, status]
+      properties:
+        recordId: { type: integer }
+        action: { type: string, enum: [corrected, dismissed] }
+        status: { type: string }
     AdminRawClassification:
       type: object
       required: [category, label, score, maxScore, description, severity]

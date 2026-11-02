@@ -15,6 +15,8 @@ import {
   useRetryCatalogRefresh,
   useGetAdminAnalytics,
   useSearchAdminContent,
+  useCorrectAdminUnclassifiedRating,
+  useDismissAdminUnclassifiedRating,
   useListAdminContentAliases,
   useUpdateAdminContentAlias,
   useDeleteAdminContentAlias,
@@ -44,6 +46,7 @@ import {
   type AdminContentAliasCollisionCount,
   type AdminContentAliasPage,
   type AdminContentAliasRecord,
+  type AdminUnclassifiedRatingCorrection,
   type ContentMapping,
   type IntegrationHealth,
   type ListAdminContentAliasesOwnership,
@@ -1438,6 +1441,8 @@ function ContentTab({
   const [showReviewedIdentityConflicts, setShowReviewedIdentityConflicts] = useState(false);
   const [identityConflictOffset, setIdentityConflictOffset] = useState(0);
   const [refreshErrors, setRefreshErrors] = useState<Record<string, string>>({});
+  const [classificationCorrections, setClassificationCorrections] =
+    useState<Record<string, string>>({});
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 400);
@@ -1502,6 +1507,8 @@ function ContentTab({
   );
   const linkedAlias = aliasId === null ? undefined : linkedAliasQuery.data?.items?.[0];
   const refresh = useRefreshAdminContent();
+  const correctUnclassifiedRating = useCorrectAdminUnclassifiedRating();
+  const dismissUnclassifiedRating = useDismissAdminUnclassifiedRating();
   const batchRefresh = useRefreshAdminContentBatch();
   const { data: batchStatus } = useGetAdminContentRefreshBatch();
   const batchHistoryQuery = useListAdminContentRefreshBatchHistory(
@@ -1513,6 +1520,73 @@ function ContentTab({
       },
     },
   );
+  const refreshUnclassifiedReview = () => {
+    void qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
+    void qc.invalidateQueries({ queryKey: getListAdminIntegrationsQueryKey() });
+  };
+  const correctClassification = (
+    item: ContentMapping,
+    classificationIndex: number,
+  ) => {
+    const record = item.unclassifiedRating;
+    const category = classificationCorrections[
+      `${record?.recordId}-${classificationIndex}`
+    ];
+    if (!record || !category) return;
+    correctUnclassifiedRating.mutate(
+      {
+        id: record.recordId,
+        data: {
+          expectedUpdatedAt: record.rawUpdatedAt,
+          classificationIndex,
+          category: category as AdminUnclassifiedRatingCorrection["category"],
+        },
+      },
+      {
+        onSuccess: () => {
+          refreshUnclassifiedReview();
+          toast({
+            title: "Classification corrected",
+            description: `${item.name} now uses the selected regional classification system.`,
+          });
+        },
+        onError: () => toast({
+          title: "Could not correct classification",
+          description: "The record may have changed. Refresh the review and check it again.",
+          variant: "destructive",
+        }),
+      },
+    );
+  };
+  const dismissClassification = (item: ContentMapping) => {
+    const record = item.unclassifiedRating;
+    if (!record || !window.confirm(
+      `Dismiss the unsupported rating for ${item.name}? It will not be used in regional rating results.`,
+    )) return;
+    dismissUnclassifiedRating.mutate(
+      {
+        id: record.recordId,
+        data: {
+          expectedUpdatedAt: record.rawUpdatedAt,
+          reason: "Admin dismissed after reviewing the unsupported provider classification.",
+        },
+      },
+      {
+        onSuccess: () => {
+          refreshUnclassifiedReview();
+          toast({
+            title: "Rating dismissed",
+            description: `${item.name} was removed from rating selection.`,
+          });
+        },
+        onError: () => toast({
+          title: "Could not dismiss rating",
+          description: "The record may have changed. Refresh the review and check it again.",
+          variant: "destructive",
+        }),
+      },
+    );
+  };
   const identityConflictQueryParams = {
     status: showReviewedIdentityConflicts ? "all" as const : "pending" as const,
     limit: 25,
@@ -2533,25 +2607,78 @@ function ContentTab({
                         {item.unclassifiedRating.recordId}
                       </span>
                       <span className="text-muted-foreground">
-                        {" "}· raw timestamp: {item.unclassifiedRating.rawUpdatedAt} · classification:{" "}
-                        {item.unclassifiedRating.classifications.length
-                          ? item.unclassifiedRating.classifications.map((classification, index) => (
-                              <React.Fragment key={`${classification.category ?? "missing"}-${index}`}>
-                                {index > 0 ? "; " : ""}
-                                {classification.category ?? "(missing category)"}
-                                {classification.label ? `: ${classification.label}` : ""}
-                                {classification.score !== null || classification.maxScore !== null
-                                  ? ` · score ${classification.score ?? "?"}/${classification.maxScore ?? "?"}`
-                                  : ""}
-                                {classification.severity ? ` · ${classification.severity}` : ""}
-                                {classification.description ? ` · ${classification.description}` : ""}
-                              </React.Fragment>
-                            ))
-                          : "none"}
+                        {" "}· raw timestamp: {item.unclassifiedRating.rawUpdatedAt}
                       </span>
+                      {item.unclassifiedRating.classifications.length ? (
+                        <div className="mt-2 space-y-2">
+                          {item.unclassifiedRating.classifications.map((classification, index) => {
+                            const correctionKey =
+                              `${item.unclassifiedRating!.recordId}-${index}`;
+                            return (
+                              <div
+                                key={`${classification.category ?? "missing"}-${index}`}
+                                className="flex flex-wrap items-center gap-2"
+                              >
+                                <span className="min-w-0 flex-1 text-muted-foreground">
+                                  {classification.category ?? "(missing category)"}
+                                  {classification.label ? `: ${classification.label}` : ""}
+                                  {classification.score !== null || classification.maxScore !== null
+                                    ? ` · score ${classification.score ?? "?"}/${classification.maxScore ?? "?"}`
+                                    : ""}
+                                  {classification.severity ? ` · ${classification.severity}` : ""}
+                                  {classification.description ? ` · ${classification.description}` : ""}
+                                </span>
+                                <Select
+                                  value={classificationCorrections[correctionKey] ?? ""}
+                                  onValueChange={(category) =>
+                                    setClassificationCorrections((previous) => ({
+                                      ...previous,
+                                      [correctionKey]: category,
+                                    }))
+                                  }
+                                >
+                                  <SelectTrigger
+                                    className="h-8 w-48 rounded-lg bg-background"
+                                    aria-label={`Correct category for ${item.name} classification ${index + 1}`}
+                                  >
+                                    <SelectValue placeholder="Choose rating system" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {[...new Set(RATING_REGIONS.map(({ system }) => system))].map(
+                                      (system) => (
+                                        <SelectItem key={system} value={system}>
+                                          {system}
+                                        </SelectItem>
+                                      ),
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 rounded-lg"
+                                  disabled={
+                                    !classificationCorrections[correctionKey] ||
+                                    correctUnclassifiedRating.isPending ||
+                                    dismissUnclassifiedRating.isPending
+                                  }
+                                  onClick={() => correctClassification(item, index)}
+                                >
+                                  Correct category
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-muted-foreground">
+                          No classification items are available to correct.
+                        </p>
+                      )}
                       {item.unclassifiedRating.sourceUrl ? (
                         <a
-                          className="ml-2 font-medium text-primary hover:underline"
+                          className="mt-2 inline-block font-medium text-primary hover:underline"
                           href={item.unclassifiedRating.sourceUrl}
                           target="_blank"
                           rel="noreferrer"
@@ -2559,6 +2686,21 @@ function ContentTab({
                           View provider record
                         </a>
                       ) : null}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="rounded-lg"
+                          disabled={
+                            correctUnclassifiedRating.isPending ||
+                            dismissUnclassifiedRating.isPending
+                          }
+                          onClick={() => dismissClassification(item)}
+                        >
+                          Dismiss rating
+                        </Button>
+                      </div>
                     </>
                   ) : item.selectedRating ? (
                     <>
