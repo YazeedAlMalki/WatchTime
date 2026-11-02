@@ -564,32 +564,81 @@ describe("catalog refresh startup failure", () => {
     }
   });
 
-  it("logs both errors if recording the startup failure also fails", async () => {
+  it("keeps queued titles retryable when startup and failure recording both fail", async () => {
     const startupError = new Error("unable to mark refresh running");
     const recordError = new Error("unable to mark refresh failed");
+    const items = sourceItems.slice(0, 3);
+    let runId = 0;
+    const transaction = db.transaction.bind(db);
+    let failureRunUpdateObserved = false;
     const startupSpy = vi.spyOn(db, "transaction")
       .mockRejectedValueOnce(startupError)
-      .mockRejectedValueOnce(recordError);
+      .mockImplementationOnce((callback, config) =>
+        transaction(async (tx) => {
+          const update = tx.update.bind(tx);
+          const updateSpy = vi.spyOn(tx, "update").mockImplementation((table) => {
+            if (table === catalogSyncItemsTable) {
+              return {
+                set: () => ({
+                  where: async () => {
+                    const [updatedRun] = await tx.select().from(catalogSyncRunsTable)
+                      .where(eq(catalogSyncRunsTable.id, runId));
+                    expect(updatedRun).toMatchObject({ status: "failed", error: startupError.message });
+                    expect(updatedRun.finishedAt).toBeInstanceOf(Date);
+                    failureRunUpdateObserved = true;
+                    throw recordError;
+                  },
+                }),
+              } as unknown as ReturnType<typeof tx.update>;
+            }
+            return update(table);
+          });
+          try {
+            return await callback(tx);
+          } finally {
+            updateSpy.mockRestore();
+          }
+        }, config),
+      );
     const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
     const unhandledRejections: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
     process.on("unhandledRejection", onUnhandledRejection);
 
     try {
-      const runId = await startCatalogRefresh("manual", []);
+      expect(items).toHaveLength(3);
+      runId = await startCatalogRefresh("manual", items);
       createdRunIds.push(runId);
+      const queuedRun = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      const queuedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(queuedRun[0]).toMatchObject({
+        status: "queued", totalItems: items.length, processedItems: 0, failedItems: 0, succeededItems: 0,
+        startedAt: null, finishedAt: null, error: null,
+      });
+      expect(queuedItems).toHaveLength(items.length);
+      expect(queuedItems.map((item) => item.itemKey)).toEqual(items.map((item) => item.key));
+      expect(queuedItems.every((item) => item.status === "queued" && item.error === null)).toBe(true);
+
       await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
         { err: recordError, runId }, "unable to record catalog refresh failure",
       ));
       expect(errorSpy).toHaveBeenCalledWith({ err: startupError, runId }, "catalog refresh failed");
+      expect(startupSpy).toHaveBeenCalledTimes(2);
+      expect(failureRunUpdateObserved).toBe(true);
       expect(runCatalogSyncMock).not.toHaveBeenCalled();
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(unhandledRejections).toEqual([]);
-      const [queued] = await db.select().from(catalogSyncRunsTable)
+      const unchangedRuns = await db.select().from(catalogSyncRunsTable)
         .where(eq(catalogSyncRunsTable.id, runId));
-      expect(queued.status).toBe("queued");
+      const unchangedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(unchangedRuns).toEqual(queuedRun);
+      expect(unchangedItems).toEqual(queuedItems);
+
       // Once the database is available and the orphan is stale, recovery
-      // makes it actionable even though neither failure write succeeded.
+      // makes every originally queued title actionable.
       await db.update(catalogSyncRunsTable).set({
         createdAt: new Date(Date.now() - STALE_QUEUED_REFRESH_MS - 1_000),
       }).where(eq(catalogSyncRunsTable.id, runId));
@@ -599,6 +648,45 @@ describe("catalog refresh startup failure", () => {
       expect(recovered.status).toBe("failed");
       expect(recovered.error).toContain("database outage");
       expect(recovered.finishedAt).toBeInstanceOf(Date);
+      expect(recovered).toMatchObject({
+        totalItems: items.length, processedItems: items.length, failedItems: items.length, succeededItems: 0,
+      });
+      const recoveredItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(recoveredItems).toHaveLength(items.length);
+      expect(recoveredItems.map((item) => item.itemKey)).toEqual(items.map((item) => item.key));
+      expect(recoveredItems.every((item) =>
+        item.status === "failed" && item.error === recovered.error && item.finishedAt instanceof Date,
+      )).toBe(true);
+
+      runCatalogSyncMock.mockImplementationOnce(async (
+        ...[_options, retryItems, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+      ) => {
+        if (!retryItems) throw new Error("Expected explicit retry titles");
+        for (const [index, item] of retryItems.entries()) {
+          await onProgress!({ item, status: "succeeded", attempted: index + 1, succeeded: index + 1, episodes: 0 });
+        }
+        return { selected: retryItems.length, succeeded: retryItems.length, episodes: 0, failures: [] };
+      });
+      const retryRunId = await retryFailedCatalogTitles(runId);
+      expect(retryRunId).not.toBeNull();
+      createdRunIds.push(retryRunId!);
+      await vi.waitFor(async () => {
+        const [retryRun] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, retryRunId!));
+        expect(retryRun).toMatchObject({
+          trigger: "retry", status: "succeeded", totalItems: items.length,
+          processedItems: items.length, failedItems: 0, succeededItems: items.length,
+        });
+      });
+      expect(runCatalogSyncMock).toHaveBeenCalledExactlyOnceWith(
+        { dryRun: false, allowPartial: true }, items, expect.any(Function), false,
+      );
+      const retriedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, retryRunId!)).orderBy(catalogSyncItemsTable.id);
+      expect(retriedItems).toHaveLength(items.length);
+      expect(retriedItems.map((item) => item.itemKey)).toEqual(items.map((item) => item.key));
+      expect(retriedItems.every((item) => item.status === "succeeded")).toBe(true);
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
       startupSpy.mockRestore();
