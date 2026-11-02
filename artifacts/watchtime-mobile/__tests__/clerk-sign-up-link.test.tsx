@@ -375,6 +375,68 @@ describe('Clerk sign-up switch to sign-in', () => {
     expect(mockRouterReplace).toHaveBeenCalledWith('/title/456');
   });
 
+  it('blocks a resend during finalization and allows recovery after finalization fails', async () => {
+    mockUseLocalSearchParams.mockReturnValue({});
+    let resolveFinalization!: (result: { error: { message: string } }) => void;
+    const finalization = new Promise<{ error: { message: string } }>((resolve) => {
+      resolveFinalization = resolve;
+    });
+    const sendEmailCode = jest.fn(async () => ({ error: null }));
+    const signUp = {
+      status: 'missing_requirements',
+      unverifiedFields: ['email_address'],
+      missingFields: [],
+      verifications: {
+        verifyEmailCode: jest.fn(async () => {
+          signUp.status = 'complete';
+          return { error: null };
+        }),
+        sendEmailCode,
+      },
+      finalize: jest.fn(async () => {
+        // Keep verification controls rendered while sign-in is still pending.
+        signUp.status = 'missing_requirements';
+        return finalization;
+      }),
+    };
+    mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+    const screen = await render(<SignUpScreen />);
+    const resendBeforeVerification = getPressHandler(screen, 'resend-code-button');
+    await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
+    let verificationAttempt!: Promise<void>;
+    await act(async () => {
+      verificationAttempt = getPressHandler(screen, 'verify-button')();
+    });
+
+    expect(resendBeforeVerification).toEqual(expect.any(Function));
+    expect(signUp.finalize).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+    expect(screen.getByTestId('resend-code-button')).toBeDisabled();
+
+    const resendWhileFinalizing = getPressHandler(screen, 'resend-code-button');
+    expect(resendWhileFinalizing).not.toBe(resendBeforeVerification);
+    // Bypass the disabled control to exercise the current handler's busy guard.
+    await act(async () => {
+      await resendWhileFinalizing();
+    });
+    expect(sendEmailCode).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveFinalization({ error: { message: 'Private activation details' } });
+      await verificationAttempt;
+    });
+
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+    expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+    await act(async () => {
+      await getPressHandler(screen, 'resend-code-button')();
+    });
+    expect(sendEmailCode).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('resend-code-status').props.children)
+      .toBe('A new code is on its way. Check your email.');
+  });
+
   it.each(['returned error', 'rejected promise'])('unlocks verification for a retry after a held check fails: %s', async (failure) => {
     mockUseLocalSearchParams.mockReturnValue({});
     let resolveVerification!: (result: { error: { message: string } }) => void;
