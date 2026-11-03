@@ -177,27 +177,7 @@ jest.mock('@/components/ui', () => {
 
   return {
     EmptyState: () => <View />,
-    ErrorState: ({
-      message,
-      onRetry,
-      retryAccessibilityLabel = 'Retry',
-    }: {
-      message: string;
-      onRetry: () => void;
-      retryAccessibilityLabel?: string;
-    }) => (
-      <View>
-        <NativeText>{message}</NativeText>
-        <Pressable
-          testID="retry-button"
-          accessibilityRole="button"
-          accessibilityLabel={retryAccessibilityLabel}
-          onPress={onRetry}
-        >
-          <NativeText>Retry</NativeText>
-        </Pressable>
-      </View>
-    ),
+    ErrorState: actualUi.ErrorState,
     Loading: () => <View testID="loading" />,
     PosterCard: actualUi.PosterCard,
     SectionHeader: ({ title }: { title: string }) => <NativeText>{title}</NativeText>,
@@ -427,7 +407,48 @@ describe('public browsing while authentication is unavailable', () => {
     expect(mockRouter.replace).not.toHaveBeenCalled();
   });
 
-  it('recovers safety information without reloading the public title', async () => {
+  it('shows a pending title retry, ignores repeat taps, and restores retry after failure', async () => {
+    mockRoute.current = { id: '771' };
+    mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
+
+    const detail = await render(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    let rejectRetry!: (error: Error) => void;
+    mockTitleRefetch.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRetry = reject;
+        }),
+    );
+
+    await fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
+    const retryingButton = detail.getByRole('button', { name: 'Retrying' });
+    expect(detail.getByText('Retrying…')).toBeTruthy();
+    expect(retryingButton.props.accessibilityState).toEqual({
+      busy: true,
+      disabled: true,
+    });
+
+    await fireEvent.press(retryingButton);
+    expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectRetry(new Error('Title request failed'));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    });
+    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps public title details visible when safety information fails', async () => {
     mockTitleQueryState.current = {
       data: mockPublicTitle,
       isLoading: false,

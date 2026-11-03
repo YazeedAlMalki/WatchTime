@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -896,6 +896,22 @@ export default function TitleDetailScreen() {
     query: { queryKey: [...getGetTitleQueryKey(titleId), 'account', userId] },
   });
   const similar = useGetSimilarTitles(titleId);
+  const titleRetryInFlight = useRef(false);
+  const [isRetryingTitle, setIsRetryingTitle] = useState(false);
+
+  const retryTitle = async () => {
+    if (titleRetryInFlight.current) return;
+    titleRetryInFlight.current = true;
+    setIsRetryingTitle(true);
+    try {
+      await title.refetch();
+    } catch {
+      // The query error state keeps the retry affordance available.
+    } finally {
+      titleRetryInFlight.current = false;
+      setIsRetryingTitle(false);
+    }
+  };
 
   const invalidateTitle = (accountId: string) => {
     queryClient.invalidateQueries({
@@ -957,7 +973,11 @@ export default function TitleDetailScreen() {
   if (!title.data) {
     return (
       <View style={{ flex: 1, backgroundColor: c.background, justifyContent: 'center' }}>
-        <ErrorState onRetry={() => title.refetch()} message="Couldn't load this title" />
+        <ErrorState
+          onRetry={() => void retryTitle()}
+          isRetrying={isRetryingTitle}
+          message="Couldn't load this title"
+        />
       </View>
     );
   }

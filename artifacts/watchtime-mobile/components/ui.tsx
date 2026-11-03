@@ -152,10 +152,12 @@ export function ErrorState({
   onRetry,
   message = "Couldn't load data",
   retryAccessibilityLabel = 'Retry',
+  isRetrying = false,
 }: {
   onRetry: () => void;
   message?: string;
   retryAccessibilityLabel?: string;
+  isRetrying?: boolean;
 }) {
   const c = useColors();
   return (
@@ -174,7 +176,9 @@ export function ErrorState({
       <Pressable
         testID="retry-button"
         accessibilityRole="button"
-        accessibilityLabel={retryAccessibilityLabel}
+        accessibilityLabel={isRetrying ? 'Retrying' : retryAccessibilityLabel}
+        accessibilityState={{ busy: isRetrying, disabled: isRetrying }}
+        disabled={isRetrying}
         onPress={onRetry}
         style={({ pressed }) => [
           {
@@ -183,18 +187,21 @@ export function ErrorState({
             paddingVertical: 10,
             borderRadius: colors.radius,
             backgroundColor: c.primary,
-            opacity: pressed ? 0.8 : 1,
+            opacity: isRetrying ? 0.7 : pressed ? 0.8 : 1,
           },
         ]}
       >
-        <Text
-          style={{
-            color: c.primaryForeground,
-            fontFamily: 'Inter_600SemiBold',
-          }}
-        >
-          Retry
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {isRetrying ? <ActivityIndicator size="small" color={c.primaryForeground} /> : null}
+          <Text
+            style={{
+              color: c.primaryForeground,
+              fontFamily: 'Inter_600SemiBold',
+            }}
+          >
+            {isRetrying ? 'Retrying…' : 'Retry'}
+          </Text>
+        </View>
       </Pressable>
     </View>
   );
