@@ -25,6 +25,7 @@ const mockResolveSimilarById: Record<
 > = {};
 const mockSeasonFetch = jest.fn();
 const mockSeasonRefetch = jest.fn();
+const mockSimilarRefetch = jest.fn();
 const mockSeasonData = {
   episodes: [
     {
@@ -77,9 +78,14 @@ const mockTitleQueryState: {
   current: { data: mockPublicTitle, isLoading: false, isError: false },
 };
 const mockSimilarQueryState: {
-  current: { data: { id: number; name: string }[] | undefined; isError: boolean };
+  current: {
+    data: { id: number; name: string }[] | undefined;
+    isError: boolean;
+    isFetching?: boolean;
+    refetch: typeof mockSimilarRefetch;
+  };
 } = {
-  current: { data: [], isError: false },
+  current: { data: [], isError: false, refetch: mockSimilarRefetch },
 };
 const mockTitleSafetyQueryState: {
   current: { data: unknown; isLoading: boolean; isError: boolean };
@@ -239,6 +245,7 @@ describe('public browsing while authentication is unavailable', () => {
     });
     mockSeasonFetch.mockClear();
     mockSeasonRefetch.mockClear();
+    mockSimilarRefetch.mockClear();
     mockSeasonQueryState.current = { data: null, isLoading: false, isError: true };
     mockTitleQueryState.current = {
       data: mockPublicTitle,
@@ -250,7 +257,7 @@ describe('public browsing while authentication is unavailable', () => {
       isLoading: false,
       isError: false,
     };
-    mockSimilarQueryState.current = { data: [], isError: false };
+    mockSimilarQueryState.current = { data: [], isError: false, refetch: mockSimilarRefetch };
     mockRoute.current = { id: '771' };
   });
 
@@ -600,13 +607,17 @@ describe('public browsing while authentication is unavailable', () => {
     expect(mockRouter.replace).not.toHaveBeenCalled();
   });
 
-  it('keeps shared title details visible when similar-title lookup fails', async () => {
+  it('retries a failed similar-title lookup without reloading the shared title or personal data', async () => {
     mockTitleQueryState.current = {
       data: mockPublicTitle,
       isLoading: false,
       isError: false,
     };
-    mockSimilarQueryState.current = { data: undefined, isError: true };
+    mockSimilarQueryState.current = {
+      data: undefined,
+      isError: true,
+      refetch: mockSimilarRefetch,
+    };
 
     const detail = await render(
       <AppAuthUnavailableProvider>
@@ -615,11 +626,39 @@ describe('public browsing while authentication is unavailable', () => {
     );
 
     expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(detail.getByText('More Like This')).toBeTruthy();
+    expect(detail.getByText("Couldn't load similar titles.")).toBeTruthy();
+    expect(detail.getByRole('button', { name: 'Retry suggestions' })).toBeTruthy();
     expect(
       detail.getByText('A public synopsis remains available while sign-in is down.'),
     ).toBeTruthy();
     expect(detail.queryByText("Couldn't load this title")).toBeNull();
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
+    expect(mockTitleRefetch).not.toHaveBeenCalled();
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+
+    mockSimilarRefetch.mockImplementationOnce(async () => {
+      mockSimilarQueryState.current = {
+        data: [{ id: 772, name: 'Similar public title' }],
+        isError: false,
+        refetch: mockSimilarRefetch,
+      };
+      return { data: mockSimilarQueryState.current.data };
+    });
+    await fireEvent.press(detail.getByRole('button', { name: 'Retry suggestions' }));
+    await detail.rerender(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(mockSimilarRefetch).toHaveBeenCalledTimes(1);
+    expect(detail.getByText('Similar public title')).toBeTruthy();
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(detail.getByText('A public synopsis remains available while sign-in is down.')).toBeTruthy();
+    expect(detail.queryByText("Couldn't load similar titles.")).toBeNull();
     expect(mockTitleRefetch).not.toHaveBeenCalled();
     expect(mockPrivateQueryCalls).toEqual([]);
     expect(mockRouter.push).not.toHaveBeenCalled();

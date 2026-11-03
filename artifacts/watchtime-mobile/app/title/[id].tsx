@@ -1259,18 +1259,60 @@ export default function TitleDetailScreen() {
       </View>
 
       {/* Similar */}
-      {(similar.data ?? []).length > 0 ? (
+      {((similar.data ?? []).length > 0 || similar.isError) ? (
         <>
           <SectionHeader title="More Like This" />
-          <FlatList
-            horizontal
-            data={similar.data ?? []}
-            scrollEnabled={(similar.data ?? []).length > 0}
-            keyExtractor={(s) => String(s.id)}
-            renderItem={({ item }) => <PosterCard title={item} />}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-            showsHorizontalScrollIndicator={false}
-          />
+          {(similar.data ?? []).length > 0 ? (
+            <FlatList
+              horizontal
+              data={similar.data ?? []}
+              scrollEnabled={(similar.data ?? []).length > 0}
+              keyExtractor={(s) => String(s.id)}
+              renderItem={({ item }) => <PosterCard title={item} />}
+              contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+              showsHorizontalScrollIndicator={false}
+            />
+          ) : null}
+          {similar.isError ? (
+            <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+              <Text
+                accessibilityRole="alert"
+                style={{
+                  color: c.mutedForeground,
+                  fontSize: 14,
+                  fontFamily: 'Inter_400Regular',
+                  marginBottom: 8,
+                }}
+              >
+                Couldn't load similar titles.
+              </Text>
+              <Pressable
+                testID="retry-similar-titles"
+                accessibilityRole="button"
+                accessibilityLabel="Retry suggestions"
+                accessibilityState={{ disabled: !!similar.isFetching, busy: !!similar.isFetching }}
+                disabled={!!similar.isFetching}
+                onPress={() => {
+                  void similar.refetch();
+                }}
+                style={({ pressed }) => [
+                  styles.actionButton,
+                  {
+                    alignSelf: 'flex-start',
+                    minHeight: 44,
+                    backgroundColor: c.card,
+                    borderWidth: 1,
+                    borderColor: c.border,
+                    opacity: similar.isFetching ? 0.5 : pressed ? 0.8 : 1,
+                  },
+                ]}
+              >
+                <Text style={{ color: c.foreground, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>
+                  {similar.isFetching ? 'Retrying…' : 'Retry suggestions'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
         </>
       ) : null}
     </ScrollView>
