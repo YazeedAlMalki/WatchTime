@@ -430,11 +430,12 @@ describe("private, idempotent watch-history imports", () => {
     { name: "matches a fresh import to an editorially preserved regional alias after its provider withdraws it", freshImport: true, removeAlias: true, resolveEpisode: false, preserveEditorial: true },
     { name: "matches and tracks a fresh regional import while another catalog provider still supports its alias", freshImport: true, removeAlias: false, resolveEpisode: false, retainProvider: true },
     { name: "leaves a fresh regional import unmatched after both providers sequentially withdraw its alias without changing an earlier preview", freshImport: true, removeAlias: true, resolveEpisode: false, retainProvider: true, withdrawLastProvider: true },
+    { name: "matches and tracks a fresh regional import after Wikipedia withdraws an alias still supported by TVMaze", freshImport: true, removeAlias: false, resolveEpisode: false, retainProvider: true, wikipediaWithdrawal: true },
     { name: "records only the chosen show's episode and parent history after reviewing a shared regional title", freshImport: false, removeAlias: false, resolveEpisode: true },
     { name: "does not add history twice when a shared-alias episode becomes watched before manual review", freshImport: false, removeAlias: false, resolveEpisode: true, alreadyWatched: true },
     { name: "does not let another account's watched shared-alias episode block manual review or confirmation", freshImport: false, removeAlias: false, resolveEpisode: true, otherAccountWatched: true },
     { name: "imports the chosen shared-alias episode when a different episode of that show is already watched", freshImport: false, removeAlias: false, resolveEpisode: true, differentEpisodeWatched: true },
-  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, otherAccountWatched = false, differentEpisodeWatched = false, preserveEditorial = false, retainProvider = false, withdrawLastProvider = false, confirmBeforeRefresh = false }) => {
+  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, otherAccountWatched = false, differentEpisodeWatched = false, preserveEditorial = false, retainProvider = false, withdrawLastProvider = false, wikipediaWithdrawal = false, confirmBeforeRefresh = false }) => {
     // Catalog-refresh scenarios must not consume the quota of later import tests.
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
@@ -508,17 +509,22 @@ describe("private, idempotent watch-history imports", () => {
       expect(refreshed?.succeeded).toBe(2);
       expect(refreshed?.failures).toEqual([]);
 
+      const wikipediaFixture: SourceItem = {
+        key: "test:import-refresh-primary-wikipedia",
+        source: "wikipedia",
+        type: "tv",
+        name: fixtures[0].name,
+        imdbId: fixtures[0].expectedImdbId!,
+        wikiPage: "Import_refresh_primary",
+        aliases: [{
+          ...fixtures[0].aliases![0],
+          sourceName: "Wikipedia regional-name citation",
+          sourceUrl: "https://en.wikipedia.org/wiki/Import_refresh_primary",
+        }],
+        popularity: 0,
+      };
       if (retainProvider) {
-        const secondProvider = await runCatalogSync({ dryRun: false, allowPartial: true }, [{
-          key: "test:import-refresh-primary-wikipedia",
-          source: "wikipedia",
-          type: "tv",
-          name: fixtures[0].name,
-          imdbId: fixtures[0].expectedImdbId!,
-          wikiPage: "Import_refresh_primary",
-          aliases: [fixtures[0].aliases![0]],
-          popularity: 0,
-        }]);
+        const secondProvider = await runCatalogSync({ dryRun: false, allowPartial: true }, [wikipediaFixture]);
         expect(secondProvider?.succeeded).toBe(1);
         expect(secondProvider?.failures).toEqual([]);
       }
@@ -534,6 +540,18 @@ describe("private, idempotent watch-history imports", () => {
         isEditorial: false,
         providerSources: retainProvider ? ["tvmaze", "wikipedia"] : ["tvmaze"],
       });
+      if (retainProvider) {
+        expect(aliases.find((alias) => alias.titleId === primaryId && alias.alias === "地域限定タイトル")!.providerCitations).toEqual({
+          tvmaze: {
+            sourceName: fixtures[0].aliases![0].sourceName,
+            sourceUrl: fixtures[0].aliases![0].sourceUrl,
+          },
+          wikipedia: {
+            sourceName: wikipediaFixture.aliases![0].sourceName,
+            sourceUrl: wikipediaFixture.aliases![0].sourceUrl,
+          },
+        });
+      }
       expect(aliases.filter((alias) => alias.alias === "共通タイトル")).toHaveLength(2);
       const [regionalEpisode] = await db.select().from(episodesTable).where(and(
         eq(episodesTable.titleId, primaryId),
@@ -810,9 +828,9 @@ describe("private, idempotent watch-history imports", () => {
         }).where(eq(titleAliasesTable.id, regionalAlias.id));
       }
 
-      // Withdraw TVMaze's original regional name. Editorial preservation or a
-      // second provider can keep it on the original title; otherwise it is
-      // removed or assigned elsewhere.
+      // Withdraw only the chosen provider's original regional name. Editorial
+      // preservation or a second provider can keep it on the original title;
+      // otherwise it is removed or assigned elsewhere.
       // Saved previews must retain the title IDs selected before refresh.
       const changedFixtures: SourceItem[] = [
         { ...fixtures[0], aliases: [
@@ -824,8 +842,10 @@ describe("private, idempotent watch-history imports", () => {
           ...(removeAlias || retainProvider ? [] : [fixtures[0].aliases![0]]),
         ] },
       ];
-      const changed = await runCatalogSync({ dryRun: false, allowPartial: true }, changedFixtures);
-      expect(changed?.succeeded).toBe(2);
+      const changed = await runCatalogSync({ dryRun: false, allowPartial: true }, wikipediaWithdrawal
+        ? [{ ...wikipediaFixture, aliases: [changedFixtures[0].aliases![0]] }]
+        : changedFixtures);
+      expect(changed?.succeeded).toBe(wikipediaWithdrawal ? 1 : 2);
       expect(changed?.failures).toEqual([]);
       const movedAlias = await db.select().from(titleAliasesTable).where(eq(titleAliasesTable.alias, "地域限定タイトル"));
       let expectedAliasOwners = preserveEditorial || retainProvider ? [primaryId] : removeAlias ? [] : [secondaryId];
@@ -843,18 +863,24 @@ describe("private, idempotent watch-history imports", () => {
       }
       if (retainProvider) {
         const remainingAlias = movedAlias.find((alias) => alias.titleId === primaryId);
+        const remainingProvider = wikipediaWithdrawal ? "tvmaze" : "wikipedia";
+        const remainingCitation = wikipediaWithdrawal ? fixtures[0].aliases![0] : wikipediaFixture.aliases![0];
         expect(remainingAlias).toMatchObject({
           id: aliases.find((alias) => alias.titleId === primaryId && alias.alias === "地域限定タイトル")!.id,
           alias: "地域限定タイトル",
           language: "ja",
           isEditorial: false,
-          providerSources: ["wikipedia"],
-          providerCitations: { wikipedia: {
-            sourceName: fixtures[0].aliases![0].sourceName,
-            sourceUrl: fixtures[0].aliases![0].sourceUrl,
-          } },
+          sourceName: remainingCitation.sourceName,
+          sourceUrl: remainingCitation.sourceUrl,
+          providerSources: [remainingProvider],
         });
-        expect(remainingAlias!.providerCitations).not.toHaveProperty("tvmaze");
+        expect(remainingAlias!.providerCitations).toEqual({
+          [remainingProvider]: {
+            sourceName: remainingCitation.sourceName,
+            sourceUrl: remainingCitation.sourceUrl,
+          },
+        });
+        expect(remainingAlias!.providerCitations).not.toHaveProperty(wikipediaWithdrawal ? "wikipedia" : "tvmaze");
       }
       const updatedTitles = await db.select().from(titlesTable).where(inArray(titlesTable.id, [primaryId, secondaryId]));
       expect(updatedTitles.find((title) => title.id === primaryId)!.altTitles.includes("地域限定タイトル")).toBe(preserveEditorial || retainProvider);
