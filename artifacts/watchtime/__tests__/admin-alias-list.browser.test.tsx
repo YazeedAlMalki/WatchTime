@@ -361,6 +361,80 @@ it("hides previous alias rows while the new search is waiting for its debounce",
   }
 });
 
+it("clears an alias edit draft when search changes", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&q=Old+search");
+  const originalFetch = window.fetch;
+  const makeAlias = (id: number, titleName: string, alias: string) => ({
+    id,
+    titleId: 100 + id,
+    titleName,
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input.toString(),
+      location.origin,
+    );
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    const alias = url.searchParams.get("q") === "New search"
+      ? makeAlias(2, "The New Film", "New Search Match")
+      : makeAlias(1, "The Old Film", "Original Alias");
+    return new Response(JSON.stringify({
+      items: [alias],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Original Alias")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Edit" }));
+    const oldAliasEditor = page.getByRole("textbox", {
+      name: "Alternate title for The Old Film",
+    });
+    await userEvent.fill(oldAliasEditor, "Unsaved Alias Draft");
+
+    const search = page.getByPlaceholder("Search titles…");
+    await userEvent.fill(search, "New search");
+    await expect.element(page.getByText("New Search Match")).toBeVisible();
+    await expect.element(page.getByRole("textbox", {
+      name: "Alternate title for The New Film",
+    })).not.toBeInTheDocument();
+
+    await userEvent.fill(search, "Old search");
+    await expect.element(page.getByText("Original Alias")).toBeVisible();
+    await expect.element(page.getByRole("textbox", {
+      name: "Alternate title for The Old Film",
+    })).not.toBeInTheDocument();
+    await expect.element(page.getByText("Unsaved Alias Draft")).not.toBeInTheDocument();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("keeps a filtered later alias page unchanged when removal is cancelled", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const snapshotId = "123e4567-e89b-12d3-a456-426614174000";

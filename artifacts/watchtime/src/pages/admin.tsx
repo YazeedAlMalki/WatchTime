@@ -3207,6 +3207,28 @@ export function AliasReview({
     sourceUrl: "",
     expectedUpdatedAt: "",
   });
+  const previousAliasEditContext = React.useRef({
+    searchTerm: searchTerm.trim(),
+    ownership,
+  });
+  React.useEffect(() => {
+    const nextContext = { searchTerm: searchTerm.trim(), ownership };
+    const previousContext = previousAliasEditContext.current;
+    if (
+      previousContext.searchTerm === nextContext.searchTerm &&
+      previousContext.ownership === nextContext.ownership
+    ) {
+      return;
+    }
+    previousAliasEditContext.current = nextContext;
+    setEditingId(null);
+    setDraft({
+      alias: "",
+      language: "",
+      sourceUrl: "",
+      expectedUpdatedAt: "",
+    });
+  }, [searchTerm, ownership]);
   const [conflictAlias, setConflictAlias] = useState<AdminContentAlias | null>(
     null,
   );
