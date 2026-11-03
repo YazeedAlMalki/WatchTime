@@ -1069,6 +1069,35 @@ describe("catalog refresh recovery", () => {
     },
   );
 
+  it("propagates a connection acquisition rejection without starting a transaction or changing stale queued work", async () => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const [run] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual", status: "queued",
+      createdAt: new Date(cutoff.getTime() - 1_000),
+    }).returning();
+    createdRunIds.push(run.id);
+    const items = await db.insert(catalogSyncItemsTable).values({
+      runId: run.id, itemKey: `connection-failure-${run.id}`,
+      title: "Connection failure recovery", provider: "TVMaze", status: "queued",
+    }).returning();
+    const connectionError = new Error("catalog recovery connection acquisition rejected");
+    const connectSpy = vi.spyOn(pool, "connect").mockRejectedValueOnce(connectionError);
+    const transactionSpy = vi.spyOn(db, "transaction");
+
+    try {
+      await expect(recoverInterruptedRuns(cutoff)).rejects.toBe(connectionError);
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect(transactionSpy).not.toHaveBeenCalled();
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, run.id))).toEqual([run]);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, run.id))).toEqual(items);
+    } finally {
+      transactionSpy.mockRestore();
+      connectSpy.mockRestore();
+    }
+  });
+
   it("propagates an initial catalog lock query rejection without starting a transaction and releases its client", async () => {
     const recoveryClient = await pool.connect();
     // Keep the session reserved until cleanup even if recovery releases it.
