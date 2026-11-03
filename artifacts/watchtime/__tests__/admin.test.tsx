@@ -2179,6 +2179,74 @@ describe("admin alternate-title review", () => {
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
   });
 
+  it("reports only the rejected request after a timed-out partial refresh settles", async () => {
+    let resolveAliasRefresh!: () => void;
+    const aliasRefresh = new Promise<void>((resolve) => {
+      resolveAliasRefresh = resolve;
+    });
+    let rejectCatalogRefresh!: (error: Error) => void;
+    const catalogRefresh = new Promise<void>((_resolve, reject) => {
+      rejectCatalogRefresh = reject;
+    });
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) =>
+        queryKey[0] === "/api/admin/content-aliases"
+          ? aliasRefresh
+          : catalogRefresh,
+    );
+
+    vi.useFakeTimers();
+    render();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await act(async () => {
+      for (let index = 0; index < 8; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
+    const pendingSave = mocks.updateMutation.mutate.mock.results.at(-1)
+      ?.value as Promise<void> | undefined;
+    if (!pendingSave) throw new Error("The alternate-title save did not start");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(container.textContent).toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).toContain(
+      "Failed refresh requests: alternate-title list (alias records) and catalog search (collision results).",
+    );
+
+    await act(async () => {
+      resolveAliasRefresh();
+      rejectCatalogRefresh(new Error("catalog refresh unavailable"));
+      await Promise.allSettled([aliasRefresh, catalogRefresh]);
+      await pendingSave;
+    });
+
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain(
+      "Failed refresh request: catalog search (collision results).",
+    );
+    expect(container.textContent).not.toContain(
+      "Failed refresh requests: alternate-title list (alias records) and catalog search (collision results).",
+    );
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
+  });
+
   it("reports only collision results as stale when their refresh times out", async () => {
     let resolveCollisionRefresh!: () => void;
     const collisionRefresh = new Promise<void>((resolve) => {
