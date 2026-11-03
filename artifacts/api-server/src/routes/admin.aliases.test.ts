@@ -700,6 +700,49 @@ describe("admin title aliases", () => {
     });
   });
 
+  it("counts a normalized alias once per show when duplicate rows exist", async () => {
+    const indexResult = await pool.query<{ indexExists: boolean }>(
+      `SELECT to_regclass('title_aliases_title_normalized_idx') IS NOT NULL AS "indexExists"`,
+    );
+    const indexExists = indexResult.rows[0]?.indexExists ?? false;
+    if (indexExists) {
+      await pool.query("DROP INDEX title_aliases_title_normalized_idx");
+    }
+
+    let duplicateAliasId: number | undefined;
+    try {
+      const [duplicateAlias] = await db.insert(titleAliasesTable).values({
+        titleId: createdTitleIds[0],
+        alias: "Shared Local Title!",
+        normalizedAlias: "sharedlocaltitle",
+        language: "en",
+        sourceName: "Duplicate editorial test",
+        isEditorial: true,
+      }).returning({ id: titleAliasesTable.id });
+      duplicateAliasId = duplicateAlias.id;
+
+      const response = await request(app)
+        .post("/api/admin/content-alias-collisions")
+        .send({ aliases: ["Shared Local Title"] })
+        .expect(200);
+
+      expect(response.body).toEqual([{
+        alias: "Shared Local Title",
+        collision: true,
+        collisionTitleCount: 2,
+      }]);
+    } finally {
+      if (duplicateAliasId !== undefined) {
+        await db.delete(titleAliasesTable).where(eq(titleAliasesTable.id, duplicateAliasId));
+      }
+      if (indexExists) {
+        await pool.query(
+          "CREATE UNIQUE INDEX title_aliases_title_normalized_idx ON title_aliases (title_id, normalized_alias)",
+        );
+      }
+    }
+  });
+
   it("looks up current collision counts independently of alias-list results", async () => {
     const response = await request(app)
       .post("/api/admin/content-alias-collisions")
