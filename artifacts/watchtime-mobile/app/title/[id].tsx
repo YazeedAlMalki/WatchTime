@@ -953,8 +953,8 @@ export default function TitleDetailScreen() {
   });
 
   if (!Number.isFinite(titleId)) return <ErrorState onRetry={() => router.back()} message="Invalid title" />;
-  if (title.isLoading) return <Loading />;
-  if (title.isError || !title.data) {
+  if (title.isLoading && !title.data) return <Loading />;
+  if (!title.data) {
     return (
       <View style={{ flex: 1, backgroundColor: c.background, justifyContent: 'center' }}>
         <ErrorState onRetry={() => title.refetch()} message="Couldn't load this title" />

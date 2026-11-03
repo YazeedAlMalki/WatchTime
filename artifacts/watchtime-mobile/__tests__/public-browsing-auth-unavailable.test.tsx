@@ -317,6 +317,59 @@ describe('public browsing while authentication is unavailable', () => {
     expect(mockRouter.replace).not.toHaveBeenCalled();
   });
 
+  it('keeps recovered public title details visible after an older request fails late', async () => {
+    mockRoute.current = { id: '771' };
+    mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
+
+    const detail = await render(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+
+    mockTitleRefetch.mockImplementationOnce(async () => ({
+      data: mockPublicTitle,
+    }));
+    await fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
+
+    mockTitleQueryState.current = {
+      data: mockPublicTitle,
+      isLoading: false,
+      isError: false,
+    };
+    await detail.rerender(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+
+    // An older request can report an error after the retry has recovered data.
+    mockTitleQueryState.current = {
+      data: mockPublicTitle,
+      isLoading: false,
+      isError: true,
+    };
+    await detail.rerender(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(
+      detail.getByText('A public synopsis remains available while sign-in is down.'),
+    ).toBeTruthy();
+    expect(detail.queryByText("Couldn't load this title")).toBeNull();
+    expect(mockTitleFetch).toHaveBeenCalledWith(771);
+    expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+
   it('keeps title retry available after another public request fails while sign-in is unavailable', async () => {
     mockRoute.current = { id: '771' };
     mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
