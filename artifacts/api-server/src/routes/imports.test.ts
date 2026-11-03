@@ -988,7 +988,7 @@ describe("private, idempotent watch-history imports", () => {
     }
   });
 
-  it("keeps a refreshed shared regional alias ambiguous when only one show has the imported episode", async () => {
+  it("rejects an offered show without the exact episode and keeps a refreshed shared regional alias ambiguous", async () => {
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
       `import_confirm:${USER_A}`,
@@ -1080,23 +1080,36 @@ describe("private, idempotent watch-history imports", () => {
       expect(created.body.items[0].candidates.map((candidate: { titleId: number }) => candidate.titleId).sort((a: number, b: number) => a - b))
         .toEqual(titleIds);
 
+      const item = created.body.items[0];
+      const showWithoutExactEpisode = titles.find((title) => title.imdbId === imdbIds[1])!;
+      const rejected = await supertest(app)
+        .patch(`/api/imports/${importId}/items/${item.id}`)
+        .set("x-test-user", USER_A)
+        .send({ titleId: showWithoutExactEpisode.id });
+      expect(rejected.status).toBe(400);
+      expect(rejected.body).toEqual({ error: "Candidate does not contain the exact episode" });
+
       const preview = await supertest(app).get(`/api/imports/${importId}`).set("x-test-user", USER_A);
       expect(preview.status).toBe(200);
-      expect(preview.body.items).toHaveLength(1);
-      expect(preview.body.items[0]).toMatchObject(ambiguousEpisode);
-      expect(preview.body.items[0].candidates.map((candidate: { titleId: number }) => candidate.titleId).sort((a: number, b: number) => a - b))
-        .toEqual(titleIds);
+      expect(preview.body.status).toBe("ready");
+      expect(preview.body.summary).toEqual(created.body.summary);
+      expect(preview.body.items).toEqual([item]);
 
       const confirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
       expect(confirmed.status).toBe(200);
       expect(confirmed.body.status).toBe("confirmed");
       expect(confirmed.body.summary).toMatchObject({ selected: 0, applied: 0, skipped: 1, ambiguous: 1 });
-      expect(confirmed.body.items[0]).toMatchObject(ambiguousEpisode);
+      expect(confirmed.body.items).toEqual([item]);
       const watched = await db.select().from(watchedEpisodesTable).where(and(
         eq(watchedEpisodesTable.userId, USER_A),
         inArray(watchedEpisodesTable.titleId, titleIds),
       ));
       expect(watched).toHaveLength(0);
+      const watchedTitles = await db.select().from(watchedTitlesTable).where(and(
+        eq(watchedTitlesTable.userId, USER_A),
+        inArray(watchedTitlesTable.titleId, titleIds),
+      ));
+      expect(watchedTitles).toHaveLength(0);
     } finally {
       vi.unstubAllGlobals();
       await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
@@ -1107,6 +1120,10 @@ describe("private, idempotent watch-history imports", () => {
       if (titleIds.length) await db.delete(watchedEpisodesTable).where(and(
         eq(watchedEpisodesTable.userId, USER_A),
         inArray(watchedEpisodesTable.titleId, titleIds),
+      ));
+      if (titleIds.length) await db.delete(watchedTitlesTable).where(and(
+        eq(watchedTitlesTable.userId, USER_A),
+        inArray(watchedTitlesTable.titleId, titleIds),
       ));
       await db.delete(titlesTable).where(inArray(titlesTable.imdbId, imdbIds));
       await db.delete(integrationHealthTable);
