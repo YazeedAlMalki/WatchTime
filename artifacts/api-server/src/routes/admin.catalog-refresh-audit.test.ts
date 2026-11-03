@@ -208,6 +208,91 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
     }
   });
 
+  it("rolls back the run and items without starting work when the queue commit fails", async () => {
+    const { path, sourceRunId } = await prepareRequest();
+    const runIdsBefore = await db.select({ id: catalogSyncRunsTable.id })
+      .from(catalogSyncRunsTable).orderBy(catalogSyncRunsTable.id);
+    const sourceRunsBefore = sourceRunId === undefined ? [] : await db.select()
+      .from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.id, sourceRunId));
+    const sourceItemsBefore = sourceRunId === undefined ? [] : await db.select()
+      .from(catalogSyncItemsTable).where(eq(catalogSyncItemsTable.runId, sourceRunId));
+    let queuedRunId: number | undefined;
+    let commitAttempts = 0;
+
+    const originalConnect = pool.connect.bind(pool);
+    vi.spyOn(pool, "connect").mockImplementation(((callback?: Parameters<typeof pool.connect>[0]) => {
+      if (callback) return originalConnect(callback);
+      return originalConnect().then((client) => {
+        const originalQuery = client.query.bind(client) as (...args: any[]) => Promise<any>;
+        const originalRelease = client.release.bind(client);
+        client.query = ((...args: any[]) => {
+          const statement = args[0] as string | { text?: string };
+          const queryText = typeof statement === "string" ? statement : statement.text ?? "";
+          if (/^\s*commit\b/i.test(queryText)) {
+            commitAttempts += 1;
+            return Promise.reject(new Error("simulated catalog queue commit failure"));
+          }
+          return originalQuery(...args);
+        }) as typeof client.query;
+        client.release = ((...args: any[]) => {
+          client.query = originalQuery as typeof client.query;
+          client.release = originalRelease as typeof client.release;
+          return originalRelease(...args);
+        }) as typeof client.release;
+        return client;
+      });
+    }) as typeof pool.connect);
+
+    const realTransaction = db.transaction.bind(db);
+    const transactionSpy = vi.spyOn(db, "transaction");
+    transactionSpy.mockImplementationOnce(
+      (fn: Parameters<typeof db.transaction>[0]) => realTransaction((tx) => {
+        const wrapped = new Proxy(tx, {
+          get(target, prop) {
+            if (prop === "insert") {
+              return (table: Parameters<typeof tx.insert>[0]) => {
+                if (getTableName(table) === getTableName(adminAuditLogTable)) {
+                  return { values: async (audit: typeof adminAuditLogTable.$inferInsert) => {
+                    queuedRunId = audit.entityId!;
+                    createdRunIds.push(queuedRunId);
+                    return target.insert(table).values(audit);
+                  } };
+                }
+                return target.insert(table);
+              };
+            }
+            const value = Reflect.get(target, prop);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return fn(wrapped);
+      }) as ReturnType<typeof db.transaction>,
+    );
+
+    await submitCatalogRefresh(path, sourceRunId).expect(500);
+    expect(transactionSpy).toHaveBeenCalledOnce();
+    expect(commitAttempts).toBe(1);
+    expect(queuedRunId).toBeDefined();
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, queuedRunId!))).toEqual([]);
+    expect(await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, queuedRunId!))).toEqual([]);
+    expect(await db.select({ id: catalogSyncRunsTable.id }).from(catalogSyncRunsTable)
+      .orderBy(catalogSyncRunsTable.id)).toEqual(runIdsBefore);
+    expect(await db.select().from(adminAuditLogTable).where(and(
+      eq(adminAuditLogTable.entityType, "catalog_sync"),
+      eq(adminAuditLogTable.entityId, queuedRunId!),
+    ))).toEqual([]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runCatalogSync).not.toHaveBeenCalled();
+    if (sourceRunId !== undefined) {
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, sourceRunId))).toEqual(sourceRunsBefore);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, sourceRunId))).toEqual(sourceItemsBefore);
+    }
+  });
+
   it(trigger === "retry"
     ? "recovers on the same source after PostgreSQL rejects the retry audit's admin foreign key"
     : "recovers after PostgreSQL rejects the manual audit's admin foreign key", async () => {
