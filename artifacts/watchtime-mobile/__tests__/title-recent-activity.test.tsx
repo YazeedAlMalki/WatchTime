@@ -957,7 +957,10 @@ it.each([
   const failure = new Error('Offline');
   const request = initiallyWatched ? mockUnmarkTitleRequest : mockMarkTitleRequest;
   const otherRequest = initiallyWatched ? mockMarkTitleRequest : mockUnmarkTitleRequest;
-  request.mockRejectedValueOnce(failure).mockResolvedValueOnce({ ok: true });
+  let rejectRequest!: (error: Error) => void;
+  request.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+    rejectRequest = reject;
+  })).mockResolvedValueOnce({ ok: true });
 
   const client = new QueryClient({
     defaultOptions: {
@@ -1005,6 +1008,22 @@ it.each([
     }));
 
     await fireEvent.press(detail.getByTestId('watched-toggle'));
+    await waitFor(() => {
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(client.getMutationCache().getAll()).toHaveLength(1);
+      expect(client.getMutationCache().getAll()[0].state.status).toBe('pending');
+      expect(detail.getByTestId('watched-toggle')).toBeDisabled();
+    });
+    expect(mockMovieWatched).toBe(initiallyWatched);
+    expect(detail.getByText(initiallyWatched ? 'Watched' : 'Mark watched')).toBeTruthy();
+    expect(shows.getByTestId(`history-item-${historyId}`)).toBeTruthy();
+    for (const { key, data, state } of snapshots) {
+      expect(client.getQueryData(key)).toBe(data);
+      expect(client.getQueryState(key)).toEqual(state);
+    }
+    expect(invalidate).not.toHaveBeenCalled();
+
+    await act(async () => rejectRequest(failure));
     await waitFor(() => {
       expect(request).toHaveBeenCalledTimes(1);
       expect(client.getMutationCache().getAll()).toHaveLength(1);
@@ -1086,6 +1105,7 @@ it.each([
     }
   } finally {
     await act(async () => screens.unmount());
+    invalidate.mockRestore();
     client.clear();
     mockTitleIsMovie = false;
     mockMovieWatched = false;
