@@ -437,6 +437,69 @@ describe('Clerk sign-up switch to sign-in', () => {
       .toBe('A new code is on its way. Check your email.');
   });
 
+  it.each(['returned error', 'rejected promise'])(
+    'keeps resend recovery available after finalization and replacement delivery fail: %s',
+    async (failure) => {
+      mockUseLocalSearchParams.mockReturnValue({});
+      const privateError = 'Internal delivery details must not be displayed';
+      const sendEmailCode = jest.fn();
+      if (failure === 'returned error') {
+        sendEmailCode.mockResolvedValueOnce({ error: { message: privateError } });
+      } else {
+        sendEmailCode.mockRejectedValueOnce(new Error(privateError));
+      }
+      sendEmailCode.mockResolvedValueOnce({ error: null });
+      const signUp = {
+        status: 'missing_requirements',
+        unverifiedFields: ['email_address'],
+        missingFields: [],
+        verifications: {
+          verifyEmailCode: jest.fn(async () => {
+            signUp.status = 'complete';
+            return { error: null };
+          }),
+          sendEmailCode,
+        },
+        finalize: jest.fn(async () => {
+          // Keep verification available when finalization cannot establish a session.
+          signUp.status = 'missing_requirements';
+          return { error: { message: 'Private activation details' } };
+        }),
+      };
+      mockUseSignUp.mockImplementation(() => ({ signUp, errors: { fields: {} }, fetchStatus: 'idle' }));
+
+      const screen = await render(<SignUpScreen />);
+      await fireEvent.changeText(screen.getByTestId('code-input'), '123456');
+      await fireEvent.press(screen.getByTestId('verify-button'));
+
+      expect(screen.getByTestId('code-input').props.value).toBe('123456');
+      expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+      expect(signUp.finalize).toHaveBeenCalledTimes(1);
+
+      await fireEvent.press(screen.getByTestId('resend-code-button'));
+
+      expect(screen.getByTestId('resend-code-status')).toHaveTextContent(
+        'Could not send a new code. Please try again.',
+      );
+      expect(screen.getByTestId('resend-code-status').props.accessibilityRole).toBe('alert');
+      expect(screen.queryByText(privateError)).toBeNull();
+      expect(screen.getByTestId('code-input').props.value).toBe('123456');
+      expect(screen.getByText('Check your email')).toBeTruthy();
+      expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+
+      await fireEvent.press(screen.getByTestId('resend-code-button'));
+
+      expect(sendEmailCode).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId('resend-code-status')).toHaveTextContent(
+        'A new code is on its way. Check your email.',
+      );
+      expect(screen.getByTestId('code-input').props.value).toBe('123456');
+      expect(screen.getByTestId('verify-button')).toBeEnabled();
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(['returned error', 'rejected promise'])('unlocks verification for a retry after a held check fails: %s', async (failure) => {
     mockUseLocalSearchParams.mockReturnValue({});
     let resolveVerification!: (result: { error: { message: string } }) => void;
@@ -1214,7 +1277,7 @@ describe('Clerk sign-up switch to sign-in', () => {
     const screen = await render(<SignUpScreen />);
     await fireEvent.press(screen.getByTestId('resend-code-button'));
     await waitFor(() => expect(screen.getByTestId('resend-code-status').props.children)
-      .toBe('Could not send a new code. Please wait before requesting another code.'));
+      .toBe('Could not send a new code. Please try again.'));
     expect(screen.getByText('Check your email')).toBeTruthy();
     expect(screen.getByTestId('code-input')).toBeTruthy();
     expect(mockRouterReplace).not.toHaveBeenCalled();

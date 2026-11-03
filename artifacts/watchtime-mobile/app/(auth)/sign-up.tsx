@@ -59,7 +59,7 @@ function ClerkSignUpScreen() {
       const { error } = await signUp.verifications.sendEmailCode();
       if (!error) setEmailCodeSent(true);
       setResendStatus(error
-        ? { message: `Could not send a new code. ${error.message || 'Please try again.'}`, failed: true }
+        ? { message: 'Could not send a new code. Please try again.', failed: true }
         : { message: 'A new code is on its way. Check your email.', failed: false });
     } catch {
       setResendStatus({ message: 'Could not send a new code. Please try again.', failed: true });
@@ -288,6 +288,7 @@ function ClerkSignUpScreen() {
             {resendStatus ? (
               <Text
                 testID="resend-code-status"
+                accessibilityRole={resendStatus.failed ? 'alert' : undefined}
                 accessibilityLiveRegion="polite"
                 style={{ color: resendStatus.failed ? c.destructive : c.mutedForeground, fontSize: 13, textAlign: 'center', marginTop: 8 }}
               >
