@@ -1055,10 +1055,19 @@ export const CatalogRefreshFailureProvider = {
 } as const;
 
 export interface CatalogRefreshFailure {
+  itemKey: string;
   title: string;
   provider: CatalogRefreshFailureProvider;
   /** @nullable */
   error?: string | null;
+}
+
+export interface CatalogRefreshRetrySelection {
+  /**
+     * @minItems 1
+     * @items.minLength 1
+     */
+  itemKeys: string[];
 }
 
 export type CatalogRefreshRunTrigger = typeof CatalogRefreshRunTrigger[keyof typeof CatalogRefreshRunTrigger];

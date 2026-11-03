@@ -8,6 +8,7 @@
 import type { CatalogRefreshFailureProvider } from './catalogRefreshFailureProvider';
 
 export interface CatalogRefreshFailure {
+  itemKey: string;
   title: string;
   provider: CatalogRefreshFailureProvider;
   /** @nullable */

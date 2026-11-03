@@ -40,6 +40,7 @@ import type {
   AnalyticsSummary,
   AuditLogPage,
   CatalogRefreshAccepted,
+  CatalogRefreshRetrySelection,
   CatalogRefreshRun,
   ContentMapping,
   ContributionModeration,
@@ -3489,16 +3490,17 @@ export const getRetryCatalogRefreshUrl = (id: number,) => {
 }
 
 /**
- * @summary Retry failed titles from a catalog refresh
+ * @summary Retry selected failed titles from a catalog refresh
  */
-export const retryCatalogRefresh = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<CatalogRefreshAccepted> => {
+export const retryCatalogRefresh = async (id: number,
+    catalogRefreshRetrySelection: CatalogRefreshRetrySelection, options?: Parameters<typeof customFetch>[1]): Promise<CatalogRefreshAccepted> => {
 
   return customFetch<CatalogRefreshAccepted>(getRetryCatalogRefreshUrl(id),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(catalogRefreshRetrySelection)
   }
 );}
 
@@ -3507,8 +3509,8 @@ export const retryCatalogRefresh = async (id: number, options?: Parameters<typeo
 
 
 export const getRetryCatalogRefreshMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryCatalogRefresh>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof retryCatalogRefresh>>, TError,{id: number}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryCatalogRefresh>>, TError,{id: number;data: BodyType<CatalogRefreshRetrySelection>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryCatalogRefresh>>, TError,{id: number;data: BodyType<CatalogRefreshRetrySelection>}, TContext> => {
 
 const mutationKey = ['retryCatalogRefresh'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -3520,10 +3522,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryCatalogRefresh>>, {id: number}> = (props) => {
-          const {id} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryCatalogRefresh>>, {id: number;data: BodyType<CatalogRefreshRetrySelection>}> = (props) => {
+          const {id,data} = props ?? {};
 
-          return  retryCatalogRefresh(id,requestOptions)
+          return  retryCatalogRefresh(id,data,requestOptions)
         }
 
 
@@ -3534,18 +3536,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type RetryCatalogRefreshMutationResult = NonNullable<Awaited<ReturnType<typeof retryCatalogRefresh>>>
-
+    export type RetryCatalogRefreshMutationBody = BodyType<CatalogRefreshRetrySelection>
     export type RetryCatalogRefreshMutationError = ErrorType<void>
 
     /**
- * @summary Retry failed titles from a catalog refresh
+ * @summary Retry selected failed titles from a catalog refresh
  */
 export const useRetryCatalogRefresh = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryCatalogRefresh>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryCatalogRefresh>>, TError,{id: number;data: BodyType<CatalogRefreshRetrySelection>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof retryCatalogRefresh>>,
         TError,
-        {id: number},
+        {id: number;data: BodyType<CatalogRefreshRetrySelection>},
         TContext
       > => {
       return useMutation(getRetryCatalogRefreshMutationOptions(options));

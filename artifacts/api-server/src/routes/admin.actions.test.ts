@@ -102,7 +102,12 @@ describe("restored admin actions", () => {
     expect(list.body.find((row: { id: number }) => row.id === run.id)).toMatchObject({
       trigger: "admin-actions-test",
       failedItems: 1,
-      failures: [{ title: "Missing episode", provider: "TVMaze", error: "Unavailable" }],
+      failures: [{
+        itemKey: "admin-actions-item",
+        title: "Missing episode",
+        provider: "TVMaze",
+        error: "Unavailable",
+      }],
     });
   });
 

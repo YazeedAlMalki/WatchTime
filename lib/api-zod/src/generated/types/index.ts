@@ -53,6 +53,7 @@ export * from './castMember';
 export * from './catalogRefreshAccepted';
 export * from './catalogRefreshFailure';
 export * from './catalogRefreshFailureProvider';
+export * from './catalogRefreshRetrySelection';
 export * from './catalogRefreshRun';
 export * from './catalogRefreshRunQueuedWorkerState';
 export * from './catalogRefreshRunStatus';

@@ -1311,6 +1311,7 @@ export const ListCatalogRefreshesResponseItem = zod.object({
   "createdAt": zod.string(),
   "queuedWorkerState": zod.union([zod.literal('protected'),zod.literal('abandoned'),zod.literal(null)]).nullable().describe('Whether stale queued work still has a live worker lock; null for other runs.'),
   "failures": zod.array(zod.object({
+  "itemKey": zod.string(),
   "title": zod.string(),
   "provider": zod.enum(['TVMaze', 'Wikipedia']),
   "error": zod.string().nullish()
@@ -1328,10 +1329,18 @@ export const StartCatalogRefreshResponse = zod.object({
 
 
 /**
- * @summary Retry failed titles from a catalog refresh
+ * @summary Retry selected failed titles from a catalog refresh
  */
 export const RetryCatalogRefreshParams = zod.object({
   "id": zod.coerce.number().int()
+})
+
+
+
+
+
+export const RetryCatalogRefreshBody = zod.object({
+  "itemKeys": zod.array(zod.string().min(1)).min(1)
 })
 
 export const RetryCatalogRefreshResponse = zod.object({

@@ -54,6 +54,7 @@ import {
   ListAdminWikidataIdentityConflictsResponse,
   ReviewAdminWikidataIdentityConflictResponse,
   SearchAdminContentQueryParams,
+  RetryCatalogRefreshBody,
   CorrectAdminUnclassifiedRatingParams,
   CorrectAdminUnclassifiedRatingBody,
   CorrectAdminUnclassifiedRatingResponse,
@@ -613,6 +614,7 @@ router.get("/catalog-refreshes", async (_req, res) => {
     finishedAt: serializeCatalogRunTimestamp(run.finishedAt, finishedAtIsSupported),
     createdAt: run.createdAt.toISOString(),
     failures: items.filter((item) => item.runId === run.id).map((item) => ({
+      itemKey: item.itemKey,
       title: item.title,
       provider: item.provider,
       error: item.error,
@@ -648,7 +650,11 @@ router.post("/catalog-refreshes", async (req, res) => {
 router.post("/catalog-refreshes/:id/retry", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid run id" });
-  const runId = await retryFailedCatalogTitles(id, async (tx, retryRunId) => {
+  const selection = RetryCatalogRefreshBody.safeParse(req.body);
+  if (!selection.success) {
+    return res.status(400).json({ error: "Select at least one failed title to retry" });
+  }
+  const runId = await retryFailedCatalogTitles(id, selection.data.itemKeys, async (tx, retryRunId) => {
     await tx.insert(adminAuditLogTable).values({
       adminId: req.userId!,
       action: "retry_catalog_refresh",
@@ -657,7 +663,7 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
       details: { sourceRunId: id },
     });
   });
-  if (!runId) return res.status(409).json({ error: "This run has no failed titles to retry" });
+  if (!runId) return res.status(409).json({ error: "No selected titles remain failed on this run" });
   return res.status(202).json({ runId });
 });
 

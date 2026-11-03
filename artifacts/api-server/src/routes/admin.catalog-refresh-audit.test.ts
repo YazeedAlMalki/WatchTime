@@ -44,6 +44,13 @@ import {
 
 const createdRunIds: number[] = [];
 
+function submitCatalogRefresh(path: string, sourceRunId?: number) {
+  const pendingRequest = request(app).post(path);
+  return sourceRunId === undefined
+    ? pendingRequest
+    : pendingRequest.send({ itemKeys: ["catalog-refresh-audit-item"] });
+}
+
 beforeAll(async () => {
   await db.insert(usersTable).values({
     id: adminId,
@@ -117,7 +124,7 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
       }) as ReturnType<typeof db.transaction>,
     );
 
-    await request(app).post(path).expect(500);
+    await submitCatalogRefresh(path, sourceRunId).expect(500);
     expect(transactionSpy).toHaveBeenCalledOnce();
     expect(itemInsertAttempts).toBe(1);
     expect(queuedRunId).toBeDefined();
@@ -179,7 +186,7 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
       }) as ReturnType<typeof db.transaction>,
     );
 
-    await request(app).post(path).expect(500);
+    await submitCatalogRefresh(path, sourceRunId).expect(500);
     expect(transactionSpy).toHaveBeenCalledOnce();
     expect(queuedRunId).toBeDefined();
     expect(await db.select().from(catalogSyncRunsTable)
@@ -265,7 +272,7 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
       }) as ReturnType<typeof db.transaction>,
     );
 
-    await request(app).post(path).expect(500);
+    await submitCatalogRefresh(path, sourceRunId).expect(500);
     expect(auditInsertError).toMatchObject({
       cause: { code: "23503", table: getTableName(adminAuditLogTable) },
     });
@@ -297,7 +304,7 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
       runCatalogSync.mockResolvedValueOnce({
         selected: 1, succeeded: 1, episodes: 0, failures: [],
       });
-      const response = await request(app).post(path);
+      const response = await submitCatalogRefresh(path, sourceRunId);
       if (response.body.runId !== undefined) createdRunIds.push(response.body.runId);
       expect(response.status).toBe(202);
       const recoveredRunId = response.body.runId as number;
@@ -341,7 +348,7 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
       runCatalogSync.mockResolvedValueOnce({
         selected: 1, succeeded: 1, episodes: 0, failures: [],
       });
-      const response = await request(app).post(path);
+      const response = await submitCatalogRefresh(path, sourceRunId);
       expect(response.status).toBe(202);
       const recoveredRunId = response.body.runId as number;
       createdRunIds.push(recoveredRunId);
@@ -439,7 +446,7 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
       return { selected: 1, succeeded: 1, episodes: 0, failures: [] };
     });
     // Calling .then starts Supertest immediately without awaiting the held response.
-    const responsePromise = request(app).post(path).then(
+    const responsePromise = submitCatalogRefresh(path, sourceRunId).then(
       (response) => { requestSettled = true; return response; },
       (error) => { requestSettled = true; throw error; },
     );
@@ -497,7 +504,7 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
       return { selected: 1, succeeded: 1, episodes: 0, failures: [] };
     });
 
-    const response = await request(app).post(path).expect(202);
+    const response = await submitCatalogRefresh(path, sourceRunId).expect(202);
     const runId = response.body.runId as number;
     createdRunIds.push(runId);
     await vi.waitFor(() => expect(auditSeenAtExecution).toMatchObject({
@@ -519,6 +526,73 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
 });
 
 describe("other catalog refresh starts", () => {
+  it("retries only the selected failed title and preserves the source run", async () => {
+    const sourceRunId = await createSourceRunWithItems([
+      "catalog-refresh-audit-item",
+      "no-longer-in-current-catalog",
+    ]);
+    const [sourceRunBefore] = await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, sourceRunId));
+    const sourceItemsBefore = await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, sourceRunId))
+      .orderBy(catalogSyncItemsTable.id);
+    runCatalogSync.mockResolvedValueOnce({
+      selected: 1, succeeded: 1, episodes: 0, failures: [],
+    });
+
+    const response = await request(app)
+      .post(`/api/admin/catalog-refreshes/${sourceRunId}/retry`)
+      .send({ itemKeys: ["catalog-refresh-audit-item"] })
+      .expect(202);
+    const retryRunId = response.body.runId as number;
+    createdRunIds.push(retryRunId);
+    await waitForFinishedRun(retryRunId);
+
+    expect(runCatalogSync).toHaveBeenCalledOnce();
+    expect(runCatalogSync.mock.calls[0][1]).toEqual([
+      expect.objectContaining({ key: "catalog-refresh-audit-item" }),
+    ]);
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, retryRunId))).toEqual([
+      expect.objectContaining({ trigger: "retry", status: "succeeded", totalItems: 1 }),
+    ]);
+    expect(await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, retryRunId))).toEqual([
+      expect.objectContaining({ itemKey: "catalog-refresh-audit-item", status: "queued" }),
+    ]);
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, sourceRunId))).toEqual([sourceRunBefore]);
+    expect(await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, sourceRunId))
+      .orderBy(catalogSyncItemsTable.id)).toEqual(sourceItemsBefore);
+  });
+
+  it("rejects an empty retry selection before creating a run or audit record", async () => {
+    const sourceRunId = await createSourceRun("failed");
+    const transactionSpy = vi.spyOn(db, "transaction");
+    await request(app)
+      .post(`/api/admin/catalog-refreshes/${sourceRunId}/retry`)
+      .send({ itemKeys: [] })
+      .expect(400, { error: "Select at least one failed title to retry" });
+    expect(transactionSpy).not.toHaveBeenCalled();
+    expect(runCatalogSync).not.toHaveBeenCalled();
+    expect(await db.select().from(adminAuditLogTable)
+      .where(eq(adminAuditLogTable.adminId, adminId))).toEqual([]);
+  });
+
+  it("does not create an empty retry when selected failures are no longer in the source catalog", async () => {
+    const sourceRunId = await createSourceRunWithItems(["no-longer-in-current-catalog"]);
+    const transactionSpy = vi.spyOn(db, "transaction");
+    await request(app)
+      .post(`/api/admin/catalog-refreshes/${sourceRunId}/retry`)
+      .send({ itemKeys: ["no-longer-in-current-catalog"] })
+      .expect(409, { error: "No selected titles remain failed on this run" });
+    expect(transactionSpy).not.toHaveBeenCalled();
+    expect(runCatalogSync).not.toHaveBeenCalled();
+    expect(await db.select().from(adminAuditLogTable)
+      .where(eq(adminAuditLogTable.adminId, adminId))).toEqual([]);
+  });
+
   it("attributes retries of the same failed source to each requesting admin", async () => {
     const [firstAdminId, secondAdminId] = [
       `test-catalog-refresh-retry-first-${randomUUID()}`,
@@ -545,6 +619,7 @@ describe("other catalog refresh starts", () => {
       const response = await request(app)
         .post(`/api/admin/catalog-refreshes/${sourceRunId}/retry`)
         .set("x-test-admin-id", requestingAdminId)
+        .send({ itemKeys: ["catalog-refresh-audit-item"] })
         .expect(202);
       const retryRunId = response.body.runId as number;
       retryRunIds.push(retryRunId);
@@ -589,7 +664,8 @@ describe("other catalog refresh starts", () => {
     const sourceRunId = await createSourceRun("succeeded");
     const transactionSpy = vi.spyOn(db, "transaction");
     await request(app).post(`/api/admin/catalog-refreshes/${sourceRunId}/retry`)
-      .expect(409, { error: "This run has no failed titles to retry" });
+      .send({ itemKeys: ["catalog-refresh-audit-item"] })
+      .expect(409, { error: "No selected titles remain failed on this run" });
     expect(transactionSpy).not.toHaveBeenCalled();
     expect(runCatalogSync).not.toHaveBeenCalled();
     expect(await db.select().from(adminAuditLogTable)
@@ -660,6 +736,7 @@ describe("other catalog refresh starts", () => {
       });
       const response = await request(app)
         .post(`/api/admin/catalog-refreshes/${sourceRun.id}/retry`)
+        .send({ itemKeys: ["catalog-refresh-audit-item"] })
         .expect(202);
       const retryRunId = response.body.runId as number;
       createdRunIds.push(retryRunId);
@@ -724,6 +801,24 @@ async function createSourceRun(status: "failed" | "succeeded") {
     provider: "TVMaze",
     status,
   });
+  return run.id;
+}
+
+async function createSourceRunWithItems(itemKeys: string[]) {
+  const [run] = await db.insert(catalogSyncRunsTable).values({
+    trigger: "manual",
+    status: "failed",
+    totalItems: itemKeys.length,
+    failedItems: itemKeys.length,
+  }).returning();
+  createdRunIds.push(run.id);
+  await db.insert(catalogSyncItemsTable).values(itemKeys.map((itemKey, index) => ({
+    runId: run.id,
+    itemKey,
+    title: `Catalog refresh failed title ${index + 1}`,
+    provider: "TVMaze",
+    status: "failed" as const,
+  })));
   return run.id;
 }
 

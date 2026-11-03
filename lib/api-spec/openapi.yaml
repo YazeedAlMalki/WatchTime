@@ -953,12 +953,18 @@ paths:
     post:
       operationId: retryCatalogRefresh
       tags: [admin]
-      summary: Retry failed titles from a catalog refresh
+      summary: Retry selected failed titles from a catalog refresh
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CatalogRefreshRetrySelection"
       responses:
         "202":
           description: Retry accepted
@@ -966,8 +972,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CatalogRefreshAccepted"
+        "400":
+          description: Invalid or empty selection
         "409":
-          description: No failed titles
+          description: No selected titles remain failed on this run
         "403":
           description: Forbidden
   /admin/content:
@@ -2247,11 +2255,21 @@ components:
           description: True for providers with reliable tracked refresh counts when at least five refreshes have a success rate below 50%, independent of the latest status.
     CatalogRefreshFailure:
       type: object
-      required: [title, provider]
+      required: [itemKey, title, provider]
       properties:
+        itemKey: { type: string }
         title: { type: string }
         provider: { type: string, enum: [TVMaze, Wikipedia] }
         error: { type: ["string", "null"] }
+    CatalogRefreshRetrySelection:
+      type: object
+      required: [itemKeys]
+      properties:
+        itemKeys:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, minLength: 1 }
     CatalogRefreshRun:
       type: object
       required: [id, trigger, status, totalItems, processedItems, succeededItems, failedItems, episodesUpdated, createdAt, queuedWorkerState, failures]

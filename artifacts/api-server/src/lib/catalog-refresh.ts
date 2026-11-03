@@ -185,14 +185,21 @@ async function logSustainedProviderFailures() {
 
 export async function retryFailedCatalogTitles(
   runId: number,
+  selectedItemKeys?: string[],
   beforeStart?: (tx: CatalogRefreshTransaction, runId: number) => Promise<void>,
 ) {
+  if (selectedItemKeys !== undefined && selectedItemKeys.length === 0) return null;
   const failed = await db.select({ itemKey: catalogSyncItemsTable.itemKey })
     .from(catalogSyncItemsTable)
     .where(and(eq(catalogSyncItemsTable.runId, runId), eq(catalogSyncItemsTable.status, "failed")));
-  const keys = new Set(failed.map((item) => item.itemKey));
+  const failedKeys = new Set(failed.map((item) => item.itemKey));
+  const keys = selectedItemKeys === undefined
+    ? failedKeys
+    : new Set(selectedItemKeys.filter((key) => failedKeys.has(key)));
   if (!keys.size) return null;
-  return startCatalogRefresh("retry", sourceItems.filter((item) => keys.has(item.key)), beforeStart);
+  const items = sourceItems.filter((item) => keys.has(item.key));
+  if (!items.length) return null;
+  return startCatalogRefresh("retry", items, beforeStart);
 }
 
 export async function scheduleCatalogRefresh(delayOverride?: number) {

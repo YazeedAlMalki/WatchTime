@@ -4563,6 +4563,9 @@ function IntegrationsTab({
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [selectedCatalogRetryKeys, setSelectedCatalogRetryKeys] = useState<
+    Record<number, string[]>
+  >({});
   const { data: refreshes } = useListCatalogRefreshes({
     query: {
       queryKey: getListCatalogRefreshesQueryKey(),
@@ -4617,6 +4620,11 @@ function IntegrationsTab({
       {refreshes?.length ? (
         <div className="space-y-3">
           {refreshes.slice(0, 5).map((run) => {
+            const defaultSelectedKeys = run.failures.map(
+              (failure) => failure.itemKey,
+            );
+            const selectedKeys =
+              selectedCatalogRetryKeys[run.id] ?? defaultSelectedKeys;
             const percent = run.totalItems
               ? Math.round((run.processedItems / run.totalItems) * 100)
               : 0;
@@ -4662,23 +4670,63 @@ function IntegrationsTab({
                 )}
                 {run.failures.length > 0 && (
                   <div className="mt-3">
-                    <div className="text-sm text-red-600 dark:text-red-400">
-                      {run.failures
-                        .slice(0, 5)
-                        .map(
-                          (failure) =>
-                            `${failure.title} (${failure.provider}): ${failure.error ?? "Unknown error"}`,
-                        )
-                        .join(" · ")}
+                    <div
+                      aria-label={`Failed titles in ${run.trigger} refresh`}
+                      className="max-h-64 space-y-2 overflow-y-auto"
+                    >
+                      {run.failures.map((failure) => {
+                        const checked = selectedKeys.includes(failure.itemKey);
+                        return (
+                          <label
+                            key={failure.itemKey}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-2"
+                          >
+                            <Checkbox
+                              checked={checked}
+                              disabled={retryCatalog.isPending}
+                              onCheckedChange={(value) => {
+                                setSelectedCatalogRetryKeys((current) => {
+                                  const previous =
+                                    current[run.id] ?? defaultSelectedKeys;
+                                  const next = value
+                                    ? Array.from(
+                                        new Set([...previous, failure.itemKey]),
+                                      )
+                                    : previous.filter(
+                                        (key) => key !== failure.itemKey,
+                                      );
+                                  return { ...current, [run.id]: next };
+                                });
+                              }}
+                              aria-label={`Retry ${failure.title}`}
+                            />
+                            <span className="min-w-0 text-sm">
+                              <span className="font-medium text-red-600 dark:text-red-400">
+                                {failure.title} ({failure.provider})
+                              </span>
+                              <span className="block text-muted-foreground">
+                                {failure.error ?? "Unknown error"}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
                     </div>
                     <Button
                       className="mt-2"
                       size="sm"
                       variant="outline"
-                      disabled={retryCatalog.isPending}
-                      onClick={() => retryCatalog.mutate({ id: run.id })}
+                      disabled={
+                        retryCatalog.isPending || selectedKeys.length === 0
+                      }
+                      onClick={() =>
+                        retryCatalog.mutate({
+                          id: run.id,
+                          data: { itemKeys: selectedKeys },
+                        })
+                      }
                     >
-                      Retry failed titles
+                      Retry selected titles ({selectedKeys.length})
                     </Button>
                   </div>
                 )}
