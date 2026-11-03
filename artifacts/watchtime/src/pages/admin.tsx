@@ -2627,6 +2627,15 @@ function ContentTab({
                     </div>
                   ))}
                 </div>
+                {item.selectedRating?.classificationCorrection ? (
+                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                    Admin correction: provider category{" "}
+                    {item.selectedRating?.classificationCorrection?.providerCategory ?? "(missing)"}{" "}
+                    → {item.selectedRating?.classificationCorrection?.correctedCategory} · admin{" "}
+                    {item.selectedRating?.classificationCorrection?.adminId} ·{" "}
+                    {new Date(item.selectedRating?.classificationCorrection?.correctedAt ?? "").toLocaleString()}
+                  </p>
+                ) : null}
                 <div className="mt-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
                   {item.unclassifiedRating ? (
                     <>

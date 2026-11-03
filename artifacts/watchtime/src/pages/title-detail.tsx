@@ -456,6 +456,11 @@ export default function TitleDetailPage() {
                                   <span className="text-xs font-bold text-muted-foreground">{item.score}/{item.maxScore}</span>
                                 )}
                               </div>
+                              {item.isAdminCorrected && (
+                                <p className="text-xs text-muted-foreground">
+                                  Classification corrected by WatchTime: {item.providerCategory ?? "(missing provider category)"} → {item.category}
+                                </p>
+                              )}
                               {item.description && <p className="text-xs text-muted-foreground">{item.description}</p>}
                             </div>
                           ))}

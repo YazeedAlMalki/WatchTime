@@ -410,6 +410,8 @@ export const GetTitleSafetyResponse = zod.object({
   "items": zod.array(zod.object({
   "category": zod.string(),
   "label": zod.string(),
+  "providerCategory": zod.string().nullable(),
+  "isAdminCorrected": zod.boolean(),
   "score": zod.number().nullish(),
   "maxScore": zod.number().nullish(),
   "description": zod.string().nullish()
@@ -1395,7 +1397,13 @@ export const SearchAdminContentResponseItem = zod.object({
   "sourceUrl": zod.string().nullable()
 }).and(zod.object({
   "hasLatestRatingLabelConflict": zod.boolean(),
-  "refreshTimestampMalformed": zod.boolean()
+  "refreshTimestampMalformed": zod.boolean(),
+  "classificationCorrection": zod.union([zod.object({
+  "providerCategory": zod.string().nullable(),
+  "correctedCategory": zod.string(),
+  "adminId": zod.string(),
+  "correctedAt": zod.coerce.date()
+}),zod.null()]).optional()
 })),zod.null()]),
   "unclassifiedRating": zod.union([zod.object({
   "provider": zod.string(),

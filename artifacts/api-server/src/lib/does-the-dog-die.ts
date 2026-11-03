@@ -1,11 +1,16 @@
 import {
+  adminAuditLogTable,
   db,
   integrationHealthTable,
   providerMappingsTable,
   safetyRecordsTable,
   titlesTable,
 } from "@workspace/db";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import {
+  applySafetyClassificationCorrections,
+  recoverLegacySafetyClassificationCorrection,
+} from "./safety-classification-corrections";
 
 export const DOES_THE_DOG_DIE_PROVIDER = "Does the Dog Die?";
 export const DOES_THE_DOG_DIE_SOURCE_URL = "https://www.doesthedogdie.com";
@@ -520,6 +525,24 @@ export async function refreshDoesTheDogDieTitle(
             isNull(safetyRecordsTable.episodeNumber),
           ),
         );
+      let corrections = existingRecord?.classificationCorrections ?? [];
+      if (existingRecord && !existingRecord.providerItems && corrections.length === 0) {
+        const audits = await tx.select({
+          adminId: adminAuditLogTable.adminId,
+          createdAt: adminAuditLogTable.createdAt,
+          details: adminAuditLogTable.details,
+        })
+          .from(adminAuditLogTable)
+          .where(and(
+            eq(adminAuditLogTable.entityType, "content"),
+            eq(adminAuditLogTable.entityId, existingRecord.id),
+            eq(adminAuditLogTable.action, "correct_safety_classification"),
+          ))
+          .orderBy(desc(adminAuditLogTable.createdAt), desc(adminAuditLogTable.id));
+        corrections =
+          recoverLegacySafetyClassificationCorrection(existingRecord.items, audits)
+            ?.classificationCorrections ?? [];
+      }
       const values = {
         titleId,
         sourceName: DOES_THE_DOG_DIE_PROVIDER,
@@ -527,7 +550,12 @@ export async function refreshDoesTheDogDieTitle(
         isCommunity: false,
         url: `${DOES_THE_DOG_DIE_SOURCE_URL}/media/${match.id}`,
         status: "available" as const,
-        items,
+        providerItems: items,
+        classificationCorrections: corrections,
+        items: applySafetyClassificationCorrections(
+          items,
+          corrections,
+        ),
         updatedAt: now,
       };
       if (existingRecord && isRefreshNewer(existingRecord.updatedAt, now)) {

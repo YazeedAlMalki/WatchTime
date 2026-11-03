@@ -860,6 +860,21 @@ describe("admin Content review timestamp filter", () => {
       maxScore: null,
       description: null,
     }]);
+    expect(correctedRecord[0].providerItems).toEqual([{
+      category: "UNSUPPORTED_SYSTEM",
+      label: "12A",
+      score: null,
+      maxScore: null,
+      description: null,
+    }]);
+    expect(correctedRecord[0].classificationCorrections).toEqual([
+      expect.objectContaining({
+        sourceCategory: "UNSUPPORTED_SYSTEM",
+        sourceLabel: "12A",
+        category: "BBFC",
+        adminId: "test-admin",
+      }),
+    ]);
     const dismissedRecord = await db.select().from(safetyRecordsTable)
       .where(eq(safetyRecordsTable.id, records[1].id));
     expect(dismissedRecord[0].status).toBe("dismissed");
@@ -875,6 +890,11 @@ describe("admin Content review timestamp filter", () => {
       system: "BBFC",
       label: "12A",
       recordId: records[0].id,
+      classificationCorrection: {
+        providerCategory: "UNSUPPORTED_SYSTEM",
+        correctedCategory: "BBFC",
+        adminId: "test-admin",
+      },
     });
     const usReview = await request(app)
       .get(`/api/admin/content?q=${fixturePrefix}&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata`)
@@ -1016,6 +1036,8 @@ describe("admin Content review timestamp filter", () => {
       .where(eq(safetyRecordsTable.id, record.id));
     expect(savedRecord.status).toBe("available");
     expect(savedRecord.items).toEqual(originalItems);
+    expect(savedRecord.providerItems).toBeNull();
+    expect(savedRecord.classificationCorrections).toEqual([]);
     expect(await db.select().from(adminAuditLogTable).where(and(
       eq(adminAuditLogTable.entityType, "content"),
       eq(adminAuditLogTable.entityId, record.id),

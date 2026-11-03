@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './adminClassificationCorrection';
 export * from './adminContentAlias';
 export * from './adminContentAliasCitation';
 export * from './adminContentAliasCollisionCount';

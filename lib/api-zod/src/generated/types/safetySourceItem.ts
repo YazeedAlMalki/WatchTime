@@ -10,6 +10,9 @@ export interface SafetySourceItem {
   category: string;
   label: string;
   /** @nullable */
+  providerCategory: string | null;
+  isAdminCorrected: boolean;
+  /** @nullable */
   score?: number | null;
   /** @nullable */
   maxScore?: number | null;

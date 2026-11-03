@@ -263,6 +263,48 @@ describe("shared rating-region preference", () => {
     expect(missing.body.preferredRating).toBeNull();
   });
 
+  it("returns the corrected regional classification alongside its provider value", async () => {
+    await db.insert(safetyRecordsTable).values({
+      titleId,
+      sourceName: "Wikidata",
+      tier: 2,
+      isCommunity: false,
+      status: "available",
+      providerItems: [{
+        category: "UNSUPPORTED_SYSTEM",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "Provider-supplied rating",
+      }],
+      classificationCorrections: [{
+        sourceIndex: 0,
+        sourceCategory: "UNSUPPORTED_SYSTEM",
+        sourceLabel: "PG-13",
+        sourceOccurrence: 0,
+        category: "MPAA",
+        adminId: "test-admin",
+        correctedAt: "2026-10-01T00:00:00.000Z",
+      }],
+      items: [{
+        category: "MPAA",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "Provider-supplied rating",
+      }],
+    });
+
+    const response = await supertest(app).get(`/api/safety?titleId=${titleId}`).expect(200);
+
+    expect(response.body.sources[0].items[0]).toMatchObject({
+      category: "MPAA",
+      providerCategory: "UNSUPPORTED_SYSTEM",
+      isAdminCorrected: true,
+      label: "PG-13",
+    });
+  });
+
   it.each([
     ["an invalid Date object", new Date(Number.NaN)],
     ["a malformed timestamp string", "not-a-timestamp"],

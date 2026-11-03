@@ -24,6 +24,16 @@ export type SafetyItem = {
   severity?: "none" | "mild" | "moderate" | "severe";
 };
 
+export type SafetyClassificationCorrection = {
+  sourceIndex: number;
+  sourceCategory: string | null;
+  sourceLabel: string | null;
+  sourceOccurrence: number;
+  category: string;
+  adminId: string;
+  correctedAt: string;
+};
+
 // Source-attributed safety records at series/season/episode granularity.
 export const safetyRecordsTable = pgTable("safety_records", {
   id: serial("id").primaryKey(),
@@ -39,6 +49,11 @@ export const safetyRecordsTable = pgTable("safety_records", {
   url: text("url"),
   status: text("status").notNull().default("available"), // available | provider_unavailable
   items: jsonb("items").$type<SafetyItem[]>().notNull().default([]),
+  providerItems: jsonb("provider_items").$type<SafetyItem[]>(),
+  classificationCorrections: jsonb("classification_corrections")
+    .$type<SafetyClassificationCorrection[]>()
+    .notNull()
+    .default([]),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   index("safety_records_title_granularity_idx").on(

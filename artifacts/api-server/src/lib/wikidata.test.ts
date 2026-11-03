@@ -2162,6 +2162,84 @@ describe("Wikidata refresh persistence", () => {
       }
     }
   });
+
+  it("retains corrected classifications and raw provider values through title and batch refreshes", async () => {
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_classification_override_test__",
+      year: 2020,
+      imdbId: "tt1234567",
+      popularity: 0,
+    }).returning();
+    const providerItems = [{
+      category: "UNSUPPORTED_SYSTEM",
+      label: "PG-13",
+      score: null,
+      maxScore: null,
+      description: "US rating · Wikidata property P1657",
+    }];
+    const classificationCorrections = [{
+      sourceIndex: 0,
+      sourceCategory: "UNSUPPORTED_SYSTEM",
+      sourceLabel: "PG-13",
+      sourceOccurrence: 0,
+      category: "MPAA",
+      adminId: "test-admin",
+      correctedAt: "2026-10-01T00:00:00.000Z",
+    }];
+    await db.insert(providerMappingsTable).values({
+      titleId: title.id,
+      provider: WIKIDATA_PROVIDER,
+      externalId: "Q40",
+      status: "mapped",
+      lastRefreshedAt: new Date("2020-01-01T00:00:00.000Z"),
+    });
+    await db.insert(safetyRecordsTable).values({
+      titleId: title.id,
+      sourceName: WIKIDATA_PROVIDER,
+      status: "available",
+      providerItems,
+      classificationCorrections,
+      items: [{ ...providerItems[0], category: "MPAA" }],
+    });
+    const client = {
+      queryByImdbId: async () => ({
+        itemId: "Q41",
+        itemUrl: "https://www.wikidata.org/wiki/Q41",
+        imdbId: title.imdbId!,
+        classifications: [{
+          property: "P1657" as const,
+          propertyName: "UNSUPPORTED_SYSTEM",
+          label: "PG-13",
+          valueId: "Q123",
+        }],
+      }) as unknown as WikidataItem,
+    };
+
+    try {
+      await expect(refreshWikidataTitle(title.id, client)).resolves.toMatchObject({ ok: true });
+      let [record] = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id));
+      expect(record.items[0].category).toBe("MPAA");
+      expect(record.providerItems?.[0].category).toBe("UNSUPPORTED_SYSTEM");
+      expect(record.classificationCorrections).toEqual(classificationCorrections);
+
+      await expect(refreshWikidataBatch({
+        limit: 1,
+        offset: 0,
+        titleSelection: [{ id: title.id, name: title.name }],
+        client,
+        delayMs: 0,
+      })).resolves.toMatchObject({ processed: 1, results: [{ ok: true }] });
+      [record] = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id));
+      expect(record.items[0].category).toBe("MPAA");
+      expect(record.providerItems?.[0].category).toBe("UNSUPPORTED_SYSTEM");
+      expect(record.classificationCorrections).toEqual(classificationCorrections);
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+    }
+  });
 });
 
 describe("Wikidata batch refresh pagination", () => {

@@ -27,6 +27,7 @@ import {
   RATING_REGIONS,
   RATING_REGIONS_BY_CODE,
 } from "@workspace/rating-regions";
+import { findSafetyClassificationCorrection } from "../lib/safety-classification-corrections";
 
 const router: IRouter = Router();
 
@@ -130,6 +131,7 @@ router.get("/safety", optionalAuth, async (req, res) => {
       url: safetyRecordsTable.url,
       status: safetyRecordsTable.status,
       items: safetyRecordsTable.items,
+      classificationCorrections: safetyRecordsTable.classificationCorrections,
       updatedAt: safetyRecordsTable.updatedAt,
       rawUpdatedAt: sql<string>`${safetyRecordsTable.updatedAt}::text`,
     })
@@ -192,13 +194,22 @@ router.get("/safety", optionalAuth, async (req, res) => {
         ageRecommendation: r.ageRecommendation,
         url: r.url,
         status: r.status,
-        items: r.items.map((i) => ({
-          category: i.category,
-          label: i.label,
-          score: i.score ?? null,
-          maxScore: i.maxScore ?? null,
-          description: i.description ?? null,
-        })),
+        items: r.items.map((i) => {
+          const correction = findSafetyClassificationCorrection(
+            r.classificationCorrections,
+            i.category,
+            i.label,
+          );
+          return {
+            category: i.category,
+            label: i.label,
+            providerCategory: correction?.sourceCategory ?? null,
+            isAdminCorrected: correction !== null,
+            score: i.score ?? null,
+            maxScore: i.maxScore ?? null,
+            description: i.description ?? null,
+          };
+        }),
       })),
   });
 });

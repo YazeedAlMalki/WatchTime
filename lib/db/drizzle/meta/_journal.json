@@ -57,6 +57,13 @@
       "when": 1793040000000,
       "tag": "0007_persist_alias_review_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793714315194,
+      "tag": "0008_persist_safety_classification_corrections",
+      "breakpoints": true
     }
   ]
 }

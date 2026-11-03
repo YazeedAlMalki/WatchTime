@@ -5,9 +5,11 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AdminClassificationCorrection } from './adminClassificationCorrection';
 import type { RegionalRating } from './regionalRating';
 
-export type AdminRegionalRating = RegionalRating & {
+export type AdminRegionalRating = RegionalRating & ({
   hasLatestRatingLabelConflict: boolean;
   refreshTimestampMalformed: boolean;
-};
+  classificationCorrection?: AdminClassificationCorrection | null;
+});

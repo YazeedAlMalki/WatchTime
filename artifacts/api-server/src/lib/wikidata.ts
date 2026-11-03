@@ -1,4 +1,5 @@
 import {
+  adminAuditLogTable,
   db,
   integrationHealthTable,
   providerMappingsTable,
@@ -7,6 +8,10 @@ import {
   wikidataIdentityConflictsTable,
 } from "@workspace/db";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import {
+  applySafetyClassificationCorrections,
+  recoverLegacySafetyClassificationCorrection,
+} from "./safety-classification-corrections";
 
 /**
  * Wikidata's public SPARQL endpoint is deliberately used without credentials.
@@ -565,6 +570,24 @@ export async function refreshWikidataTitle(
       }
 
       if (items.length > 0) {
+        let corrections = existingRecord?.classificationCorrections ?? [];
+        if (existingRecord && !existingRecord.providerItems && corrections.length === 0) {
+          const audits = await tx.select({
+            adminId: adminAuditLogTable.adminId,
+            createdAt: adminAuditLogTable.createdAt,
+            details: adminAuditLogTable.details,
+          })
+            .from(adminAuditLogTable)
+            .where(and(
+              eq(adminAuditLogTable.entityType, "content"),
+              eq(adminAuditLogTable.entityId, existingRecord.id),
+              eq(adminAuditLogTable.action, "correct_safety_classification"),
+            ))
+            .orderBy(desc(adminAuditLogTable.createdAt), desc(adminAuditLogTable.id));
+          corrections =
+            recoverLegacySafetyClassificationCorrection(existingRecord.items, audits)
+              ?.classificationCorrections ?? [];
+        }
         const values = {
           titleId,
           sourceName: WIKIDATA_PROVIDER,
@@ -572,7 +595,9 @@ export async function refreshWikidataTitle(
           isCommunity: false,
           url: item.itemUrl,
           status: "available" as const,
-          items,
+          providerItems: items,
+          classificationCorrections: corrections,
+          items: applySafetyClassificationCorrections(items, corrections),
           updatedAt: now,
         };
         if (existingRecord) {

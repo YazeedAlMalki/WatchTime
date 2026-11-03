@@ -454,6 +454,9 @@ export interface SafetySourceItem {
   category: string;
   label: string;
   /** @nullable */
+  providerCategory: string | null;
+  isAdminCorrected: boolean;
+  /** @nullable */
   score?: number | null;
   /** @nullable */
   maxScore?: number | null;
@@ -1159,10 +1162,19 @@ export const ContentMappingType = {
   documentary: 'documentary',
 } as const;
 
-export type AdminRegionalRating = RegionalRating & {
+export interface AdminClassificationCorrection {
+  /** @nullable */
+  providerCategory: string | null;
+  correctedCategory: string;
+  adminId: string;
+  correctedAt: string;
+}
+
+export type AdminRegionalRating = RegionalRating & ({
   hasLatestRatingLabelConflict: boolean;
   refreshTimestampMalformed: boolean;
-};
+  classificationCorrection?: AdminClassificationCorrection | null;
+});
 
 export interface AdminRawClassification {
   /** @nullable */

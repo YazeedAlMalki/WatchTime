@@ -1,5 +1,9 @@
 import { Router, type IRouter } from "express";
 import { createHash, randomUUID } from "node:crypto";
+import {
+  applySafetyClassificationCorrections,
+  findSafetyClassificationCorrection,
+} from "../lib/safety-classification-corrections";
 import adminQueuesRouter from "./admin-queues";
 import {
   db,
@@ -772,6 +776,8 @@ router.get("/content", async (req, res) => {
               isCommunity: safetyRecordsTable.isCommunity,
               status: safetyRecordsTable.status,
               items: safetyRecordsTable.items,
+              providerItems: safetyRecordsTable.providerItems,
+              classificationCorrections: safetyRecordsTable.classificationCorrections,
               updatedAt: safetyRecordsTable.updatedAt,
               rawUpdatedAt: sql<string>`${safetyRecordsTable.updatedAt}::text`,
               url: safetyRecordsTable.url,
@@ -819,6 +825,13 @@ router.get("/content", async (req, res) => {
         selectedProvider,
       );
       const selectedRecord = titleSafetyRecords.find((record) => record.id === selectedRating?.recordId);
+      const classificationCorrection = selectedRating
+        ? findSafetyClassificationCorrection(
+            selectedRecord?.classificationCorrections,
+            selectedRating.system,
+            selectedRating.label,
+          )
+        : null;
       return {
         id: title.id,
         name: title.name,
@@ -834,6 +847,16 @@ router.get("/content", async (req, res) => {
         selectedRating: selectedRating
           ? {
               ...selectedRating,
+              ...(classificationCorrection
+                ? {
+                    classificationCorrection: {
+                      providerCategory: classificationCorrection.sourceCategory,
+                      correctedCategory: classificationCorrection.category,
+                      adminId: classificationCorrection.adminId,
+                      correctedAt: classificationCorrection.correctedAt,
+                    },
+                  }
+                : {}),
               refreshTimestampMalformed: hasMalformedTimestamp(selectedRecord?.rawUpdatedAt),
               hasLatestRatingLabelConflict: hasLatestRatingLabelConflictForRegion,
             }
@@ -1051,6 +1074,8 @@ async function resolveUnclassifiedRating(
         isCommunity: safetyRecordsTable.isCommunity,
         status: safetyRecordsTable.status,
         items: safetyRecordsTable.items,
+        providerItems: safetyRecordsTable.providerItems,
+        classificationCorrections: safetyRecordsTable.classificationCorrections,
         rawUpdatedAt: sql<string>`${safetyRecordsTable.updatedAt}::text`,
       })
       .from(safetyRecordsTable)
@@ -1058,10 +1083,10 @@ async function resolveUnclassifiedRating(
       .for("update");
     if (!record) return { kind: "not_found" } as const;
 
-    const items = record.items;
+    const items = record.providerItems ?? record.items;
     const hasSupportedClassification =
-      Array.isArray(items) &&
-      items.some((item) =>
+      Array.isArray(record.items) &&
+      record.items.some((item) =>
         item !== null &&
         typeof item === "object" &&
         typeof item.category === "string" &&
@@ -1093,14 +1118,28 @@ async function resolveUnclassifiedRating(
         return { kind: "invalid_item" } as const;
       }
       previousCategory = target.category ?? null;
-      const correctedItems = items.map((item, index) =>
-        index === resolution.classificationIndex
-          ? { ...item, category: resolution.category }
-          : item,
-      );
+      const sourceOccurrence = items
+        .slice(0, resolution.classificationIndex)
+        .filter((item) => item.category === target.category && item.label === target.label)
+        .length;
+      const correction = {
+        sourceIndex: resolution.classificationIndex,
+        sourceCategory: target.category ?? null,
+        sourceLabel: target.label ?? null,
+        sourceOccurrence,
+        category: resolution.category,
+        adminId,
+        correctedAt: new Date().toISOString(),
+      };
+      const corrections = [...(record.classificationCorrections ?? []), correction];
+      const correctedItems = applySafetyClassificationCorrections(items, corrections);
       await tx
         .update(safetyRecordsTable)
-        .set({ items: correctedItems })
+        .set({
+          providerItems: items,
+          classificationCorrections: corrections,
+          items: correctedItems,
+        })
         .where(eq(safetyRecordsTable.id, record.id));
       await tx.insert(adminAuditLogTable).values({
         adminId,
@@ -1112,6 +1151,8 @@ async function resolveUnclassifiedRating(
           provider: record.sourceName,
           classificationIndex: resolution.classificationIndex,
           previousCategory,
+          sourceLabel: target.label ?? null,
+          sourceOccurrence,
           category: resolution.category,
           expectedUpdatedAt,
         },

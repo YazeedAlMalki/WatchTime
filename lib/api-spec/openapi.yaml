@@ -1839,10 +1839,12 @@ components:
         severity: { type: string, enum: [none, mild, moderate, severe] }
     SafetySourceItem:
       type: object
-      required: [category, label]
+      required: [category, label, providerCategory, isAdminCorrected]
       properties:
         category: { type: string }
         label: { type: string }
+        providerCategory: { type: ["string", "null"] }
+        isAdminCorrected: { type: boolean }
         score: { type: ["number", "null"] }
         maxScore: { type: ["number", "null"] }
         description: { type: ["string", "null"] }
@@ -2380,6 +2382,18 @@ components:
           properties:
             hasLatestRatingLabelConflict: { type: boolean }
             refreshTimestampMalformed: { type: boolean }
+            classificationCorrection:
+              oneOf:
+                - $ref: "#/components/schemas/AdminClassificationCorrection"
+                - type: "null"
+    AdminClassificationCorrection:
+      type: object
+      required: [providerCategory, correctedCategory, adminId, correctedAt]
+      properties:
+        providerCategory: { type: ["string", "null"] }
+        correctedCategory: { type: string }
+        adminId: { type: string }
+        correctedAt: { type: string, format: date-time }
     AnalyticsPoint:
       type: object
       required: [date, value]

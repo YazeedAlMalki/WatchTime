@@ -601,6 +601,86 @@ describe("Does the Dog Die refresh persistence", () => {
     expect(health.refreshAttempts).toBeLessThanOrEqual(2_000_000_000);
     expect(health.successRatePercent).toBeCloseTo((500_000_000 / 1_000_000_001) * 100);
   });
+
+  it("retains a corrected category and the source value through title and batch refreshes", async () => {
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__ddd_classification_override_test__",
+      year: 1957,
+      imdbId: "tt0050798",
+      popularity: 0,
+    }).returning();
+    const providerItems = [{
+      category: "UNSUPPORTED_SYSTEM",
+      label: "UNSUPPORTED_SYSTEM",
+      score: 3,
+      maxScore: 4,
+      description: "3 yes / 1 no votes; 0 comments",
+    }];
+    const classificationCorrections = [{
+      sourceIndex: 0,
+      sourceCategory: "UNSUPPORTED_SYSTEM",
+      sourceLabel: "UNSUPPORTED_SYSTEM",
+      sourceOccurrence: 0,
+      category: "BBFC",
+      adminId: "test-admin",
+      correctedAt: "2026-10-01T00:00:00.000Z",
+    }];
+    await db.insert(providerMappingsTable).values({
+      titleId: title.id,
+      provider,
+      externalId: "old-id",
+      status: "mapped",
+      lastRefreshedAt: new Date("2020-01-01T00:00:00.000Z"),
+    });
+    await db.insert(safetyRecordsTable).values({
+      titleId: title.id,
+      sourceName: provider,
+      status: "available",
+      providerItems,
+      classificationCorrections,
+      items: [{ ...providerItems[0], category: "BBFC" }],
+    });
+    const client = {
+      searchItems: async () => [item({ id: 10752, name: title.name, imdbId: title.imdbId })],
+      getItem: async () => ({
+        ...item({ id: 10752, name: title.name, imdbId: title.imdbId }),
+        topicItemStats: [{
+          topicItemId: 1,
+          yesSum: 3,
+          noSum: 1,
+          numComments: 0,
+          topicId: 2,
+          topicName: "UNSUPPORTED_SYSTEM",
+          itemId: 10752,
+        }],
+      }),
+    };
+
+    try {
+      await expect(refreshDoesTheDogDieTitle(title.id, client)).resolves.toMatchObject({ ok: true });
+      let [record] = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id));
+      expect(record.items[0].category).toBe("BBFC");
+      expect(record.providerItems?.[0].category).toBe("UNSUPPORTED_SYSTEM");
+      expect(record.classificationCorrections).toEqual(classificationCorrections);
+
+      await expect(refreshDoesTheDogDieBatch({
+        limit: 1,
+        offset: 0,
+        titleSelection: [{ id: title.id, name: title.name }],
+        client,
+        delayMs: 0,
+      })).resolves.toMatchObject({ processed: 1, results: [{ ok: true }] });
+      [record] = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id));
+      expect(record.items[0].category).toBe("BBFC");
+      expect(record.providerItems?.[0].category).toBe("UNSUPPORTED_SYSTEM");
+      expect(record.classificationCorrections).toEqual(classificationCorrections);
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+    }
+  });
 });
 
 describe("Does the Dog Die batch refresh pagination", () => {
