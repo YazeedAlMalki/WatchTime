@@ -908,15 +908,45 @@ describe("other catalog refresh starts", () => {
       .where(eq(adminAuditLogTable.adminId, adminId))).toEqual([]);
   });
 
-  it("does not create an empty retry when selected failures are no longer in the source catalog", async () => {
-    const sourceRunId = await createSourceRunWithItems(["no-longer-in-current-catalog"]);
+  it("explains when a failed title is missing from the current catalog without creating an empty retry", async () => {
+    const itemKey = "no-longer-in-current-catalog";
+    const sourceRunId = await createSourceRunWithItems([itemKey]);
     const transactionSpy = vi.spyOn(db, "transaction");
     await request(app)
       .post(`/api/admin/catalog-refreshes/${sourceRunId}/retry`)
-      .send({ itemKeys: ["no-longer-in-current-catalog"] })
-      .expect(409, { error: "No selected titles remain failed on this run" });
+      .send({ itemKeys: [itemKey] })
+      .expect(409, {
+        error: "Some selected failed titles are no longer in the current catalog. Deselect them before retrying.",
+        unavailableItemKeys: [itemKey],
+      });
     expect(transactionSpy).not.toHaveBeenCalled();
     expect(runCatalogSync).not.toHaveBeenCalled();
+    expect(await db.select().from(adminAuditLogTable)
+      .where(eq(adminAuditLogTable.adminId, adminId))).toEqual([]);
+    expect(await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, sourceRunId))).toEqual([
+      expect.objectContaining({ itemKey, status: "failed" }),
+    ]);
+  });
+
+  it("does not partially retry selected titles when one is missing from the current catalog", async () => {
+    const missingItemKey = "no-longer-in-current-catalog";
+    const sourceRunId = await createSourceRunWithItems([
+      "catalog-refresh-audit-item",
+      missingItemKey,
+    ]);
+    const transactionSpy = vi.spyOn(db, "transaction");
+    await request(app)
+      .post(`/api/admin/catalog-refreshes/${sourceRunId}/retry`)
+      .send({ itemKeys: ["catalog-refresh-audit-item", missingItemKey] })
+      .expect(409, {
+        error: "Some selected failed titles are no longer in the current catalog. Deselect them before retrying.",
+        unavailableItemKeys: [missingItemKey],
+      });
+    expect(transactionSpy).not.toHaveBeenCalled();
+    expect(runCatalogSync).not.toHaveBeenCalled();
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, sourceRunId))).toHaveLength(1);
     expect(await db.select().from(adminAuditLogTable)
       .where(eq(adminAuditLogTable.adminId, adminId))).toEqual([]);
   });

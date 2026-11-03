@@ -4752,6 +4752,17 @@ function IntegrationsTab({
         qc.invalidateQueries({ queryKey: getListCatalogRefreshesQueryKey() });
         toast({ title: "Failed titles queued for retry" });
       },
+      onError: (error) => {
+        const errorData =
+          (error as any)?.data ?? (error as any)?.response?.data;
+        const responseError = errorData?.error;
+        toast({
+          title: "Could not retry failed titles",
+          description:
+            typeof responseError === "string" ? responseError : "Please try again.",
+          variant: "destructive",
+        });
+      },
     },
   });
   const refresh = useRefreshAdminContent();

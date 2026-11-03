@@ -85,6 +85,7 @@ import {
 } from "../lib/ratingRegions";
 import { RATING_REGIONS, RATING_REGIONS_BY_CODE } from "@workspace/rating-regions";
 import {
+  CatalogTitlesUnavailableForRetryError,
   retryFailedCatalogTitles,
   startCatalogRefresh,
   STALE_QUEUED_REFRESH_MS,
@@ -659,17 +660,26 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
   if (!selection.success) {
     return res.status(400).json({ error: "Select at least one failed title to retry" });
   }
-  const runId = await retryFailedCatalogTitles(id, selection.data.itemKeys, async (tx, retryRunId) => {
-    await tx.insert(adminAuditLogTable).values({
-      adminId: req.userId!,
-      action: "retry_catalog_refresh",
-      entityType: "catalog_sync",
-      entityId: retryRunId,
-      details: { sourceRunId: id },
+  let retryRunId: number | null;
+  try {
+    retryRunId = await retryFailedCatalogTitles(id, selection.data.itemKeys, async (tx, retryRunId) => {
+      await tx.insert(adminAuditLogTable).values({
+        adminId: req.userId!,
+        action: "retry_catalog_refresh",
+        entityType: "catalog_sync",
+        entityId: retryRunId,
+        details: { sourceRunId: id },
+      });
     });
-  });
-  if (!runId) return res.status(409).json({ error: "No selected titles remain failed on this run" });
-  return res.status(202).json({ runId });
+  } catch (error) {
+    if (!(error instanceof CatalogTitlesUnavailableForRetryError)) throw error;
+    return res.status(409).json({
+      error: error.message,
+      unavailableItemKeys: error.itemKeys,
+    });
+  }
+  if (!retryRunId) return res.status(409).json({ error: "No selected titles remain failed on this run" });
+  return res.status(202).json({ runId: retryRunId });
 });
 
 router.get("/content/mapping-counts", async (req, res): Promise<void> => {

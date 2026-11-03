@@ -953,7 +953,7 @@ describe("catalog refresh retry audit failure", () => {
       .from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.trigger, "retry"));
     const auditError = new Error("unable to write retry audit");
 
-    await expect(retryFailedCatalogTitles(sourceRun.id, async (tx, retryRunId) => {
+    await expect(retryFailedCatalogTitles(sourceRun.id, undefined, async (tx, retryRunId) => {
       const [queuedRun] = await tx.select().from(catalogSyncRunsTable)
         .where(eq(catalogSyncRunsTable.id, retryRunId));
       expect(queuedRun).toMatchObject({

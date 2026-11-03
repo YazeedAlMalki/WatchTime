@@ -183,6 +183,13 @@ async function logSustainedProviderFailures() {
   }
 }
 
+export class CatalogTitlesUnavailableForRetryError extends Error {
+  constructor(readonly itemKeys: string[]) {
+    super("Some selected failed titles are no longer in the current catalog. Deselect them before retrying.");
+    this.name = "CatalogTitlesUnavailableForRetryError";
+  }
+}
+
 export async function retryFailedCatalogTitles(
   runId: number,
   selectedItemKeys?: string[],
@@ -197,6 +204,11 @@ export async function retryFailedCatalogTitles(
     ? failedKeys
     : new Set(selectedItemKeys.filter((key) => failedKeys.has(key)));
   if (!keys.size) return null;
+  const currentCatalogKeys = new Set(sourceItems.map((item) => item.key));
+  const unavailableItemKeys = [...keys].filter((key) => !currentCatalogKeys.has(key));
+  if (unavailableItemKeys.length) {
+    throw new CatalogTitlesUnavailableForRetryError(unavailableItemKeys);
+  }
   const items = [...new Map(
     sourceItems.filter((item) => keys.has(item.key)).map((item) => [item.key, item]),
   ).values()];
