@@ -671,6 +671,27 @@ router.post("/catalog-refreshes/:id/retry", async (req, res) => {
   return res.status(202).json({ runId });
 });
 
+router.get("/content/mapping-counts", async (req, res): Promise<void> => {
+  if (req.query.q !== undefined && typeof req.query.q !== "string") {
+    res.status(400).json({ error: "Invalid content search query" });
+    return;
+  }
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const counts = await db
+    .select({
+      provider: providerMappingsTable.provider,
+      mapped: sql<number>`count(distinct ${providerMappingsTable.titleId}) filter (where ${providerMappingsTable.status} = 'mapped')::int`,
+      missing: sql<number>`count(distinct ${providerMappingsTable.titleId}) filter (where ${providerMappingsTable.status} = 'missing')::int`,
+      error: sql<number>`count(distinct ${providerMappingsTable.titleId}) filter (where ${providerMappingsTable.status} = 'error')::int`,
+    })
+    .from(providerMappingsTable)
+    .innerJoin(titlesTable, eq(providerMappingsTable.titleId, titlesTable.id))
+    .where(q ? ilike(titlesTable.name, `%${q}%`) : undefined)
+    .groupBy(providerMappingsTable.provider)
+    .orderBy(asc(providerMappingsTable.provider));
+  res.json(counts);
+});
+
 router.get("/content", async (req, res) => {
   if (req.query.q !== undefined && typeof req.query.q !== "string") {
     return res.status(400).json({ error: "Invalid content search query" });

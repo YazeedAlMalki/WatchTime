@@ -1424,6 +1424,30 @@ export const SearchAdminContentResponse = zod.array(SearchAdminContentResponseIt
 
 
 /**
+ * @summary Count provider mapping statuses for matching titles
+ */
+export const GetAdminContentMappingCountsQueryParams = zod.object({
+  "q": zod.coerce.string().optional().describe('Search title names before counting provider mapping statuses')
+})
+
+export const getAdminContentMappingCountsResponseMappedMin = 0;
+
+export const getAdminContentMappingCountsResponseMissingMin = 0;
+
+export const getAdminContentMappingCountsResponseErrorMin = 0;
+
+
+
+export const GetAdminContentMappingCountsResponseItem = zod.object({
+  "provider": zod.string(),
+  "mapped": zod.int().min(getAdminContentMappingCountsResponseMappedMin),
+  "missing": zod.int().min(getAdminContentMappingCountsResponseMissingMin),
+  "error": zod.int().min(getAdminContentMappingCountsResponseErrorMin)
+})
+export const GetAdminContentMappingCountsResponse = zod.array(GetAdminContentMappingCountsResponseItem)
+
+
+/**
  * @summary Correct one unsupported classification system
  */
 

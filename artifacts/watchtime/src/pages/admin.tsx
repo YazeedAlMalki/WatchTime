@@ -15,6 +15,7 @@ import {
   useRetryCatalogRefresh,
   useGetAdminAnalytics,
   useSearchAdminContent,
+  useGetAdminContentMappingCounts,
   useCorrectAdminUnclassifiedRating,
   useDismissAdminUnclassifiedRating,
   useListAdminContentAliases,
@@ -33,6 +34,7 @@ import {
   getListAdminReportsQueryKey,
   getListAdminFeedbackQueryKey,
   getSearchAdminContentQueryKey,
+  getGetAdminContentMappingCountsQueryKey,
   getListAdminContentAliasesQueryKey,
   getListCatalogRefreshesQueryKey,
   getGetAdminContentRefreshBatchQueryKey,
@@ -1481,6 +1483,9 @@ function ContentTab({
         : {}),
     },
   });
+  const mappingCountsQuery = useGetAdminContentMappingCounts(
+    debouncedQ ? { q: debouncedQ } : {},
+  );
   const visibleContent = content?.slice(0, contentPageSize) ?? [];
   const hasNextContentPage = hasContentFilters &&
     (content?.length ?? 0) > contentPageSize;
@@ -1710,6 +1715,7 @@ function ContentTab({
             }
           }
           qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
+          qc.invalidateQueries({ queryKey: getGetAdminContentMappingCountsQueryKey() });
           if (result.ok) {
             toast(result.dataStatus === "superseded"
               ? {
@@ -1792,6 +1798,7 @@ function ContentTab({
       {
         onSuccess: (result) => {
           qc.invalidateQueries({ queryKey: getSearchAdminContentQueryKey() });
+          qc.invalidateQueries({ queryKey: getGetAdminContentMappingCountsQueryKey() });
           qc.invalidateQueries({ queryKey: getGetAdminContentRefreshBatchQueryKey() });
           qc.invalidateQueries({
             queryKey: getListAdminContentRefreshBatchHistoryQueryKey({ limit: 20 }),
@@ -2460,6 +2467,58 @@ function ContentTab({
           </Select>
         </div>
       </div>
+      <section
+        aria-labelledby="admin-mapping-counts-heading"
+        className="rounded-2xl border border-border bg-card p-4 shadow-sm"
+      >
+        <h3
+          id="admin-mapping-counts-heading"
+          className="font-display font-bold text-foreground"
+        >
+          Provider link counts
+        </h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Counts include all titles matching the search, regardless of the mapping filters above.
+        </p>
+        {mappingCountsQuery.isLoading ? (
+          <p className="mt-3 text-sm text-muted-foreground" role="status">
+            Loading provider link counts…
+          </p>
+        ) : mappingCountsQuery.isError ? (
+          <p className="mt-3 text-sm text-destructive" role="status">
+            Provider link counts could not be loaded.
+          </p>
+        ) : mappingCountsQuery.data?.length ? (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[32rem] text-left text-sm">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th scope="col" className="py-2 pr-4 font-medium">Provider</th>
+                  <th scope="col" className="py-2 px-3 font-medium">Mapped</th>
+                  <th scope="col" className="py-2 px-3 font-medium">Missing</th>
+                  <th scope="col" className="py-2 pl-3 font-medium">Errors</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mappingCountsQuery.data.map((counts) => (
+                  <tr key={counts.provider} className="border-b last:border-0 border-border">
+                    <th scope="row" className="py-2 pr-4 font-medium text-foreground">
+                      {counts.provider}
+                    </th>
+                    <td className="py-2 px-3 tabular-nums">{counts.mapped}</td>
+                    <td className="py-2 px-3 tabular-nums">{counts.missing}</td>
+                    <td className="py-2 pl-3 tabular-nums">{counts.error}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-muted-foreground">
+            No provider links match this title search.
+          </p>
+        )}
+      </section>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <label
           htmlFor="admin-rating-region"

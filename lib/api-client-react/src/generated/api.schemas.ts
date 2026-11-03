@@ -1213,6 +1213,16 @@ export interface ContentMapping {
   unclassifiedRating?: AdminUnclassifiedRating | null;
 }
 
+export interface AdminContentMappingCounts {
+  provider: string;
+  /** @minimum 0 */
+  mapped: number;
+  /** @minimum 0 */
+  missing: number;
+  /** @minimum 0 */
+  error: number;
+}
+
 export type AdminUnclassifiedRatingCorrectionCategory = typeof AdminUnclassifiedRatingCorrectionCategory[keyof typeof AdminUnclassifiedRatingCorrectionCategory];
 
 
@@ -1566,6 +1576,13 @@ export const SearchAdminContentMappingStatus = {
   missing: 'missing',
   error: 'error',
 } as const;
+
+export type GetAdminContentMappingCountsParams = {
+/**
+ * Search title names before counting provider mapping statuses
+ */
+q?: string;
+};
 
 export type ListAdminWikidataIdentityConflictsParams = {
 status?: ListAdminWikidataIdentityConflictsStatus;

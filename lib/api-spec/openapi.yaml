@@ -738,8 +738,6 @@ paths:
                 $ref: "#/components/schemas/AdminDashboard"
         "403":
           description: Forbidden
-        "500":
-          description: Safety batch refresh failed
   /admin/contributions:
     get:
       operationId: listAdminContributions
@@ -1033,6 +1031,29 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ContentMapping"
+        "403":
+          description: Forbidden
+  /admin/content/mapping-counts:
+    get:
+      operationId: getAdminContentMappingCounts
+      tags: [admin]
+      summary: Count provider mapping statuses for matching titles
+      parameters:
+        - name: q
+          in: query
+          description: Search title names before counting provider mapping statuses
+          schema: { type: string }
+      responses:
+        "200":
+          description: Provider mapping status counts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminContentMappingCounts"
+        "400":
+          description: Invalid title search query
         "403":
           description: Forbidden
   /admin/unclassified-ratings/{id}/correct:
@@ -2330,6 +2351,14 @@ components:
           oneOf:
             - $ref: "#/components/schemas/AdminUnclassifiedRating"
             - type: "null"
+    AdminContentMappingCounts:
+      type: object
+      required: [provider, mapped, missing, error]
+      properties:
+        provider: { type: string }
+        mapped: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        error: { type: integer, minimum: 0 }
     AdminUnclassifiedRating:
       type: object
       required: [provider, recordId, classifications, rawUpdatedAt, sourceUrl]

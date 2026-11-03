@@ -169,6 +169,43 @@ describe("admin Content review timestamp filter", () => {
     expect(errorFiltered.body).toEqual([]);
   });
 
+  it("counts provider mapping statuses by title search, independently of mapping filters", async () => {
+    const fixturePrefix = "mapping-counts-fixture";
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-alpha-mapped`, type: "movie", popularity: 3 },
+      { name: `${fixturePrefix}-alpha-error`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-beta-missing`, type: "movie", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    await db.insert(providerMappingsTable).values([
+      { titleId: titles[0].id, provider: "Counts Fixture Provider", externalId: "mapped-id", status: "mapped" },
+      { titleId: titles[1].id, provider: "Counts Fixture Provider", externalId: null, status: "error" },
+      { titleId: titles[2].id, provider: "Counts Fixture Provider", externalId: null, status: "missing" },
+      { titleId: titles[0].id, provider: "Counts Secondary Provider", externalId: null, status: "missing" },
+    ]);
+
+    const alphaCounts = await request(app)
+      .get(`/api/admin/content/mapping-counts?q=${fixturePrefix}-alpha`)
+      .expect(200);
+    expect(alphaCounts.body).toEqual([
+      { provider: "Counts Fixture Provider", mapped: 1, missing: 0, error: 1 },
+      { provider: "Counts Secondary Provider", mapped: 0, missing: 1, error: 0 },
+    ]);
+
+    const filteredCounts = await request(app)
+      .get(`/api/admin/content/mapping-counts?q=${fixturePrefix}-alpha&mappingProvider=unknown&mappingStatus=missing`)
+      .expect(200);
+    expect(filteredCounts.body).toEqual(alphaCounts.body);
+
+    const betaCounts = await request(app)
+      .get(`/api/admin/content/mapping-counts?q=${fixturePrefix}-beta`)
+      .expect(200);
+    expect(betaCounts.body).toEqual([
+      { provider: "Counts Fixture Provider", mapped: 0, missing: 1, error: 0 },
+    ]);
+  });
+
   it("keeps provider and status filters applied across content pages", async () => {
     const fixturePrefix = "mapping-filter-page-fixture";
     const titles = await db.insert(titlesTable).values(

@@ -26,6 +26,7 @@ import type {
   AdminContentAliasPage,
   AdminContentAliasRecord,
   AdminContentAliasUpdate,
+  AdminContentMappingCounts,
   AdminContentRefreshBatchHistoryEntry,
   AdminContentRefreshBatchInput,
   AdminContentRefreshBatchStatus,
@@ -53,6 +54,7 @@ import type {
   FeedbackItem,
   FeedbackModeration,
   GetAdminAuditLogParams,
+  GetAdminContentMappingCountsParams,
   GetMyInProgressShowsParams,
   GetMyMoviesParams,
   GetMyShowsParams,
@@ -3625,6 +3627,90 @@ export function useSearchAdminContent<TData = Awaited<ReturnType<typeof searchAd
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getSearchAdminContentQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminContentMappingCountsUrl = (params?: GetAdminContentMappingCountsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/content/mapping-counts?${stringifiedParams}` : `/api/admin/content/mapping-counts`
+}
+
+/**
+ * @summary Count provider mapping statuses for matching titles
+ */
+export const getAdminContentMappingCounts = async (params?: GetAdminContentMappingCountsParams, options?: Parameters<typeof customFetch>[1]): Promise<AdminContentMappingCounts[]> => {
+
+  return customFetch<AdminContentMappingCounts[]>(getGetAdminContentMappingCountsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminContentMappingCountsQueryKey = (params?: GetAdminContentMappingCountsParams,) => {
+    return [
+    `/api/admin/content/mapping-counts`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAdminContentMappingCountsQueryOptions = <TData = Awaited<ReturnType<typeof getAdminContentMappingCounts>>, TError = ErrorType<void>>(params?: GetAdminContentMappingCountsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminContentMappingCounts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminContentMappingCountsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminContentMappingCounts>>> = ({ signal }) => getAdminContentMappingCounts(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminContentMappingCounts>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminContentMappingCountsQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminContentMappingCounts>>>
+export type GetAdminContentMappingCountsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Count provider mapping statuses for matching titles
+ */
+
+export function useGetAdminContentMappingCounts<TData = Awaited<ReturnType<typeof getAdminContentMappingCounts>>, TError = ErrorType<void>>(
+ params?: GetAdminContentMappingCountsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminContentMappingCounts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminContentMappingCountsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
