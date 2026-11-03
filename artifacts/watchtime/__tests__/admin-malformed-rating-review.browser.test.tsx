@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   refreshMutate: vi.fn(),
   searchResults: [] as ReturnType<typeof malformedRating>[],
   earlierPageResults: [] as ReturnType<typeof malformedRating>[],
+  searchCalls: [] as Parameters<typeof getSearchAdminContentQueryKey>[0][],
   searchFailuresRemaining: 0,
   holdNextSearchResponse: false,
   releaseSearchResponse: undefined as (() => void) | undefined,
@@ -44,6 +45,7 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
       return useQuery({
         queryKey: api.getSearchAdminContentQueryKey(params),
         queryFn: async () => {
+          mocks.searchCalls.push(params);
           if (mocks.searchFailuresRemaining > 0) {
             mocks.searchFailuresRemaining -= 1;
             throw new Error("Temporary review lookup failure");
@@ -446,6 +448,84 @@ it("returns to the previous filtered review page only after a remote repair empt
     client.clear();
     mocks.searchResults = [];
     mocks.earlierPageResults = [];
+    mocks.searchEnabled = false;
+    mocks.refetchIntervalOverride = undefined;
+    mocks.configuredRefetchInterval = undefined;
+    mocks.configuredRefetchOnWindowFocus = undefined;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("continues back through consecutive empty filtered review pages after remote repairs", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata&offset=100",
+  );
+  mocks.searchResults = [malformedRating(1301, "Last-page malformed title")];
+  mocks.earlierPageResults = Array.from({ length: 50 }, (_, index) =>
+    malformedRating(index + 1, `Earlier malformed title ${index + 1}`),
+  );
+  mocks.searchCalls = [];
+  mocks.searchEnabled = true;
+  mocks.refetchIntervalOverride = 25;
+
+  const activeParams = {
+    region: "US" as const,
+    malformedRefreshTimestamp: true,
+    malformedRefreshTimestampProvider: "Wikidata",
+    offset: 100,
+  };
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  });
+  client.setQueryData(
+    getSearchAdminContentQueryKey(activeParams),
+    mocks.searchResults,
+  );
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Last-page malformed title", { exact: true }))
+      .toBeVisible();
+    await expect.element(page.getByText("Page 3", { exact: true })).toBeVisible();
+
+    // Another admin repairs every result on this page and the page before it.
+    mocks.searchResults = [];
+
+    await vi.waitFor(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await expect.element(
+        page.getByText("Earlier malformed title 1", { exact: true }),
+      ).toBeVisible();
+      await expect.element(page.getByText("Page 1", { exact: true })).toBeVisible();
+    }, { timeout: 10_000 });
+
+    expect(location.search).toContain("region=US");
+    expect(location.search).toContain("malformedRefreshTimestampProvider=Wikidata");
+    expect(location.search).toContain("malformedRefreshTimestamp=true");
+    expect(location.search).not.toContain("offset=");
+    expect(mocks.searchCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ...activeParams, offset: 50 }),
+      expect.objectContaining({ ...activeParams, offset: 0 }),
+    ]));
+    expect(client.getQueryData(
+      getSearchAdminContentQueryKey({ ...activeParams, offset: 50 }),
+    )).toEqual([]);
+    expect(client.getQueryData(
+      getSearchAdminContentQueryKey({ ...activeParams, offset: 0 }),
+    )).toEqual(mocks.earlierPageResults);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.searchResults = [];
+    mocks.earlierPageResults = [];
+    mocks.searchCalls = [];
     mocks.searchEnabled = false;
     mocks.refetchIntervalOverride = undefined;
     mocks.configuredRefetchInterval = undefined;
