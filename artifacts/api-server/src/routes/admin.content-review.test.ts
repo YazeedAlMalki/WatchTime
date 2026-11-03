@@ -1065,6 +1065,64 @@ describe("admin Content review timestamp filter", () => {
     });
   });
 
+  it("keeps provider filters scoped to each unclassified rating on the same title", async () => {
+    const fixturePrefix = "unclassified-same-title-provider-fixture-20261103";
+    const titleName = `${fixturePrefix}-title`;
+    const providers = [`${fixturePrefix} Provider A`, `${fixturePrefix} Provider B`];
+    const [title] = await db.insert(titlesTable).values({
+      name: titleName,
+      type: "movie",
+      popularity: 1,
+    }).returning({ id: titlesTable.id });
+    titleIds.push(title.id);
+
+    const ratings = await db.insert(safetyRecordsTable).values(
+      providers.map((provider, index) => ({
+        titleId: title.id,
+        sourceName: provider,
+        status: "available",
+        isCommunity: false,
+        url: `https://provider.example/ratings/${title.id}/${index}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{
+          category: `UNSUPPORTED_SYSTEM_${index}`,
+          label: `Unclassified ${index}`,
+          score: null,
+          maxScore: null,
+          description: null,
+        }],
+      })),
+    ).returning({ id: safetyRecordsTable.id });
+    await markMalformedTimestamp(ratings.map(({ id }) => id));
+
+    const query = `/api/admin/content?q=${encodeURIComponent(fixturePrefix)}&malformedRegionalClassification=true`;
+    const unfilteredReview = await request(app).get(query).expect(200);
+    expect(unfilteredReview.body).toHaveLength(2);
+    expect(unfilteredReview.body.map((item: any) => item.name))
+      .toEqual([titleName, titleName]);
+    expect(unfilteredReview.body.map((item: any) => ({
+      provider: item.unclassifiedRating.provider,
+      recordId: item.unclassifiedRating.recordId,
+    }))).toEqual([
+      { provider: providers[0], recordId: ratings[0].id },
+      { provider: providers[1], recordId: ratings[1].id },
+    ]);
+
+    for (const [index, provider] of providers.entries()) {
+      const providerReview = await request(app)
+        .get(`${query}&malformedRefreshTimestampProvider=${encodeURIComponent(provider)}`)
+        .expect(200);
+      expect(providerReview.body).toHaveLength(1);
+      expect(providerReview.body[0]).toMatchObject({
+        name: titleName,
+        unclassifiedRating: {
+          provider,
+          recordId: ratings[index].id,
+        },
+      });
+    }
+  });
+
   it("pages every unclassified provider record once in stable order", async () => {
     const fixturePrefix = "unclassified-rating-pages-fixture-20261101";
     const titles = await db.insert(titlesTable).values(

@@ -157,6 +157,54 @@ describe("admin content URL", () => {
       .not.toContain("malformedRegionalClassification");
   });
 
+  it("keeps same-title unclassified provider links distinct from the unfiltered review", () => {
+    const reviewLink = (provider: string) => adminContentUrl(
+      "?tab=content",
+      "content",
+      "US",
+      "Shared title",
+      "all",
+      undefined,
+      false,
+      0,
+      provider,
+      undefined,
+      undefined,
+      false,
+      "",
+      "all",
+      true,
+    );
+    const providerAUrl = reviewLink("Fixture Provider A");
+    const providerBUrl = reviewLink("Fixture Provider B");
+    const allProvidersUrl = reviewLink("");
+
+    expect(readAdminContentUrl(new URL(providerAUrl, "https://example.test").search))
+      .toMatchObject({
+        q: "Shared title",
+        malformedRegionalClassification: true,
+        malformedRefreshTimestampProvider: "Fixture Provider A",
+      });
+    expect(readAdminContentUrl(new URL(providerBUrl, "https://example.test").search))
+      .toMatchObject({
+        q: "Shared title",
+        malformedRegionalClassification: true,
+        malformedRefreshTimestampProvider: "Fixture Provider B",
+      });
+    expect(readAdminContentUrl(new URL(allProvidersUrl, "https://example.test").search))
+      .toMatchObject({
+        q: "Shared title",
+        malformedRegionalClassification: true,
+        malformedRefreshTimestampProvider: "",
+      });
+    expect(new URL(providerAUrl, "https://example.test").searchParams
+      .get("malformedRefreshTimestampProvider")).toBe("Fixture Provider A");
+    expect(new URL(providerBUrl, "https://example.test").searchParams
+      .get("malformedRefreshTimestampProvider")).toBe("Fixture Provider B");
+    expect(new URL(allProvidersUrl, "https://example.test").searchParams
+      .has("malformedRefreshTimestampProvider")).toBe(false);
+  });
+
   it("shares the malformed timestamp filter with the selected region and search", () => {
     const filtered = adminContentUrl(
       "?tab=content&region=GB&q=Alien&ownership=provider",
