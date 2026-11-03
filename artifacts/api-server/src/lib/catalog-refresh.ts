@@ -203,14 +203,10 @@ export async function retryFailedCatalogTitles(
 }
 
 export async function scheduleCatalogRefresh(delayOverride?: number) {
-  if (delayOverride === undefined) {
-    await recoverInterruptedRuns();
-  } else {
-    // Recovery must not prevent the next scheduled attempt during an outage.
-    await recoverInterruptedRuns().catch((err) => {
-      logger.warn({ err }, "unable to recover interrupted catalog refreshes");
-    });
-  }
+  // Recovery must not prevent the next scheduled attempt during an outage.
+  await recoverInterruptedRuns().catch((err) => {
+    logger.warn({ err }, "unable to recover interrupted catalog refreshes");
+  });
   let delay = delayOverride;
   if (delay === undefined) {
     try {

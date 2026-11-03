@@ -61,6 +61,42 @@ describe("catalog refresh scheduling history failures", () => {
       vi.useRealTimers();
     }
   });
+
+  it.each([
+    { mode: "startup", schedule: () => scheduleCatalogRefresh(), expectedDelay: 1_000 },
+    { mode: "retry-delay", schedule: () => scheduleCatalogRefresh(15_000), expectedDelay: 15_000 },
+  ])("schedules a $mode refresh when interrupted-run recovery fails", async ({ schedule, expectedDelay }) => {
+    const recoveryError = new Error("temporary catalog recovery failure");
+    const connectSpy = vi.spyOn(pool, "connect").mockRejectedValueOnce(recoveryError);
+    const historySelect = vi.spyOn(db, "select").mockImplementation(() => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            limit: () => Promise.resolve([]),
+          }),
+        }),
+      }),
+    }) as unknown as ReturnType<typeof db.select>);
+    const warningSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    try {
+      await expect(schedule()).resolves.toBeUndefined();
+      expect(setTimeoutSpy.mock.calls.map(([, delay]) => delay)).toContain(expectedDelay);
+      expect(warningSpy).toHaveBeenCalledWith(
+        { err: recoveryError }, "unable to recover interrupted catalog refreshes",
+      );
+    } finally {
+      vi.clearAllTimers();
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+      warningSpy.mockRestore();
+      historySelect.mockRestore();
+      connectSpy.mockRestore();
+    }
+  });
 });
 
 describe("pruneCatalogRefreshHistory", () => {
