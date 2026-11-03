@@ -403,6 +403,15 @@ describe("admin safety sync status", () => {
       mapped: 2,
       missing: 1,
       errors: 1,
+      results: [{
+        ok: true,
+        titleId: 101,
+        titleName: "Saved mapping",
+        externalId: "Q101",
+        dataStatus: "saved",
+        items: 3,
+        classifications: 2,
+      }],
       startedAt: new Date("2099-01-01T09:55:00.000Z"),
       completedAt: new Date("2099-01-01T10:01:00.000Z"),
       createdAt: new Date("2099-01-01T10:05:00.000Z"),
@@ -417,6 +426,13 @@ describe("admin safety sync status", () => {
       missing: 0,
       errors: 1,
       error: "Provider request failed",
+      results: [{
+        ok: false,
+        titleId: 102,
+        titleName: "Failed lookup",
+        status: "error",
+        error: "Provider request failed",
+      }],
       startedAt: new Date("2099-01-01T09:59:00.000Z"),
       completedAt: new Date("2099-01-01T10:02:00.000Z"),
       createdAt: new Date("2099-01-01T10:00:00.000Z"),
@@ -459,6 +475,13 @@ describe("admin safety sync status", () => {
         errors: 1,
         nextOffset: 16,
         error: "Provider request failed",
+        results: [{
+          ok: false,
+          titleId: 102,
+          titleName: "Failed lookup",
+          status: "error",
+          error: "Provider request failed",
+        }],
       }),
       expect.objectContaining({
         id: olderCompletion.id,
@@ -469,9 +492,17 @@ describe("admin safety sync status", () => {
         missing: 1,
         errors: 1,
         nextOffset: 14,
+        results: [{
+          ok: true,
+          titleId: 101,
+          titleName: "Saved mapping",
+          externalId: "Q101",
+          dataStatus: "saved",
+          items: 3,
+          classifications: 2,
+        }],
       }),
     ]);
-    expect(response.body[0]).not.toHaveProperty("results");
   });
 
   it("rejects history limits outside the supported range", async () => {

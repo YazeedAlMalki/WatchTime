@@ -2211,7 +2211,7 @@ components:
         error: { type: ["string", "null"] }
     AdminContentRefreshBatchHistoryEntry:
       type: object
-      required: [id, provider, status, limit, offset, processed, mapped, superseded, missing, errors, nextOffset, completedAt]
+      required: [id, provider, status, limit, offset, processed, mapped, superseded, missing, errors, nextOffset, completedAt, results]
       properties:
         id: { type: integer }
         provider:
@@ -2230,6 +2230,10 @@ components:
         nextOffset: { type: integer }
         completedAt: { type: ["string", "null"], format: date-time }
         error: { type: ["string", "null"] }
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminContentRefreshResult"
     AdminContentRefreshBatchStatus:
       type: object
       required: [lastCompleted, running, interrupted]

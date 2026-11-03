@@ -1885,7 +1885,18 @@ export const ListAdminContentRefreshBatchHistoryResponseItem = zod.object({
   "errors": zod.int(),
   "nextOffset": zod.int(),
   "completedAt": zod.coerce.date().nullable(),
-  "error": zod.string().nullish()
+  "error": zod.string().nullish(),
+  "results": zod.array(zod.object({
+  "ok": zod.boolean(),
+  "titleId": zod.int(),
+  "titleName": zod.string(),
+  "externalId": zod.string().nullish(),
+  "items": zod.int().optional(),
+  "classifications": zod.int().optional(),
+  "dataStatus": zod.enum(['saved', 'superseded']).optional(),
+  "status": zod.enum(['provider_unavailable', 'missing', 'error']).optional(),
+  "error": zod.string().optional()
+}))
 })
 export const ListAdminContentRefreshBatchHistoryResponse = zod.array(ListAdminContentRefreshBatchHistoryResponseItem)
 

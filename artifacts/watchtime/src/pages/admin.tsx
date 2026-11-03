@@ -54,6 +54,7 @@ import {
   type ListAdminContentAliasesOwnership,
 } from "@workspace/api-client-react";
 import { RATING_REGIONS, type RatingRegion } from "@workspace/rating-regions";
+import { buildSafetySyncReportCsv } from "@/lib/safety-sync-report";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, Redirect, useLocation, useSearch } from "wouter";
 import {
@@ -2203,15 +2204,41 @@ function ContentTab({
                               : "Completion time unavailable"}
                           </span>
                         </div>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                            run.status === "failed"
-                              ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                              : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                          }`}
-                        >
-                          {run.status === "failed" ? "Failed" : "Completed"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              run.status === "failed"
+                                ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                            }`}
+                          >
+                            {run.status === "failed" ? "Failed" : "Completed"}
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 rounded-lg px-2"
+                            aria-label={`Download CSV report for safety-sync run ${run.id}`}
+                            onClick={() => {
+                              const blob = new Blob(
+                                [buildSafetySyncReportCsv(run)],
+                                { type: "text/csv;charset=utf-8" },
+                              );
+                              const url = URL.createObjectURL(blob);
+                              const link = document.createElement("a");
+                              link.href = url;
+                              link.download = `safety-sync-run-${run.id}.csv`;
+                              document.body.appendChild(link);
+                              link.click();
+                              link.remove();
+                              window.setTimeout(() => URL.revokeObjectURL(url), 0);
+                            }}
+                          >
+                            <Download className="mr-1 h-3.5 w-3.5" />
+                            Download CSV
+                          </Button>
+                        </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                         <span>Processed {run.processed} of up to {run.limit}</span>

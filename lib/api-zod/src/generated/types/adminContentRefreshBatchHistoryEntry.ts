@@ -7,6 +7,7 @@
  */
 import type { AdminContentRefreshBatchHistoryEntryProvider } from './adminContentRefreshBatchHistoryEntryProvider';
 import type { AdminContentRefreshBatchHistoryEntryStatus } from './adminContentRefreshBatchHistoryEntryStatus';
+import type { AdminContentRefreshResult } from './adminContentRefreshResult';
 
 export interface AdminContentRefreshBatchHistoryEntry {
   id: number;
@@ -24,4 +25,5 @@ export interface AdminContentRefreshBatchHistoryEntry {
   completedAt: Date | null;
   /** @nullable */
   error?: string | null;
+  results: AdminContentRefreshResult[];
 }

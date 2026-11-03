@@ -2522,6 +2522,7 @@ router.get("/content/refresh-batch/history", async (req, res) => {
     nextOffset: run.offset + run.processed,
     completedAt: run.completedAt?.toISOString() ?? null,
     error: run.error,
+    results: run.results,
   }))));
 });
 

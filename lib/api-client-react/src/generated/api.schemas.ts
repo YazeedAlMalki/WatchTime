@@ -1002,6 +1002,7 @@ export interface AdminContentRefreshBatchHistoryEntry {
   completedAt: string | null;
   /** @nullable */
   error?: string | null;
+  results: AdminContentRefreshResult[];
 }
 
 export interface AdminContentRefreshBatchStatus {
