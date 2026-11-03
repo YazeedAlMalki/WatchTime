@@ -980,6 +980,44 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("preserves the remaining portion of the week after restart when the latest completed run is several days old", async () => {
+    const now = Date.parse("2026-11-03T12:00:00.000Z");
+    const elapsedMs = 3 * 24 * 60 * 60 * 1000;
+    const remainingMs = WEEK_MS - elapsedMs;
+    // Isolate only the latest completed history; preserve all shared runs.
+    const captureTimers = () => vi.spyOn(globalThis, "setTimeout").mockClear();
+    let setTimeoutSpy: ReturnType<typeof captureTimers> | undefined;
+    const latestRunRead = vi.fn(async () => {
+      // Recovery must finish with real timers before freezing the scheduler.
+      vi.spyOn(Date, "now").mockReturnValue(now);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      setTimeoutSpy = captureTimers();
+      return [{ createdAt: new Date(now - elapsedMs) }];
+    });
+    const latestRunQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: latestRunRead,
+    };
+    const selectSpy = vi.spyOn(db, "select").mockReturnValueOnce(
+      latestRunQuery as unknown as ReturnType<typeof db.select>,
+    );
+
+    try {
+      await scheduleCatalogRefresh();
+
+      expect(selectSpy).toHaveBeenCalledTimes(1);
+      expect(latestRunQuery.from).toHaveBeenCalledWith(catalogSyncRunsTable);
+      expect(latestRunRead).toHaveBeenCalledExactlyOnceWith(1);
+      expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), remainingMs);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      cleanupSchedulerTimers();
+    }
+  });
+
   it("keeps the next scheduled run one week after an immediate completed run", async () => {
     const now = new Date();
     const [run] = await db.insert(catalogSyncRunsTable).values({
