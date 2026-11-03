@@ -1018,6 +1018,45 @@ describe("real catalog sync", () => {
     }
   });
 
+  it("schedules exactly one refresh after 1,000 ms when the weekly deadline is less than one second away", async () => {
+    const now = Date.parse("2026-11-03T12:00:00.000Z");
+    const remainingMs = 500;
+    const nearlyDueCreatedAt = new Date(now - WEEK_MS + remainingMs);
+    const captureTimers = () => vi.spyOn(globalThis, "setTimeout").mockClear();
+    let setTimeoutSpy: ReturnType<typeof captureTimers> | undefined;
+    const latestRunRead = vi.fn(async () => {
+      // Recovery finishes on real timers; freeze only the scheduling boundary.
+      vi.spyOn(Date, "now").mockReturnValue(now);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      setTimeoutSpy = captureTimers();
+      return [{ createdAt: nearlyDueCreatedAt }];
+    });
+    const latestRunQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: latestRunRead,
+    };
+    // Substitute only the latest completed-run read, preserving shared history.
+    const selectSpy = vi.spyOn(db, "select").mockReturnValueOnce(
+      latestRunQuery as unknown as ReturnType<typeof db.select>,
+    );
+
+    try {
+      await scheduleCatalogRefresh();
+
+      expect(nearlyDueCreatedAt.getTime() + WEEK_MS - Date.now()).toBe(remainingMs);
+      expect(selectSpy).toHaveBeenCalledTimes(1);
+      expect(latestRunQuery.from).toHaveBeenCalledWith(catalogSyncRunsTable);
+      expect(latestRunRead).toHaveBeenCalledExactlyOnceWith(1);
+      expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1_000);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      cleanupSchedulerTimers();
+    }
+  });
+
   it("keeps the next scheduled run one week after an immediate completed run", async () => {
     const now = new Date();
     const [run] = await db.insert(catalogSyncRunsTable).values({
