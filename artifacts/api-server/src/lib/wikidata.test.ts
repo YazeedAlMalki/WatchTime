@@ -1470,6 +1470,148 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
+  it("keeps the first persisted match when successful refreshes start at the same time", async () => {
+    const previousHealthRows = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    await db.delete(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_equal_time_refresh_test__",
+      year: 2020,
+      imdbId: "tt1234567",
+      popularity: 0,
+    }).returning();
+
+    const startedAt = new Date("2026-10-05T10:00:00.000Z");
+    const firstItem: WikidataItem = {
+      ...matchedItem,
+      itemId: "Q41",
+      itemUrl: "https://www.wikidata.org/wiki/Q41",
+      classifications: matchedItem.classifications.map((classification) => ({
+        ...classification,
+        label: "PG",
+      })),
+    };
+    const laterItem: WikidataItem = {
+      ...matchedItem,
+      itemId: "Q43",
+      itemUrl: "https://www.wikidata.org/wiki/Q43",
+      classifications: matchedItem.classifications.map((classification) => ({
+        ...classification,
+        label: "R",
+      })),
+    };
+    let signalQueriesStarted!: () => void;
+    const queriesStarted = new Promise<void>((resolve) => {
+      signalQueriesStarted = resolve;
+    });
+    let startedQueries = 0;
+    let resolveFirstQuery!: (item: WikidataItem) => void;
+    const firstQuery = new Promise<WikidataItem>((resolve) => {
+      resolveFirstQuery = resolve;
+    });
+    let resolveLaterQuery!: (item: WikidataItem) => void;
+    const laterQuery = new Promise<WikidataItem>((resolve) => {
+      resolveLaterQuery = resolve;
+    });
+    const makeHeldClient = (query: Promise<WikidataItem>) => ({
+      queryByImdbId: () => {
+        startedQueries += 1;
+        if (startedQueries === 2) signalQueriesStarted();
+        return query;
+      },
+    });
+    let firstRefresh: ReturnType<typeof refreshWikidataTitle> | undefined;
+    let laterRefresh: ReturnType<typeof refreshWikidataTitle> | undefined;
+    let firstRefreshCompleted = false;
+    let laterRefreshCompleted = false;
+
+    try {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(startedAt);
+      firstRefresh = refreshWikidataTitle(title.id, makeHeldClient(firstQuery));
+      laterRefresh = refreshWikidataTitle(title.id, makeHeldClient(laterQuery));
+      await queriesStarted;
+
+      resolveFirstQuery(firstItem);
+      await expect(firstRefresh).resolves.toMatchObject({
+        ok: true,
+        externalId: firstItem.itemId,
+      });
+      firstRefreshCompleted = true;
+
+      const [firstMapping] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, title.id),
+        eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
+      ));
+      const [firstRecord] = await db.select().from(safetyRecordsTable).where(and(
+        eq(safetyRecordsTable.titleId, title.id),
+        eq(safetyRecordsTable.sourceName, WIKIDATA_PROVIDER),
+        sql`${safetyRecordsTable.seasonNumber} is null`,
+        sql`${safetyRecordsTable.episodeNumber} is null`,
+      ));
+      expect(firstMapping).toMatchObject({
+        externalId: firstItem.itemId,
+        status: "mapped",
+        lastRefreshedAt: startedAt,
+      });
+      expect(firstRecord).toMatchObject({
+        url: firstItem.itemUrl,
+        updatedAt: startedAt,
+        items: [{ category: "MPAA", label: "PG" }],
+      });
+
+      resolveLaterQuery(laterItem);
+      await expect(laterRefresh).resolves.toMatchObject({
+        ok: true,
+        externalId: laterItem.itemId,
+      });
+      laterRefreshCompleted = true;
+
+      const [mappingAfterLaterRefresh] = await db.select().from(providerMappingsTable).where(and(
+        eq(providerMappingsTable.titleId, title.id),
+        eq(providerMappingsTable.provider, WIKIDATA_PROVIDER),
+      ));
+      const [recordAfterLaterRefresh] = await db.select().from(safetyRecordsTable).where(and(
+        eq(safetyRecordsTable.titleId, title.id),
+        eq(safetyRecordsTable.sourceName, WIKIDATA_PROVIDER),
+        sql`${safetyRecordsTable.seasonNumber} is null`,
+        sql`${safetyRecordsTable.episodeNumber} is null`,
+      ));
+      expect(mappingAfterLaterRefresh).toEqual(firstMapping);
+      expect(recordAfterLaterRefresh).toEqual(firstRecord);
+
+      const [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(health).toMatchObject({
+        status: "healthy",
+        lastSyncAt: startedAt,
+        lastSuccessAt: startedAt,
+        lastError: null,
+        refreshAttempts: 2,
+        successfulRefreshes: 2,
+        successRatePercent: 100,
+      });
+    } finally {
+      if (firstRefresh && !firstRefreshCompleted) {
+        resolveFirstQuery(firstItem);
+        await firstRefresh.catch(() => undefined);
+      }
+      if (laterRefresh && !laterRefreshCompleted) {
+        resolveLaterQuery(laterItem);
+        await laterRefresh.catch(() => undefined);
+      }
+      vi.useRealTimers();
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousHealthRows.length > 0) {
+        await db.insert(integrationHealthTable).values(previousHealthRows);
+      }
+    }
+  });
+
   it("keeps a newer empty-classification mapping when an older classified lookup finishes last", async () => {
     const previousHealthRows = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
