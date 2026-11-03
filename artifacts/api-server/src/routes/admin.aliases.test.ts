@@ -1102,6 +1102,72 @@ describe("admin title aliases", () => {
     expect(secondPage.body.nextCursor).toBeNull();
   });
 
+  it("uses current collision counts on a snapshot page after a shared alias is corrected", async () => {
+    const sharedAliases = await db.insert(titleAliasesTable).values([
+      {
+        titleId: createdTitleIds[0],
+        alias: "Cursor Edit Collision",
+        normalizedAlias: "cursoreditcollision",
+        sourceName: "Cursor collision edit test",
+        isEditorial: true,
+      },
+      {
+        titleId: createdTitleIds[1],
+        alias: "Cursor Edit Collision",
+        normalizedAlias: "cursoreditcollision",
+        sourceName: "Cursor collision edit test",
+        isEditorial: true,
+      },
+    ]).returning({
+      id: titleAliasesTable.id,
+      updatedAt: titleAliasesTable.updatedAt,
+    });
+
+    const firstPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Cursor Edit Collision", ownership: "editorial", limit: 1 })
+      .expect(200);
+
+    expect(firstPage.body.items).toEqual([
+      expect.objectContaining({
+        id: sharedAliases[0].id,
+        collision: true,
+        collisionTitleCount: 2,
+      }),
+    ]);
+    expect(firstPage.body.nextCursor).toBeTruthy();
+
+    await request(app)
+      .patch(`/api/admin/content-aliases/${sharedAliases[0].id}`)
+      .send({
+        alias: "Corrected Cursor Alias",
+        language: "en",
+        sourceUrl: "https://example.test/corrected-cursor-alias",
+        expectedUpdatedAt: sharedAliases[0].updatedAt.toISOString(),
+      })
+      .expect(200);
+
+    const secondPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Cursor Edit Collision",
+        ownership: "editorial",
+        limit: 1,
+        cursor: firstPage.body.nextCursor,
+      })
+      .expect(200);
+
+    expect(secondPage.body.items).toEqual([
+      expect.objectContaining({
+        id: sharedAliases[1].id,
+        alias: "Cursor Edit Collision",
+        collision: false,
+        collisionTitleCount: 1,
+      }),
+    ]);
+    expect(secondPage.body.nextCursor).toBeNull();
+  });
+
   it("continues through a stable alphabetical snapshot when aliases change between pages", async () => {
     const aliases = [
       "Snapshot Review Zulu",
