@@ -213,18 +213,27 @@ export async function scheduleCatalogRefresh(delayOverride?: number) {
   }
   let delay = delayOverride;
   if (delay === undefined) {
-    const [latest] = await db.select().from(catalogSyncRunsTable)
-      // Failed and skipped runs are attempts too. Scheduling from only
-      // successful runs made a restart immediately repeat an overdue failure.
-      .where(inArray(catalogSyncRunsTable.status, COMPLETED_RUN_STATUSES))
-      .orderBy(desc(catalogSyncRunsTable.createdAt)).limit(1);
-    const dueAt = latest?.createdAt ? latest.createdAt.getTime() + WEEK_MS : Date.now();
-    delay = Math.max(1_000, dueAt - Date.now());
+    try {
+      const [latest] = await db.select().from(catalogSyncRunsTable)
+        // Failed and skipped runs are attempts too. Scheduling from only
+        // successful runs made a restart immediately repeat an overdue failure.
+        .where(inArray(catalogSyncRunsTable.status, COMPLETED_RUN_STATUSES))
+        .orderBy(desc(catalogSyncRunsTable.createdAt)).limit(1);
+      const dueAt = latest?.createdAt ? latest.createdAt.getTime() + WEEK_MS : Date.now();
+      delay = Math.max(1_000, dueAt - Date.now());
+    } catch (err) {
+      logger.warn({ err }, "unable to read catalog refresh history for scheduling");
+      // A live timer remains authoritative. If it has already fired (or this
+      // is startup), retry scheduling after a short delay instead of stopping.
+      if (timer) return;
+      delay = SCHEDULED_START_RETRY_MS;
+    }
   }
   // Keep the previous timer if scheduling fails, and cancel it only when
   // the replacement is ready (including when two initializations overlap).
   if (timer) clearTimeout(timer);
   const scheduledTimer = setTimeout(() => {
+    if (timer === scheduledTimer) timer = undefined;
     let nextDelay = WEEK_MS;
     startCatalogRefresh("scheduled")
       .catch((err) => {
@@ -234,7 +243,7 @@ export async function scheduleCatalogRefresh(delayOverride?: number) {
       .finally(() => {
         // A newer initialization owns the schedule if it replaced this timer
         // while the scheduled run was starting.
-        if (timer !== scheduledTimer) return;
+        if (timer && timer !== scheduledTimer) return;
         void scheduleCatalogRefresh(nextDelay)
           .catch((err) => logger.error({ err }, "unable to reschedule catalog refresh"));
       });

@@ -6,7 +6,7 @@ import * as databaseModule from "@workspace/db";
 import * as schema from "@workspace/db/schema";
 import { logger } from "./logger";
 import { sourceItems } from "../seed-real";
-import { pruneCatalogRefreshHistory, recoverInterruptedRuns, retryFailedCatalogTitles, startCatalogRefresh, STALE_QUEUED_REFRESH_MS } from "./catalog-refresh";
+import { pruneCatalogRefreshHistory, recoverInterruptedRuns, retryFailedCatalogTitles, scheduleCatalogRefresh, startCatalogRefresh, STALE_QUEUED_REFRESH_MS } from "./catalog-refresh";
 
 const runCatalogSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("../seed-real", async (importOriginal) => ({
@@ -21,6 +21,46 @@ afterEach(async () => {
     await db.delete(catalogSyncRunsTable).where(inArray(catalogSyncRunsTable.id, createdRunIds));
     createdRunIds.length = 0;
   }
+});
+
+describe("catalog refresh scheduling history failures", () => {
+  it("retries after a history read failure and preserves that retry when a refresh is already scheduled", async () => {
+    vi.useFakeTimers();
+    const historyError = new Error("temporary catalog history read failure");
+    const failedHistoryQuery = () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            limit: () => Promise.reject(historyError),
+          }),
+        }),
+      }),
+    }) as unknown as ReturnType<typeof db.select>;
+    const selectSpy = vi.spyOn(db, "select")
+      .mockImplementationOnce(failedHistoryQuery)
+      .mockImplementationOnce(failedHistoryQuery);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const warningSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+    const scheduledRetryTimers = () => setTimeoutSpy.mock.calls.filter(([, delay]) => delay === 5 * 60 * 1000);
+
+    try {
+      await expect(scheduleCatalogRefresh()).resolves.toBeUndefined();
+      expect(scheduledRetryTimers()).toHaveLength(1);
+      expect(warningSpy).toHaveBeenCalledWith(
+        { err: historyError }, "unable to read catalog refresh history for scheduling",
+      );
+
+      await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+      await expect(scheduleCatalogRefresh()).resolves.toBeUndefined();
+      expect(scheduledRetryTimers()).toHaveLength(1);
+    } finally {
+      selectSpy.mockRestore();
+      setTimeoutSpy.mockRestore();
+      warningSpy.mockRestore();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("pruneCatalogRefreshHistory", () => {
