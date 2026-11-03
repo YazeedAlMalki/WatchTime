@@ -137,6 +137,8 @@ jest.mock('@workspace/api-client-react', () => {
         queryKey: seasonKey(id, season),
         queryFn: () => ({ episodes: [{
           id: 101, seasonNumber: 1, episodeNumber: 1, name: 'Pilot', watched: mockWatched,
+        }, {
+          id: 102, seasonNumber: 1, episodeNumber: 2, name: 'Second', watched: false,
         }] }),
         enabled: options.query.enabled,
       }),
@@ -154,7 +156,7 @@ jest.mock('@workspace/api-client-react', () => {
           return mockRecommendations();
         },
       }),
-    useMarkEpisodeWatched: (options: { mutation: { onMutate: () => unknown; onSuccess: () => void } }) =>
+    useMarkEpisodeWatched: (options: { mutation: { onMutate: () => unknown; onSuccess: () => void; onError: () => void } }) =>
       useMutation({
         mutationFn: async (request: unknown) => {
           await mockMarkRequest(request);
@@ -163,6 +165,7 @@ jest.mock('@workspace/api-client-react', () => {
         },
         onMutate: options.mutation.onMutate,
         onSuccess: options.mutation.onSuccess,
+        onError: options.mutation.onError,
       }),
     useMarkTitleWatched: (options: { mutation: { onMutate: () => unknown; onSuccess: () => void } }) =>
       useMutation({
@@ -184,7 +187,7 @@ jest.mock('@workspace/api-client-react', () => {
         onMutate: options.mutation.onMutate,
         onSuccess: options.mutation.onSuccess,
       }),
-    useUnmarkEpisodeWatched: (options: { mutation: { onMutate: () => unknown; onSuccess: () => void } }) =>
+    useUnmarkEpisodeWatched: (options: { mutation: { onMutate: () => unknown; onSuccess: () => void; onError: () => void } }) =>
       useMutation({
         mutationFn: async (request: unknown) => {
           await mockUnmarkRequest(request);
@@ -193,6 +196,7 @@ jest.mock('@workspace/api-client-react', () => {
         },
         onMutate: options.mutation.onMutate,
         onSuccess: options.mutation.onSuccess,
+        onError: options.mutation.onError,
       }),
     useAddToWatchlist: idleMutation, useRemoveFromWatchlist: idleMutation,
     getMyShows: async () => {
@@ -666,7 +670,9 @@ it.each([
   jest.clearAllMocks();
   const request = initiallyWatched ? mockUnmarkRequest : mockMarkRequest;
   const otherRequest = initiallyWatched ? mockMarkRequest : mockUnmarkRequest;
-  request.mockRejectedValueOnce(new Error('Offline')).mockResolvedValueOnce({ ok: true });
+  request.mockRejectedValueOnce(new Error('Offline'))
+    .mockRejectedValueOnce(new Error('Still offline'))
+    .mockResolvedValueOnce({ ok: true });
 
   const client = new QueryClient({
     defaultOptions: {
@@ -709,14 +715,37 @@ it.each([
   expect(invalidate).not.toHaveBeenCalled();
   expect(mockActivityFetch).not.toHaveBeenCalled();
   expect(detail.getByText(`${Number(initiallyWatched)}/2 watched`)).toBeTruthy();
+  const errorMessage = "Couldn't save the watched status for S1E1 — Pilot. Tap the checkbox to retry.";
+  expect(detail.getByRole('alert')).toHaveTextContent(errorMessage);
+  expect(detail.getByRole('alert')).toHaveProp('accessibilityLiveRegion', 'assertive');
+  expect(detail.getByTestId('episode-save-error-101')).toHaveTextContent(errorMessage);
+  expect(detail.queryByTestId('episode-save-error-102')).toBeNull();
+  expect(detail.getByRole('checkbox', { name: 'S1E1 — Pilot', checked: initiallyWatched }))
+    .toHaveProp('accessibilityHint', "Couldn't save this change. Activate to retry.");
 
-  // Retry through the same episode control, with the real mutation lifecycle.
+  // Repeated failures keep the saved state and the episode-specific error.
   await fireEvent.press(detail.getByTestId('episode-check-101'));
   await waitFor(() => {
     expect(request).toHaveBeenCalledTimes(2);
+    expect(client.getMutationCache().getAll().at(-1)?.state.status).toBe('error');
+    expect(detail.getByTestId('episode-check-101')).toBeEnabled();
+  });
+  expect(detail.getByRole('alert')).toHaveTextContent(errorMessage);
+  expect(mockWatched).toBe(initiallyWatched);
+  expect(client.getQueryData(activityKey)).toBe(oldActivity);
+  expect(client.getQueryState(activityKey)).toEqual(oldActivityState);
+  expect(invalidate).not.toHaveBeenCalled();
+
+  // A successful retry clears the error and refreshes dependent queries.
+  await fireEvent.press(detail.getByTestId('episode-check-101'));
+  await waitFor(() => {
+    expect(request).toHaveBeenCalledTimes(3);
     expect(mockWatched).toBe(!initiallyWatched);
     expect(client.getQueryState(activityKey)?.isInvalidated).toBe(true);
     expect(detail.getByText(`${Number(!initiallyWatched)}/2 watched`)).toBeTruthy();
+    expect(detail.queryByRole('alert')).toBeNull();
+    expect(detail.getByRole('checkbox', { name: 'S1E1 — Pilot', checked: !initiallyWatched }))
+      .toBeEnabled();
   });
   expect(request).toHaveBeenLastCalledWith(expectedRequest);
   expect(otherRequest).not.toHaveBeenCalled();

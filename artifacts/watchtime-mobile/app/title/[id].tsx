@@ -715,6 +715,7 @@ function SeasonAccordion({
 }) {
   const c = useColors();
   const [expanded, setExpanded] = useState(false);
+  const [saveErrors, setSaveErrors] = useState<Record<number, boolean>>({});
   const queryClient = useQueryClient();
   const detail = useGetSeason(titleId, season.seasonNumber, {
     query: { enabled: expanded } as any,
@@ -743,7 +744,7 @@ function SeasonAccordion({
   };
   const accountScopedMutation = {
     onMutate: () => ({ accountId: userId }),
-    onSuccess: (_data: unknown, _variables: unknown, mutationContext: unknown) => {
+    onSuccess: (_data: unknown, variables: { episodeId: number }, mutationContext: unknown) => {
       if (
         !userId ||
         !mutationContext ||
@@ -753,7 +754,15 @@ function SeasonAccordion({
       ) {
         return;
       }
+      setSaveErrors((errors) => {
+        const next = { ...errors };
+        delete next[variables.episodeId];
+        return next;
+      });
       invalidate(userId);
+    },
+    onError: (_error: unknown, variables: { episodeId: number }) => {
+      setSaveErrors((errors) => ({ ...errors, [variables.episodeId]: true }));
     },
   };
   const mark = useMarkEpisodeWatched({ mutation: accountScopedMutation });
@@ -810,6 +819,12 @@ function SeasonAccordion({
                   {isSignedIn ? (
                     <Pressable
                       testID={`episode-check-${ep.id}`}
+                      accessibilityRole="checkbox"
+                      accessibilityLabel={`S${ep.seasonNumber}E${ep.episodeNumber} — ${ep.name}`}
+                      accessibilityState={{ checked: !!ep.watched, disabled: busy }}
+                      accessibilityHint={saveErrors[ep.id]
+                        ? "Couldn't save this change. Activate to retry."
+                        : ep.watched ? 'Mark as unwatched' : 'Mark as watched'}
                       disabled={busy}
                       onPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -847,6 +862,16 @@ function SeasonAccordion({
                         .filter(Boolean)
                         .join(' · ')}
                     </Text>
+                    {saveErrors[ep.id] ? (
+                      <Text
+                        testID={`episode-save-error-${ep.id}`}
+                        accessibilityRole="alert"
+                        accessibilityLiveRegion="assertive"
+                        style={{ color: c.destructive, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 4 }}
+                      >
+                        {`Couldn't save the watched status for S${ep.seasonNumber}E${ep.episodeNumber} — ${ep.name}. Tap the checkbox to retry.`}
+                      </Text>
+                    ) : null}
                   </View>
                 </View>
               );
@@ -1161,7 +1186,7 @@ export default function TitleDetailScreen() {
           <View style={{ paddingHorizontal: 16, gap: 10 }}>
             {t.seasons.map((s) => (
               <SeasonAccordion
-                key={s.seasonNumber}
+                key={`${userId}:${titleId}:${s.seasonNumber}`}
                 titleId={titleId}
                 season={s}
                 isSignedIn={!!isSignedIn}
