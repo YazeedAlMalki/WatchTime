@@ -432,7 +432,8 @@ describe("private, idempotent watch-history imports", () => {
     { name: "records only the chosen show's episode and parent history after reviewing a shared regional title", freshImport: false, removeAlias: false, resolveEpisode: true },
     { name: "does not add history twice when a shared-alias episode becomes watched before manual review", freshImport: false, removeAlias: false, resolveEpisode: true, alreadyWatched: true },
     { name: "does not let another account's watched shared-alias episode block manual review or confirmation", freshImport: false, removeAlias: false, resolveEpisode: true, otherAccountWatched: true },
-  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, otherAccountWatched = false, preserveEditorial = false, retainProvider = false, confirmBeforeRefresh = false }) => {
+    { name: "imports the chosen shared-alias episode when a different episode of that show is already watched", freshImport: false, removeAlias: false, resolveEpisode: true, differentEpisodeWatched: true },
+  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, otherAccountWatched = false, differentEpisodeWatched = false, preserveEditorial = false, retainProvider = false, confirmBeforeRefresh = false }) => {
     // Catalog-refresh scenarios must not consume the quota of later import tests.
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
@@ -580,6 +581,32 @@ describe("private, idempotent watch-history imports", () => {
           eq(watchedTitlesTable.userId, USER_A),
           inArray(watchedTitlesTable.titleId, regionalTitleIds),
         );
+        // Seed history only after the ambiguous preview, so PATCH must check
+        // the exact imported episode rather than treating the show as watched.
+        if (differentEpisodeWatched) {
+          const [otherEpisode] = await db.insert(episodesTable).values({
+            titleId: chosenCandidate.titleId,
+            seasonNumber: 2,
+            episodeNumber: 4,
+            name: "Previously watched episode",
+          }).returning();
+          expect(otherEpisode.id).not.toBe(chosenEpisode.id);
+          await db.insert(watchedEpisodesTable).values({
+            userId: USER_A,
+            titleId: chosenCandidate.titleId,
+            episodeId: otherEpisode.id,
+            watchedAt: new Date("2020-02-04T12:00:00Z"),
+          });
+          await db.insert(watchedTitlesTable).values({
+            userId: USER_A,
+            titleId: chosenCandidate.titleId,
+            watchedAt: new Date("2020-02-04T12:00:00Z"),
+          });
+        }
+        const previousEpisodes = await db.select().from(watchedEpisodesTable).where(historyFilter);
+        const previousParents = await db.select().from(watchedTitlesTable).where(parentHistoryFilter);
+        expect(previousEpisodes).toHaveLength(differentEpisodeWatched ? 1 : 0);
+        expect(previousParents).toHaveLength(differentEpisodeWatched ? 1 : 0);
         if (alreadyWatched) {
           expect(await db.select().from(watchedEpisodesTable).where(historyFilter)).toEqual([]);
           expect(await db.select().from(watchedTitlesTable).where(parentHistoryFilter)).toEqual([]);
@@ -667,8 +694,8 @@ describe("private, idempotent watch-history imports", () => {
         };
         expect(resolved.body).toMatchObject(resolvedMatch);
         // Reviewing a candidate changes only the import, not watch history.
-        expect(await db.select().from(watchedEpisodesTable).where(historyFilter)).toEqual([]);
-        expect(await db.select().from(watchedTitlesTable).where(parentHistoryFilter)).toEqual([]);
+        expect(await db.select().from(watchedEpisodesTable).where(historyFilter)).toEqual(previousEpisodes);
+        expect(await db.select().from(watchedTitlesTable).where(parentHistoryFilter)).toEqual(previousParents);
         if (otherAccountWatched) {
           expect(await db.select().from(watchedEpisodesTable).where(otherEpisodeFilter)).toEqual(otherEpisodes);
           expect(await db.select().from(watchedTitlesTable).where(otherParentFilter)).toEqual(otherParents);
@@ -681,14 +708,28 @@ describe("private, idempotent watch-history imports", () => {
         expect(confirmed.body.items).toHaveLength(1);
         expect(confirmed.body.items[0]).toMatchObject(resolvedMatch);
         const watched = await db.select().from(watchedEpisodesTable).where(historyFilter);
-        expect(watched).toHaveLength(1);
-        expect(watched[0]).toMatchObject({ userId: USER_A, titleId: chosenCandidate.titleId, episodeId: chosenEpisode.id });
+        expect(watched).toHaveLength(differentEpisodeWatched ? 2 : 1);
+        expect(watched.filter((row) => row.episodeId === chosenEpisode.id)).toHaveLength(1);
+        expect(watched.every((row) => row.userId === USER_A && row.titleId === chosenCandidate.titleId)).toBe(true);
+        expect(watched).toEqual(expect.arrayContaining(previousEpisodes));
         const parents = await db.select().from(watchedTitlesTable).where(parentHistoryFilter);
+        expect(parents.map((row) => row.titleId)).toEqual([chosenCandidate.titleId]);
         expect(parents).toMatchObject([{ userId: USER_A, titleId: chosenCandidate.titleId }]);
-        expect(parents).toHaveLength(1);
         if (otherAccountWatched) {
           expect(await db.select().from(watchedEpisodesTable).where(otherEpisodeFilter)).toEqual(otherEpisodes);
           expect(await db.select().from(watchedTitlesTable).where(otherParentFilter)).toEqual(otherParents);
+        }
+        if (differentEpisodeWatched) {
+          expect(parents).toEqual(previousParents);
+          const reconfirmed = await supertest(app).post(`/api/imports/${importId}/confirm`).set("x-test-user", USER_A);
+          expect(reconfirmed.status).toBe(200);
+          expect(reconfirmed.body).toEqual(confirmed.body);
+          expect(await db.select().from(watchedEpisodesTable).where(historyFilter)).toEqual(watched);
+          expect(await db.select().from(watchedTitlesTable).where(parentHistoryFilter)).toEqual(previousParents);
+          expect(await db.select().from(watchlistTable).where(and(
+            eq(watchlistTable.userId, USER_A),
+            inArray(watchlistTable.titleId, regionalTitleIds),
+          ))).toEqual([]);
         }
         return;
       }
