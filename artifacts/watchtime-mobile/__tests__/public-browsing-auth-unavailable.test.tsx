@@ -15,7 +15,42 @@ const mockTitleFetch = jest.fn();
 const mockTitleRefetch = jest.fn();
 const mockTitleSafetyFetch = jest.fn();
 const mockTitleSafetyRefetch = jest.fn();
-const mockPublicTitle = {
+const mockSeasonFetch = jest.fn();
+const mockSeasonRefetch = jest.fn();
+const mockSeasonData = {
+  episodes: [
+    {
+      id: 2301,
+      seasonNumber: 1,
+      episodeNumber: 1,
+      name: 'Pilot',
+      watched: false,
+    },
+  ],
+};
+const mockSeasonQueryState: {
+  current: { data: typeof mockSeasonData | null; isLoading: boolean; isError: boolean };
+} = {
+  current: { data: null, isLoading: false, isError: true },
+};
+const mockPublicTitle: {
+  id: number;
+  name: string;
+  type: 'movie' | 'tv';
+  year: number;
+  genres: string[];
+  altTitles: string[];
+  providers: { name: string; kind: string }[];
+  seasons: {
+    seasonNumber: number;
+    name: string;
+    episodeCount: number;
+    watchedCount: number | null;
+  }[];
+  inWatchlist: boolean;
+  watched: boolean;
+  overview: string;
+} = {
   id: 771,
   name: 'Public show while sign-in is down',
   type: 'movie',
@@ -95,6 +130,10 @@ jest.mock('@workspace/api-client-react', () => ({
     return { ...mockTitleQueryState.current, refetch: mockTitleRefetch };
   },
   getGetTitleQueryKey: (id: number) => [`/api/titles/${id}`],
+  useGetSeason: (id: number, seasonNumber: number, options: any) => {
+    mockSeasonFetch(id, seasonNumber, options?.query?.enabled);
+    return { ...mockSeasonQueryState.current, refetch: mockSeasonRefetch };
+  },
   useGetSimilarTitles: () => mockSimilarQueryState.current,
   useGetTitleSafety: (params: unknown) => {
     mockTitleSafetyFetch(params);
@@ -193,6 +232,9 @@ describe('public browsing while authentication is unavailable', () => {
     mockTitleRefetch.mockClear();
     mockTitleSafetyFetch.mockClear();
     mockTitleSafetyRefetch.mockClear();
+    mockSeasonFetch.mockClear();
+    mockSeasonRefetch.mockClear();
+    mockSeasonQueryState.current = { data: null, isLoading: false, isError: true };
     mockTitleQueryState.current = {
       data: mockPublicTitle,
       isLoading: false,
@@ -336,6 +378,77 @@ describe('public browsing while authentication is unavailable', () => {
 
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
     expect(mockTitleSafetyFetch).toHaveBeenCalledWith({ titleId: 771 });
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+
+  it('keeps shared title details visible when episode loading fails', async () => {
+    const publicShow = {
+      ...mockPublicTitle,
+      type: 'tv' as const,
+      seasons: [
+        {
+          seasonNumber: 1,
+          name: 'Season 1',
+          episodeCount: 8,
+          watchedCount: null,
+        },
+      ],
+    };
+    mockTitleQueryState.current = {
+      data: publicShow,
+      isLoading: false,
+      isError: false,
+    };
+
+    const detail = await render(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(
+      detail.getByText('A public synopsis remains available while sign-in is down.'),
+    ).toBeTruthy();
+    expect(detail.getByText('Season 1')).toBeTruthy();
+    expect(detail.queryByText("Couldn't load this title")).toBeNull();
+
+    fireEvent.press(detail.getByTestId('season-1'));
+
+    await waitFor(() => {
+      expect(detail.getByText("Couldn't load episodes")).toBeTruthy();
+      expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    });
+    expect(mockSeasonFetch).toHaveBeenCalledWith(771, 1, true);
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(
+      detail.getByText('A public synopsis remains available while sign-in is down.'),
+    ).toBeTruthy();
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+
+    mockSeasonRefetch.mockImplementationOnce(async () => {
+      mockSeasonQueryState.current = {
+        data: mockSeasonData,
+        isLoading: false,
+        isError: false,
+      };
+      return { data: mockSeasonData };
+    });
+    await fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
+    await detail.rerender(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(mockSeasonRefetch).toHaveBeenCalledTimes(1);
+    expect(detail.getByText('1. Pilot')).toBeTruthy();
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(detail.queryByTestId('episode-check-2301')).toBeNull();
     expect(mockPrivateQueryCalls).toEqual([]);
     expect(mockRouter.push).not.toHaveBeenCalled();
     expect(mockRouter.replace).not.toHaveBeenCalled();
