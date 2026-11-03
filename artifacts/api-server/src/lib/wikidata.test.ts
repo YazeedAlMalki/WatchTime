@@ -974,6 +974,71 @@ describe("Wikidata refresh persistence", () => {
     expect(after).toEqual(before);
   });
 
+  it.each([
+    { description: "removed", imdbId: null },
+    { description: "malformed", imdbId: "not-an-imdb-id" },
+  ])("preserves a verified match when the IMDb ID is $description", async ({ description, imdbId }) => {
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: `__wikidata_invalid_imdb_${description}_test__`,
+      year: 2020,
+      imdbId,
+      popularity: 0,
+    }).returning();
+    const refreshedAt = new Date("2020-01-01T00:00:00.000Z");
+    const [mapping] = await db.insert(providerMappingsTable).values({
+      titleId: title.id,
+      provider: WIKIDATA_PROVIDER,
+      externalId: "Q42",
+      status: "mapped",
+      lastRefreshedAt: refreshedAt,
+    }).returning();
+    const [safetyRecord] = await db.insert(safetyRecordsTable).values({
+      titleId: title.id,
+      sourceName: WIKIDATA_PROVIDER,
+      tier: 2,
+      isCommunity: false,
+      url: "https://www.wikidata.org/wiki/Q42",
+      status: "available",
+      items: [{
+        category: "MPAA",
+        label: "PG-13",
+        score: null,
+        maxScore: null,
+        description: "US rating · Wikidata property P1657",
+      }],
+      updatedAt: refreshedAt,
+    }).returning();
+    const queryByImdbId = vi.fn(async () => matchedItem);
+
+    try {
+      await expect(refreshWikidataTitle(title.id, { queryByImdbId })).resolves.toMatchObject({
+        ok: false,
+        titleId: title.id,
+        titleName: title.name,
+        status: "missing",
+        error: "Title has no valid IMDb ID for Wikidata matching",
+      });
+      expect(queryByImdbId).not.toHaveBeenCalled();
+
+      const [savedMapping] = await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.id, mapping.id));
+      const [savedSafetyRecord] = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.id, safetyRecord.id));
+      expect(savedMapping).toEqual(mapping);
+      expect(savedSafetyRecord).toEqual(safetyRecord);
+
+      const [health] = await db.select().from(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      expect(health).toMatchObject({
+        status: "degraded",
+        lastError: "Title has no valid IMDb ID for Wikidata matching",
+      });
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+    }
+  });
+
   it("rolls back the mapping when a classified Wikidata rating cannot be saved", async () => {
     const [title] = await db.insert(titlesTable).values({
       type: "movie",
