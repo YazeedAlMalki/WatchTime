@@ -36,6 +36,7 @@
 - [Admin browser test isolation](admin-browser-test-isolation.md) — when tests mount AdminPage, stub identity-conflict queries if the test only mocks another endpoint.
 - [Targeted API Vitest runs](vitest-targeted-api-tests.md) — use direct `vitest run <path>` execution to isolate one API test file.
 - [Catalog worker ownership](catalog-worker-ownership.md) — queued recovery needs startup ownership proof; use short transaction leases rather than extra long-lived pool clients.
+- [PostgreSQL recovery session tests](catalog-recovery-session-tests.md) — end a checked-out lock-owning client to simulate disconnects without noisy pg termination events.
 - [Internal publish probes](internal-publish-probes.md) — startup checks may lack a trusted public hostname; keep liveness independent of Clerk without weakening host validation.
 - [React Native event simulation](react-native-event-simulation.md) — await version 14 fireEvent calls; disabled nested controls can make simulators target different handlers.
 - [React Query retry test timers](react-query-retry-test-timers.md) — failed mutations replaced by retries can leave garbage-collection timers; use infinite test cache lifetimes.

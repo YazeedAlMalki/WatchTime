@@ -1212,6 +1212,115 @@ describe("catalog refresh recovery", () => {
     }
   });
 
+  it("recovers after the database session holding the catalog lock is terminated", async () => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const staleAt = new Date(cutoff.getTime() - 1_000);
+    const [interruptedRun, completedRun] = await db.insert(catalogSyncRunsTable).values([
+      {
+        trigger: "manual", status: "running", createdAt: staleAt, startedAt: staleAt,
+        totalItems: 2, processedItems: 1, succeededItems: 1,
+      },
+      {
+        trigger: "manual", status: "succeeded", createdAt: staleAt, startedAt: staleAt,
+        finishedAt: staleAt, totalItems: 1, processedItems: 1, succeededItems: 1,
+      },
+    ]).returning();
+    createdRunIds.push(interruptedRun.id, completedRun.id);
+    const insertedItems = await db.insert(catalogSyncItemsTable).values([
+      {
+        runId: interruptedRun.id, itemKey: "session-loss-completed",
+        title: "Already completed title", provider: "TVMaze",
+        status: "succeeded", startedAt: staleAt, finishedAt: staleAt,
+      },
+      {
+        runId: interruptedRun.id, itemKey: "session-loss-running",
+        title: "Interrupted title", provider: "TVMaze",
+        status: "running", startedAt: staleAt,
+      },
+      {
+        runId: completedRun.id, itemKey: "session-loss-archived",
+        title: "Previously completed refresh", provider: "TVMaze",
+        status: "succeeded", startedAt: staleAt, finishedAt: staleAt,
+      },
+    ]).returning();
+    const completedItem = insertedItems[2];
+    const [completedRunBefore] = await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, completedRun.id));
+    const [completedItemBefore] = await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.id, completedItem.id));
+
+    const Pool = pool.constructor as new (options: typeof pool.options) => typeof pool;
+    const recoveryPool = new Pool(pool.options);
+    const retryPool = new Pool(pool.options);
+    const recoveryClient = await recoveryPool.connect();
+    const disconnectClient = recoveryClient as unknown as { end: () => Promise<void> };
+    const recoveryError = new Error("recovery process stopped after acquiring the catalog lock");
+    let continueRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => { continueRecovery = resolve; });
+    let signalTransactionStarted!: () => void;
+    const transactionStarted = new Promise<void>((resolve) => { signalTransactionStarted = resolve; });
+    vi.resetModules();
+    vi.doMock("@workspace/db", () => ({ ...databaseModule, pool: recoveryPool }));
+    const { recoverInterruptedRuns: recoverFromTerminatedContext } = await import("./catalog-refresh");
+    const connectSpy = vi.spyOn(recoveryPool, "connect")
+      .mockImplementationOnce(() => Promise.resolve(recoveryClient));
+    const transactionSpy = vi.spyOn(db, "transaction").mockImplementationOnce(async () => {
+      signalTransactionStarted();
+      await recoveryGate;
+      throw recoveryError;
+    });
+    let firstRecovery: Promise<void> | undefined;
+
+    try {
+      firstRecovery = recoverFromTerminatedContext(cutoff);
+      await transactionStarted;
+
+      await disconnectClient.end();
+      continueRecovery();
+      await expect(firstRecovery).rejects.toBe(recoveryError);
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+
+      transactionSpy.mockRestore();
+      connectSpy.mockRestore();
+      vi.resetModules();
+      vi.doMock("@workspace/db", () => ({ ...databaseModule, pool: retryPool }));
+      const { recoverInterruptedRuns: recoverFromFreshContext } = await import("./catalog-refresh");
+      await expect(recoverFromFreshContext(cutoff)).resolves.toBeUndefined();
+
+      const [recoveredRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, interruptedRun.id));
+      expect(recoveredRun).toMatchObject({ status: "failed", processedItems: 2, failedItems: 1 });
+      expect(recoveredRun.finishedAt).toBeInstanceOf(Date);
+      const recoveredItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, interruptedRun.id)).orderBy(catalogSyncItemsTable.id);
+      expect(recoveredItems).toHaveLength(2);
+      expect(recoveredItems[0]).toEqual(expect.objectContaining({
+        status: "succeeded", finishedAt: staleAt, error: null,
+      }));
+      expect(recoveredItems[1]).toMatchObject({
+        status: "failed",
+        error: "Catalog refresh was interrupted by a server restart",
+      });
+      expect(recoveredItems[1].finishedAt).toBeInstanceOf(Date);
+
+      const [completedRunAfter] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, completedRun.id));
+      const [completedItemAfter] = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.id, completedItem.id));
+      expect(completedRunAfter).toEqual(completedRunBefore);
+      expect(completedItemAfter).toEqual(completedItemBefore);
+    } finally {
+      continueRecovery();
+      await firstRecovery?.catch(() => {});
+      transactionSpy.mockRestore();
+      connectSpy.mockRestore();
+      await recoveryPool.end();
+      await retryPool.end();
+      vi.doUnmock("@workspace/db");
+      vi.resetModules();
+    }
+  });
+
   it("rolls back an aborted PostgreSQL title update, releases recovery locks, and recovers on retry", async () => {
     const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
     const staleAt = new Date(cutoff.getTime() - 1_000);
