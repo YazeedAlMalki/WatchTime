@@ -1022,6 +1022,49 @@ describe("admin Content review timestamp filter", () => {
     ))).toEqual([]);
   });
 
+  it("excludes unavailable provider records from unclassified reviews", async () => {
+    const fixturePrefix = "unclassified-unavailable-fixture-20261103";
+    const titles = await db.insert(titlesTable).values([
+      { name: `${fixturePrefix}-available`, type: "movie", popularity: 2 },
+      { name: `${fixturePrefix}-unavailable`, type: "movie", popularity: 1 },
+    ]).returning({ id: titlesTable.id });
+    titleIds.push(...titles.map(({ id }) => id));
+
+    const records = await db.insert(safetyRecordsTable).values([
+      {
+        titleId: titles[0].id,
+        sourceName: "Unclassified Availability Fixture",
+        status: "available",
+        isCommunity: false,
+        url: `https://provider.example/ratings/${titles[0].id}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{ category: "UNSUPPORTED_SYSTEM", label: "13", score: null, maxScore: null, description: null }],
+      },
+      {
+        titleId: titles[1].id,
+        sourceName: "Unclassified Availability Fixture",
+        status: "provider_unavailable",
+        isCommunity: false,
+        url: `https://provider.example/ratings/${titles[1].id}`,
+        updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+        items: [{ category: "UNSUPPORTED_SYSTEM", label: "12", score: null, maxScore: null, description: null }],
+      },
+    ]).returning({ id: safetyRecordsTable.id });
+    await markMalformedTimestamp(records.map(({ id }) => id));
+
+    const review = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&malformedRegionalClassification=true`)
+      .expect(200);
+
+    expect(review.body.map((item: any) => item.name))
+      .toEqual([`${fixturePrefix}-available`]);
+    expect(review.body[0].unclassifiedRating).toMatchObject({
+      recordId: records[0].id,
+      provider: "Unclassified Availability Fixture",
+      classifications: [{ category: "UNSUPPORTED_SYSTEM", label: "13" }],
+    });
+  });
+
   it("pages every unclassified provider record once in stable order", async () => {
     const fixturePrefix = "unclassified-rating-pages-fixture-20261101";
     const titles = await db.insert(titlesTable).values(
