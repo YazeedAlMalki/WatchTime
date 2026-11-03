@@ -449,6 +449,7 @@ describe('public browsing while authentication is unavailable', () => {
   });
 
   it('keeps public title details visible when safety information fails', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockTitleQueryState.current = {
       data: mockPublicTitle,
       isLoading: false,
@@ -473,8 +474,15 @@ describe('public browsing while authentication is unavailable', () => {
       ).toBeTruthy();
       expect(detail.getByText("Couldn't load safety info")).toBeTruthy();
       expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
+      expect(detail.getByTestId('report-safety-btn')).toBeTruthy();
     });
 
+    fireEvent.press(detail.getByTestId('report-safety-btn'));
+
+    expect(alert).toHaveBeenCalledWith(
+      'Sign-in unavailable',
+      "WatchTime couldn't start its sign-in service. Check your connection and try again.",
+    );
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
     expect(mockTitleSafetyFetch).toHaveBeenCalledWith({ titleId: 771 });
     expect(mockPrivateQueryCalls).toEqual([]);

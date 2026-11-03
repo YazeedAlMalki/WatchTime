@@ -543,28 +543,6 @@ function SafetySection({
   const [showReport, setShowReport] = useState(false);
   const [showContribute, setShowContribute] = useState(false);
 
-  if (safety.isLoading) return (
-    <View>
-      <LayoutEvidence screen="safety" titleId={titleId} contentReady={false} accountState={accountState} />
-      <Loading />
-    </View>
-  );
-  if (safety.isError) {
-    return (
-      <View>
-        <LayoutEvidence screen="safety" titleId={titleId} contentReady={false} accountState={accountState} />
-        <ErrorState onRetry={() => safety.refetch()} message="Couldn't load safety info" />
-      </View>
-    );
-  }
-
-  const info = safety.data;
-  if (!info) return (
-    <View>
-      <LayoutEvidence screen="safety" titleId={titleId} contentReady={false} accountState={accountState} />
-    </View>
-  );
-
   const handleReportPress = () => {
     if (!isSignedIn) {
       if (isAuthAvailable === false) {
@@ -576,6 +554,57 @@ function SafetySection({
     }
     setShowReport(true);
   };
+
+  if (safety.isLoading) return (
+    <View>
+      <LayoutEvidence screen="safety" titleId={titleId} contentReady={false} accountState={accountState} />
+      <Loading />
+    </View>
+  );
+  if (safety.isError) {
+    return (
+      <View>
+        <LayoutEvidence screen="safety" titleId={titleId} contentReady={false} accountState={accountState} />
+        <ErrorState onRetry={() => safety.refetch()} message="Couldn't load safety info" />
+        <View style={{ paddingHorizontal: 16, marginTop: 12, marginBottom: 12 }}>
+          <Pressable
+            testID="report-safety-btn"
+            accessibilityRole="button"
+            onPress={handleReportPress}
+            style={({ pressed }) => [
+              styles.safetyActionBtn,
+              {
+                alignSelf: 'flex-start',
+                borderColor: c.border,
+                backgroundColor: c.card,
+                opacity: pressed ? 0.7 : isSignedIn ? 1 : 0.55,
+              },
+            ]}
+          >
+            <Feather name="flag" size={13} color={c.mutedForeground} />
+            <EvidenceText evidenceId="safety-report" style={{ color: c.foreground, fontSize: 12, fontFamily: 'Inter_500Medium' }}>
+              Report issue
+            </EvidenceText>
+            {!isSignedIn ? (
+              <Feather name="lock" size={11} color={c.mutedForeground} />
+            ) : null}
+          </Pressable>
+        </View>
+        <SafetyReportModal
+          visible={showReport}
+          onClose={() => setShowReport(false)}
+          titleId={titleId}
+        />
+      </View>
+    );
+  }
+
+  const info = safety.data;
+  if (!info) return (
+    <View>
+      <LayoutEvidence screen="safety" titleId={titleId} contentReady={false} accountState={accountState} />
+    </View>
+  );
 
   const handleContributePress = () => {
     if (!isSignedIn) {
