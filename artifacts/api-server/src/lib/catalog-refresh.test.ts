@@ -1511,6 +1511,157 @@ describe("catalog refresh recovery", () => {
     }
   });
 
+  it("rolls back a PostgreSQL aggregate reconciliation failure, releases locks, and saves accurate totals on retry", async () => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const staleAt = new Date(cutoff.getTime() - 1_000);
+    const runs = await db.insert(catalogSyncRunsTable).values(
+      (["queued", "running"] as const).map((status) => ({
+        trigger: "manual", status, createdAt: staleAt,
+        startedAt: status === "running" ? staleAt : null,
+        totalItems: 4, processedItems: 2, succeededItems: 1, failedItems: 1, episodesUpdated: 7,
+      })),
+    ).returning();
+    const runIds = runs.map((run) => run.id);
+    createdRunIds.push(...runIds);
+    const items = await db.insert(catalogSyncItemsTable).values(runs.flatMap((run) =>
+      (["succeeded", "failed", "running", "queued"] as const).map((status) => ({
+        runId: run.id, itemKey: `aggregate-${status}`, title: `Aggregate ${status}`, provider: "TVMaze",
+        status, startedAt: status === "queued" ? null : staleAt,
+        finishedAt: ["succeeded", "failed"].includes(status) ? staleAt : null,
+        error: status === "failed" ? "Original provider failure" : null,
+      })),
+    )).returning();
+
+    // Retain independent sessions so neither the rollback check nor the lock
+    // probe can accidentally succeed by using a different/reentrant session.
+    const lockProbe = await pool.connect();
+    try {
+      const transactionClient = await pool.connect();
+      const transactionDb = drizzle(transactionClient, { schema });
+      const querySpy = vi.spyOn(transactionClient, "query");
+      let aggregateUpdates = 0;
+      let statementError: unknown;
+      const transactionSpy = vi.spyOn(db, "transaction").mockImplementationOnce((callback, config) =>
+        transactionDb.transaction(async (tx) => {
+          const update = tx.update.bind(tx);
+          const updateSpy = vi.spyOn(tx, "update").mockImplementation((table) => {
+            if (table !== catalogSyncRunsTable) return update(table);
+            return {
+              set: (values: Record<string, unknown>) => {
+                if (!("processedItems" in values && "failedItems" in values)) return update(table).set(values);
+                return {
+                  where: async (condition: Parameters<ReturnType<ReturnType<typeof tx.update>["set"]>["where"]>[0]) => {
+                    aggregateUpdates++;
+                    const pendingRuns = await tx.select().from(catalogSyncRunsTable)
+                      .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id);
+                    for (const run of pendingRuns) {
+                      expect(run).toMatchObject({ status: "failed", processedItems: 2, failedItems: 1 });
+                      expect(run.finishedAt).toBeInstanceOf(Date);
+                    }
+                    const pendingItems = await tx.select().from(catalogSyncItemsTable)
+                      .where(inArray(catalogSyncItemsTable.runId, runIds)).orderBy(catalogSyncItemsTable.id);
+                    for (const [index, item] of pendingItems.entries()) {
+                      if (["queued", "running"].includes(items[index].status)) {
+                        expect(item.status).toBe("failed");
+                        expect(item.finishedAt).toBeInstanceOf(Date);
+                        expect(item.error).toBe(pendingRuns.find((run) => run.id === item.runId)?.error);
+                      } else {
+                        expect(item).toEqual(items[index]);
+                      }
+                    }
+
+                    // Fail the actual final UPDATE, not an earlier title write
+                    // or an application promise. PostgreSQL must abort the tx.
+                    try {
+                      await update(table).set({ ...values, failedItems: sql`1 / 0` }).where(condition);
+                    } catch (error) {
+                      statementError = error;
+                      expect(error).toMatchObject({ cause: { code: "22012", message: "division by zero" } });
+                      await expect(tx.execute(sql`select 1`)).rejects.toMatchObject({ cause: { code: "25P02" } });
+                      throw error;
+                    }
+                    throw new Error("Expected aggregate reconciliation UPDATE to fail");
+                  },
+                };
+              },
+            } as unknown as ReturnType<typeof tx.update>;
+          });
+          try {
+            return await callback(tx);
+          } finally {
+            updateSpy.mockRestore();
+          }
+        }, config),
+      );
+
+      try {
+        const outcome = await recoverInterruptedRuns(cutoff).then(
+          () => { throw new Error("Expected recovery to reject the aggregate reconciliation error"); },
+          (error: unknown) => error,
+        );
+        expect(aggregateUpdates).toBe(1);
+        expect(statementError).toBeDefined();
+        expect(outcome).toBe(statementError);
+        expect(querySpy).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "rollback" }), expect.any(Array),
+        );
+        expect((await transactionClient.query("select 1 as value")).rows).toEqual([{ value: 1 }]);
+        // Whole-row comparisons include every counter, status, error and
+        // timestamp, including unchanged successful/previously failed items.
+        expect(await db.select().from(catalogSyncRunsTable)
+          .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id)).toEqual(runs);
+        expect(await db.select().from(catalogSyncItemsTable)
+          .where(inArray(catalogSyncItemsTable.runId, runIds)).orderBy(catalogSyncItemsTable.id)).toEqual(items);
+
+        expect((await lockProbe.query(
+          "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+        )).rows[0].locked).toBe(true);
+        for (const runId of runIds) {
+          expect((await lockProbe.query(
+            "select pg_try_advisory_lock(hashtext('watchtime:catalog-refresh-worker'), $1) as locked", [runId],
+          )).rows[0].locked).toBe(true);
+        }
+        await lockProbe.query("select pg_advisory_unlock_all()");
+        transactionSpy.mockRestore();
+
+        await recoverInterruptedRuns(cutoff);
+        const recoveredRuns = await db.select().from(catalogSyncRunsTable)
+          .where(inArray(catalogSyncRunsTable.id, runIds)).orderBy(catalogSyncRunsTable.id);
+        expect(recoveredRuns[0].error).toContain("retry the failed titles");
+        expect(recoveredRuns[1].error).toBe("Catalog refresh was interrupted by a server restart");
+        for (const [index, run] of recoveredRuns.entries()) {
+          expect(run).toEqual({
+            ...runs[index], status: "failed", error: run.error, finishedAt: expect.any(Date),
+            processedItems: 4, failedItems: 3,
+          });
+        }
+        const recoveredItems = await db.select().from(catalogSyncItemsTable)
+          .where(inArray(catalogSyncItemsTable.runId, runIds)).orderBy(catalogSyncItemsTable.id);
+        for (const [index, item] of recoveredItems.entries()) {
+          expect(item).toEqual(["queued", "running"].includes(items[index].status) ? {
+            ...items[index], status: "failed", finishedAt: expect.any(Date),
+            error: recoveredRuns.find((run) => run.id === item.runId)?.error,
+          } : items[index]);
+        }
+      } finally {
+        transactionSpy.mockRestore();
+        querySpy.mockRestore();
+        try {
+          await transactionClient.query("rollback");
+          await transactionClient.query("select pg_advisory_unlock_all()");
+        } finally {
+          transactionClient.release();
+        }
+      }
+    } finally {
+      try {
+        await lockProbe.query("select pg_advisory_unlock_all()");
+      } finally {
+        lockProbe.release();
+      }
+    }
+  });
+
   it("fails stale queued and interrupted runs and unfinished items, but preserves new and completed work", async () => {
     const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
     const staleAt = new Date(cutoff.getTime() - 1_000);
