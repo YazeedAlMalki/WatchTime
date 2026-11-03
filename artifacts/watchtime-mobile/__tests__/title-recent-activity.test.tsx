@@ -169,8 +169,8 @@ jest.mock('@workspace/api-client-react', () => {
       }),
     useMarkTitleWatched: (options: { mutation: { onMutate: () => unknown; onSuccess: () => void } }) =>
       useMutation({
-        mutationFn: async () => {
-          await mockMarkTitleRequest();
+        mutationFn: async (request: unknown) => {
+          await mockMarkTitleRequest(request);
           mockMovieWatched = true;
           return { ok: true };
         },
@@ -179,8 +179,8 @@ jest.mock('@workspace/api-client-react', () => {
       }),
     useUnmarkTitleWatched: (options: { mutation: { onMutate: () => unknown; onSuccess: () => void } }) =>
       useMutation({
-        mutationFn: async () => {
-          await mockUnmarkTitleRequest();
+        mutationFn: async (request: unknown) => {
+          await mockUnmarkTitleRequest(request);
           mockMovieWatched = false;
           return { ok: true };
         },
@@ -944,13 +944,20 @@ it.each([
   mockTitleIsMovie = false;
 });
 
-it('keeps a watched movie in Movies and History after a failed unwatch and refreshes both after retry', async () => {
+it.each([
+  { action: 'mark', initiallyWatched: false },
+  { action: 'unmark', initiallyWatched: true },
+])('preserves movie, History, and recommendation caches after a failed $action and refreshes them after retry', async ({
+  initiallyWatched,
+}) => {
   mockTitleIsMovie = true;
-  mockMovieWatched = true;
+  mockMovieWatched = initiallyWatched;
   mockWatched = false;
   jest.clearAllMocks();
   const failure = new Error('Offline');
-  mockUnmarkTitleRequest.mockRejectedValueOnce(failure).mockResolvedValueOnce({ ok: true });
+  const request = initiallyWatched ? mockUnmarkTitleRequest : mockMarkTitleRequest;
+  const otherRequest = initiallyWatched ? mockMarkTitleRequest : mockUnmarkTitleRequest;
+  request.mockRejectedValueOnce(failure).mockResolvedValueOnce({ ok: true });
 
   const client = new QueryClient({
     defaultOptions: {
@@ -962,10 +969,21 @@ it('keeps a watched movie in Movies and History after a failed unwatch and refre
     require('@workspace/api-client-react');
   const moviesKey = [...getGetMyMoviesQueryKey(), 'account', 'activity-user', 'infinite'];
   const activityKey = [...getGetMyRecentActivityQueryKey(), 'account', 'activity-user'];
-  const cachedMovies = { pages: [[mockMovie]], pageParams: [undefined] };
-  const cachedActivity = mockActivity();
+  const recommendationsKey = [...getGetMyRecommendationsQueryKey(), 'account', 'activity-user'];
+  // Nonempty baselines catch accidental clearing as well as optimistic changes.
+  const cachedMovies = {
+    pages: [[initiallyWatched ? mockMovie : { ...mockMovie, id: 99, name: 'Previously Watched Movie' }]],
+    pageParams: [undefined],
+  };
+  const cachedActivity = initiallyWatched ? mockActivity() : [{
+    titleId: 99, titleName: 'Previously Watched Movie', posterUrl: null,
+    kind: 'movie', episodeLabel: null, watchedAt: '2026-10-17T00:00:00.000Z',
+  }];
+  const cachedRecommendations = mockRecommendations();
   client.setQueryData(moviesKey, cachedMovies);
   client.setQueryData(activityKey, cachedActivity);
+  client.setQueryData(recommendationsKey, cachedRecommendations);
+  const invalidate = jest.spyOn(client, 'invalidateQueries');
 
   const screens = await render(
     <QueryClientProvider client={client}>
@@ -977,42 +995,95 @@ it('keeps a watched movie in Movies and History after a failed unwatch and refre
     const shows = within(screens.getByTestId('mounted-my-shows'));
     const detail = within(screens.getByTestId('open-title-detail'));
     await fireEvent.press(shows.getByTestId('tab-history'));
-    await waitFor(() => expect(shows.getByTestId('history-item-42')).toBeTruthy());
-    expect(shows.getByText('Example Movie')).toBeTruthy();
+    const historyId = initiallyWatched ? 42 : 99;
+    await waitFor(() => expect(shows.getByTestId(`history-item-${historyId}`)).toBeTruthy());
+    await waitFor(() => expect(detail.getByTestId('watched-toggle')).toBeEnabled());
+    const snapshots = [moviesKey, activityKey, recommendationsKey].map((key) => ({
+      key,
+      data: client.getQueryData(key),
+      state: client.getQueryState(key),
+    }));
 
     await fireEvent.press(detail.getByTestId('watched-toggle'));
     await waitFor(() => {
-      expect(mockUnmarkTitleRequest).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(1);
       expect(client.getMutationCache().getAll()).toHaveLength(1);
       expect(client.getMutationCache().getAll()[0].state.status).toBe('error');
       expect(detail.getByTestId('watched-toggle')).toBeEnabled();
     });
     expect(client.getMutationCache().getAll()[0].state.error).toBe(failure);
-    expect(mockMovieWatched).toBe(true);
-    expect(shows.getByTestId('history-item-42')).toBeTruthy();
-    expect(client.getQueryData(moviesKey)).toEqual(cachedMovies);
-    expect(client.getQueryData(activityKey)).toEqual(cachedActivity);
-    expect(client.getQueryState(moviesKey)?.isInvalidated).toBe(false);
-    expect(client.getQueryState(activityKey)?.isInvalidated).toBe(false);
+    expect(request).toHaveBeenLastCalledWith({ id: 42 });
+    expect(otherRequest).not.toHaveBeenCalled();
+    expect(mockMovieWatched).toBe(initiallyWatched);
+    expect(shows.getByTestId(`history-item-${historyId}`)).toBeTruthy();
+    for (const { key, data, state } of snapshots) {
+      expect(client.getQueryData(key)).toBe(data);
+      expect(client.getQueryState(key)).toEqual(state);
+      expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+    }
+    expect(invalidate).not.toHaveBeenCalled();
     expect(mockMovieFetch).not.toHaveBeenCalled();
     expect(mockActivityFetch).not.toHaveBeenCalled();
-    expect(detail.getByText('Watched')).toBeTruthy();
+    expect(mockRecommendationsFetch).not.toHaveBeenCalled();
+    expect(detail.getByText(initiallyWatched ? 'Watched' : 'Mark watched')).toBeTruthy();
     expect(detail.getByTestId('watched-toggle')).toBeEnabled();
 
     // The same watched control remains available to retry after the rejection.
-    await act(async () => {
-      await fireEvent.press(detail.getByTestId('watched-toggle'));
-    });
+    await fireEvent.press(detail.getByTestId('watched-toggle'));
     await waitFor(() => {
-      expect(mockUnmarkTitleRequest).toHaveBeenCalledTimes(2);
-      expect(mockMovieWatched).toBe(false);
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(mockMovieWatched).toBe(!initiallyWatched);
       expect(mockMovieFetch).toHaveBeenCalledTimes(1);
       expect(mockActivityFetch).toHaveBeenCalledTimes(1);
-      expect(client.getQueryData(moviesKey)).toEqual({ pages: [[]], pageParams: [undefined] });
-      expect(client.getQueryData(activityKey)).toEqual([]);
-      expect(shows.queryByTestId('history-item-42')).toBeNull();
-      expect(shows.getByText('No recent activity')).toBeTruthy();
+      expect(client.getQueryData(moviesKey)).toEqual({
+        pages: [initiallyWatched ? [] : [mockMovie]], pageParams: [undefined],
+      });
+      expect(client.getQueryData(activityKey)).toEqual(mockActivity());
+      expect(detail.getByText(initiallyWatched ? 'Mark watched' : 'Watched')).toBeTruthy();
+      if (initiallyWatched) {
+        expect(shows.queryByTestId('history-item-42')).toBeNull();
+        expect(shows.getByText('No recent activity')).toBeTruthy();
+      } else {
+        expect(shows.getByTestId('history-item-42')).toBeTruthy();
+        expect(shows.queryByTestId('history-item-99')).toBeNull();
+      }
     });
+    expect(request).toHaveBeenLastCalledWith({ id: 42 });
+    expect(otherRequest).not.toHaveBeenCalled();
+    for (const key of [moviesKey, activityKey, recommendationsKey]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: key === moviesKey ? key.slice(0, -1) : key });
+    }
+    expect(client.getQueryState(recommendationsKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryData(recommendationsKey)).toBe(cachedRecommendations);
+    expect(mockRecommendationsFetch).not.toHaveBeenCalled();
+
+    // Navigate to the dependent screens using the same account query client.
+    await screens.rerender(
+      <QueryClientProvider client={client}>
+        <View testID="mounted-my-shows"><MyShowsScreen /></View>
+        <View testID="returned-home"><HomeScreen /></View>
+      </QueryClientProvider>,
+    );
+    const home = within(screens.getByTestId('returned-home'));
+    const expectedRecommendation = initiallyWatched ? 'Unwatched Recommendation' : 'Watched Recommendation';
+    await waitFor(() => {
+      expect(mockRecommendationsFetch).toHaveBeenCalledTimes(1);
+      expect(client.getQueryData(recommendationsKey)).toEqual(mockRecommendations());
+      expect(home.getByText(expectedRecommendation)).toBeTruthy();
+    });
+    await fireEvent.press(shows.getByTestId('tab-movies'));
+    await waitFor(() => {
+      if (initiallyWatched) {
+        expect(shows.getByText('No movies watched yet')).toBeTruthy();
+      } else {
+        expect(shows.getByText('Example Movie')).toBeTruthy();
+        expect(shows.queryByText('Previously Watched Movie')).toBeNull();
+      }
+    });
+    for (const key of [moviesKey, activityKey, recommendationsKey]) {
+      expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+      expect(client.getQueryState(key)?.status).toBe('success');
+    }
   } finally {
     await act(async () => screens.unmount());
     client.clear();
