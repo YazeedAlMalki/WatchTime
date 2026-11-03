@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-import { catalogSyncRunsTable, db, pool } from "@workspace/db";
+import {
+  catalogSyncItemsTable,
+  catalogSyncRunsTable,
+  db,
+  pool,
+} from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 
 vi.mock("../middlewares/auth", () => ({
@@ -21,6 +26,45 @@ afterEach(async () => {
 });
 
 describe("GET /api/admin/catalog-refreshes", () => {
+  it("returns every failed title with provider and error details", async () => {
+    const failureCount = 7;
+    const [run] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual",
+      status: "failed",
+      totalItems: failureCount,
+      processedItems: failureCount,
+      failedItems: failureCount,
+    }).returning();
+    createdRunIds.push(run.id);
+    await db.insert(catalogSyncItemsTable).values(
+      Array.from({ length: failureCount }, (_, index) => ({
+        runId: run.id,
+        itemKey: `catalog-failure-${index + 1}`,
+        title: `Failed title ${index + 1}`,
+        provider: index % 2 === 0 ? "TVMaze" : "Wikipedia",
+        status: "failed",
+        error: `Provider error ${index + 1}`,
+      })),
+    );
+
+    const response = await request(app)
+      .get("/api/admin/catalog-refreshes")
+      .expect(200);
+    const listedRun = response.body.find(
+      (entry: { id: number }) => entry.id === run.id,
+    );
+
+    expect(listedRun.failures).toHaveLength(failureCount);
+    expect(listedRun.failures).toEqual(
+      Array.from({ length: failureCount }, (_, index) => ({
+        itemKey: `catalog-failure-${index + 1}`,
+        title: `Failed title ${index + 1}`,
+        provider: index % 2 === 0 ? "TVMaze" : "Wikipedia",
+        error: `Provider error ${index + 1}`,
+      })),
+    );
+  });
+
   it("distinguishes stale queued work protected by a live worker from abandoned work", async () => {
     const staleCreatedAt = new Date(Date.now() - 10 * 60 * 1000);
     const storedRuns = await db.insert(catalogSyncRunsTable).values([

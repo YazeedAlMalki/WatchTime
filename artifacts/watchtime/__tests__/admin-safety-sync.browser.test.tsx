@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   batchHistory: [] as unknown[],
   integrations: [] as unknown[],
   integrationListeners: new Set<() => void>(),
+  catalogRefreshes: [] as unknown[],
 }));
 
 vi.mock("@workspace/api-client-react", async (importOriginal) => {
@@ -52,7 +53,7 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
       ),
       isLoading: false,
     }),
-    useListCatalogRefreshes: () => ({ data: [] }),
+    useListCatalogRefreshes: () => ({ data: mocks.catalogRefreshes }),
     useStartCatalogRefresh: () => ({ isPending: false, mutate: vi.fn() }),
     useRetryCatalogRefresh: () => ({ isPending: false, mutate: vi.fn() }),
     useGetAdminContentRefreshBatch: () => ({
@@ -243,6 +244,61 @@ it("uses the returned batch offset and processed count for the next resume offse
     mocks.batchMutate.mockReset();
     mocks.batchStatus = undefined;
     mocks.batchStatusListeners.clear();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("lets admins expand and collapse the complete failed-title list", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=integrations");
+  mocks.catalogRefreshes = [{
+    id: 653,
+    trigger: "manual",
+    status: "failed",
+    totalItems: 7,
+    processedItems: 7,
+    succeededItems: 0,
+    failedItems: 7,
+    episodesUpdated: 0,
+    createdAt: "2026-10-01T12:00:00.000Z",
+    queuedWorkerState: null,
+    failures: Array.from({ length: 7 }, (_, index) => ({
+      itemKey: `failed-title-${index + 1}`,
+      title: `Failed title ${index + 1}`,
+      provider: index % 2 === 0 ? "TVMaze" : "Wikipedia",
+      error: `Provider error ${index + 1}`,
+    })),
+  }];
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByRole("button", {
+      name: "Show all 7 failed titles",
+    })).toBeVisible();
+    await expect.element(page.getByText("Failed title 5 (TVMaze)")).toBeVisible();
+    await expect.element(page.getByText("Failed title 6 (Wikipedia)")).not.toBeInTheDocument();
+
+    await userEvent.click(page.getByRole("button", {
+      name: "Show all 7 failed titles",
+    }));
+    await expect.element(page.getByText("Failed title 6 (Wikipedia)")).toBeVisible();
+    await expect.element(page.getByText("Provider error 6")).toBeVisible();
+    await expect.element(page.getByText("Failed title 7 (TVMaze)")).toBeVisible();
+    await expect.element(page.getByText("Provider error 7")).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", {
+      name: "Show fewer failed titles",
+    }));
+    await expect.element(page.getByText("Failed title 6 (Wikipedia)")).not.toBeInTheDocument();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.catalogRefreshes = [];
     window.history.replaceState({}, "", previousUrl);
   }
 });

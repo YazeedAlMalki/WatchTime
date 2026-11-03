@@ -610,6 +610,7 @@ router.get("/catalog-refreshes", async (_req, res) => {
   const items = runIds.length
     ? await db.select().from(catalogSyncItemsTable)
         .where(and(inArray(catalogSyncItemsTable.runId, runIds), eq(catalogSyncItemsTable.status, "failed")))
+        .orderBy(asc(catalogSyncItemsTable.id))
     : [];
   return res.json(runs.map(({ run, queuedWorkerState, startedAtIsSupported, finishedAtIsSupported }) => ({
     ...run,

@@ -100,6 +100,8 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Pencil,
   Trash2,
   Save,
@@ -4722,6 +4724,9 @@ function IntegrationsTab({
   const [selectedCatalogRetryKeys, setSelectedCatalogRetryKeys] = useState<
     Record<number, string[]>
   >({});
+  const [expandedCatalogFailures, setExpandedCatalogFailures] = useState<
+    Record<number, boolean>
+  >({});
   const { data: refreshes } = useListCatalogRefreshes({
     query: {
       queryKey: getListCatalogRefreshesQueryKey(),
@@ -4781,6 +4786,10 @@ function IntegrationsTab({
             );
             const selectedKeys =
               selectedCatalogRetryKeys[run.id] ?? defaultSelectedKeys;
+            const failuresExpanded = expandedCatalogFailures[run.id] ?? false;
+            const visibleFailures = failuresExpanded
+              ? run.failures
+              : run.failures.slice(0, 5);
             const percent = run.totalItems
               ? Math.round((run.processedItems / run.totalItems) * 100)
               : 0;
@@ -4827,14 +4836,16 @@ function IntegrationsTab({
                 {run.failures.length > 0 && (
                   <div className="mt-3">
                     <div
+                      id={`catalog-refresh-failures-${run.id}`}
                       aria-label={`Failed titles in ${run.trigger} refresh`}
                       className="max-h-64 space-y-2 overflow-y-auto"
                     >
-                      {run.failures.map((failure) => {
+                      {visibleFailures.map((failure) => {
                         const checked = selectedKeys.includes(failure.itemKey);
                         return (
                           <label
                             key={failure.itemKey}
+                            data-testid={`catalog-refresh-failure-${failure.itemKey}`}
                             className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-2"
                           >
                             <Checkbox
@@ -4868,6 +4879,34 @@ function IntegrationsTab({
                         );
                       })}
                     </div>
+                    {run.failures.length > 5 && (
+                      <Button
+                        className="mt-2 gap-1"
+                        size="sm"
+                        variant="ghost"
+                        data-testid={`toggle-catalog-refresh-failures-${run.id}`}
+                        aria-expanded={failuresExpanded}
+                        aria-controls={`catalog-refresh-failures-${run.id}`}
+                        onClick={() =>
+                          setExpandedCatalogFailures((current) => ({
+                            ...current,
+                            [run.id]: !failuresExpanded,
+                          }))
+                        }
+                      >
+                        {failuresExpanded ? (
+                          <>
+                            Show fewer failed titles
+                            <ChevronUp className="h-4 w-4" />
+                          </>
+                        ) : (
+                          <>
+                            Show all {run.failures.length} failed titles
+                            <ChevronDown className="h-4 w-4" />
+                          </>
+                        )}
+                      </Button>
+                    )}
                     <Button
                       className="mt-2"
                       size="sm"
