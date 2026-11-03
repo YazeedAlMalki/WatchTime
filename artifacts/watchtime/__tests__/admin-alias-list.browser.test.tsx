@@ -1953,8 +1953,11 @@ it("keeps alias search results matched to the latest term when an older request 
       updatedAt: "2026-09-16T00:00:00.000Z",
     },
   };
-  const responseFor = (items: (typeof aliases)[keyof typeof aliases][]) =>
-    new Response(JSON.stringify({ items, total: items.length, limit: 50, offset: 0 }), {
+  const responseFor = (
+    items: (typeof aliases)[keyof typeof aliases][],
+    total = items.length,
+  ) =>
+    new Response(JSON.stringify({ items, total, limit: 50, offset: 0 }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -1993,6 +1996,7 @@ it("keeps alias search results matched to the latest term when an older request 
     await latestRequestStarted;
     await expect.element(page.getByText("Moonrise Regional Name")).toBeVisible();
     await expect.element(page.getByText("Oldtown Regional Name")).not.toBeInTheDocument();
+    await expect.element(page.getByText("1 aliases", { exact: true })).toBeVisible();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Moonrise");
 
     const oldQuery = client.getQueryCache().getAll().find((query) =>
@@ -2000,18 +2004,118 @@ it("keeps alias search results matched to the latest term when an older request 
       (query.queryKey[1] as { q?: string } | undefined)?.q === "Oldtown",
     );
     expect(oldQuery).toBeDefined();
-    resolveOldResponse(responseFor([aliases.old]));
+    resolveOldResponse(responseFor([aliases.old], 7));
     await oldFetchReturned;
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
     await expect.element(page.getByText("Moonrise Regional Name")).toBeVisible();
     await expect.element(page.getByText("Oldtown Regional Name")).not.toBeInTheDocument();
+    await expect.element(page.getByText("1 aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("7 aliases", { exact: true })).not.toBeInTheDocument();
     expect(requests.filter((request) =>
       request.searchParams.get("q") === "Oldtown",
     )).toHaveLength(1);
     expect(requests.filter((request) =>
       request.searchParams.get("q") === "Moonrise",
     )).toHaveLength(1);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("keeps the latest alias-search error when an older request succeeds late", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=US&q=Oldtown");
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  let resolveOldResponse!: (response: Response) => void;
+  let notifyOldRequest!: () => void;
+  let notifyOldFetchReturned!: () => void;
+  let notifyLatestRequest!: () => void;
+  const oldResponse = new Promise<Response>((resolve) => {
+    resolveOldResponse = resolve;
+  });
+  const oldRequestStarted = new Promise<void>((resolve) => {
+    notifyOldRequest = resolve;
+  });
+  const oldFetchReturned = new Promise<void>((resolve) => {
+    notifyOldFetchReturned = resolve;
+  });
+  const latestRequestStarted = new Promise<void>((resolve) => {
+    notifyLatestRequest = resolve;
+  });
+  const oldAlias = {
+    id: 413,
+    titleId: 103,
+    titleName: "Oldtown Film",
+    titleType: "movie",
+    titleYear: 2019,
+    alias: "Oldtown Regional Name",
+    language: "en",
+    sourceName: "Wikipedia",
+    sourceUrl: "https://example.test/oldtown",
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  };
+  const responseForOldAlias = () =>
+    new Response(JSON.stringify({
+      items: [oldAlias],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  window.fetch = vi.fn((input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const query = url.searchParams.get("q");
+    if (query === "Oldtown") {
+      notifyOldRequest();
+      return oldResponse.then((response) => {
+        notifyOldFetchReturned();
+        return response;
+      });
+    }
+    if (query === "Moonrise") {
+      notifyLatestRequest();
+      return Promise.resolve(new Response(JSON.stringify({ error: "Unavailable" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }
+    throw new Error(`Unexpected alias search term: ${query}`);
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await oldRequestStarted;
+    const search = page.getByPlaceholder("Search titles…");
+    await userEvent.fill(search, "Moonrise");
+    await latestRequestStarted;
+
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load alternate titles.");
+    await expect.element(page.getByText("Aliases unavailable", { exact: true })).toBeVisible();
+    expect(requests.at(-1)?.searchParams.get("q")).toBe("Moonrise");
+
+    resolveOldResponse(responseForOldAlias());
+    await oldFetchReturned;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load alternate titles.");
+    await expect.element(page.getByText("Aliases unavailable", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Oldtown Regional Name")).not.toBeInTheDocument();
   } finally {
     root.unmount();
     container.remove();
