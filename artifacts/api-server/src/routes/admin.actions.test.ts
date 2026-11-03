@@ -343,6 +343,44 @@ describe("restored admin actions", () => {
     }
   });
 
+  it("records the previous and resulting contribution statuses in audit history", async () => {
+    const [contribution] = await db.insert(contributionsTable).values({
+      userId: adminId,
+      titleId,
+      category: "violence",
+      severity: "mild",
+      status: "pending",
+    }).returning();
+
+    const response = await request(app)
+      .patch(`/api/admin/contributions/${contribution.id}`)
+      .send({ status: "approved" }).expect(200);
+
+    expect(response.body).toMatchObject({
+      id: contribution.id,
+      status: "approved",
+      titleName: "Admin actions test title",
+    });
+    const [audit] = await db.select().from(adminAuditLogTable)
+      .where(and(
+        eq(adminAuditLogTable.entityType, "contribution"),
+        eq(adminAuditLogTable.entityId, contribution.id),
+      ));
+    expect(audit).toMatchObject({
+      adminId,
+      action: "approved_contribution",
+      entityType: "contribution",
+      entityId: contribution.id,
+      details: {
+        titleId,
+        category: "violence",
+        severity: "mild",
+        statusBefore: "pending",
+        statusAfter: "approved",
+      },
+    });
+  });
+
   it.each([
     "limit=0", "limit=101", "limit=-1", "limit=1.5", "limit=nope",
     "offset=-1", "offset=1000001", "offset=0.5", "offset=nope",

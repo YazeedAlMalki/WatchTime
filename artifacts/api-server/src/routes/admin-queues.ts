@@ -41,13 +41,19 @@ router.patch("/contributions/:contributionId", async (req, res) => {
     return res.status(400).json({ error: "Invalid contribution update" });
   }
   const updated = await db.transaction(async (tx) => {
+    const [existing] = await tx.select().from(contributionsTable)
+      .where(eq(contributionsTable.id, id)).for("update");
+    if (!existing) return null;
     const [row] = await tx.update(contributionsTable).set({ status: parsed.data.status })
       .where(eq(contributionsTable.id, id)).returning();
     if (!row) return null;
     await tx.insert(adminAuditLogTable).values({
       adminId: req.userId!, action: `${parsed.data.status}_contribution`,
       entityType: "contribution", entityId: id,
-      details: { titleId: row.titleId, category: row.category, severity: row.severity },
+      details: {
+        titleId: row.titleId, category: row.category, severity: row.severity,
+        statusBefore: existing.status, statusAfter: row.status,
+      },
     });
     return row;
   });
