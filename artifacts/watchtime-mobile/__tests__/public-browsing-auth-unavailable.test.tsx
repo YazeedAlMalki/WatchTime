@@ -349,7 +349,7 @@ describe('public browsing while authentication is unavailable', () => {
     expect(mockRouter.replace).not.toHaveBeenCalled();
   });
 
-  it('keeps public title details visible when safety information fails', async () => {
+  it('recovers safety information without reloading the public title', async () => {
     mockTitleQueryState.current = {
       data: mockPublicTitle,
       isLoading: false,
@@ -378,6 +378,45 @@ describe('public browsing while authentication is unavailable', () => {
 
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
     expect(mockTitleSafetyFetch).toHaveBeenCalledWith({ titleId: 771 });
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+
+    const recoveredSafety = {
+      preferredRating: null,
+      summary: [{ category: 'Violence', severity: 'Mild' }],
+      sources: [],
+    };
+    mockTitleSafetyRefetch.mockImplementationOnce(async () => {
+      mockTitleSafetyQueryState.current = {
+        data: recoveredSafety,
+        isLoading: false,
+        isError: false,
+      };
+      return { data: recoveredSafety };
+    });
+    await fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
+
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(
+      detail.getByText('A public synopsis remains available while sign-in is down.'),
+    ).toBeTruthy();
+    expect(mockTitleRefetch).not.toHaveBeenCalled();
+
+    await detail.rerender(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(detail.getByText('Violence')).toBeTruthy();
+    expect(detail.queryByText("Couldn't load safety info")).toBeNull();
+    expect(detail.getByText('Public show while sign-in is down')).toBeTruthy();
+    expect(
+      detail.getByText('A public synopsis remains available while sign-in is down.'),
+    ).toBeTruthy();
+    expect(mockTitleSafetyRefetch).toHaveBeenCalledTimes(1);
+    expect(mockTitleRefetch).not.toHaveBeenCalled();
     expect(mockPrivateQueryCalls).toEqual([]);
     expect(mockRouter.push).not.toHaveBeenCalled();
     expect(mockRouter.replace).not.toHaveBeenCalled();
