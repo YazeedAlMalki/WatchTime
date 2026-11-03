@@ -2473,6 +2473,108 @@ describe("admin alternate-title review", () => {
     expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the newest collision counts when an older timed-out lookup resolves late", async () => {
+    type CollisionCounts = Pick<
+      AdminContentAlias,
+      "alias" | "collision" | "collisionTitleCount"
+    >[];
+    let resolveOriginalLookup!: (counts: CollisionCounts) => void;
+    const originalLookup = new Promise<CollisionCounts>((resolve) => {
+      resolveOriginalLookup = resolve;
+    });
+    let resolveRetryLookup!: (counts: CollisionCounts) => void;
+    const retryLookup = new Promise<CollisionCounts>((resolve) => {
+      resolveRetryLookup = resolve;
+    });
+    mocks.lookupAdminContentAliasCollisions
+      .mockReturnValueOnce(originalLookup)
+      .mockReturnValueOnce(retryLookup);
+    render();
+    vi.useFakeTimers();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(container.textContent).toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(
+      container.querySelector('[aria-label^="Collision results may be stale"]')
+        ?.textContent,
+    ).toContain("2 titles · may be stale");
+
+    act(() => button(container, "Retry refresh").click());
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+    expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenCalledTimes(2);
+    expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenLastCalledWith({
+      aliases: ["Updated Local Title"],
+    });
+
+    await act(async () => {
+      resolveRetryLookup([
+        {
+          alias: "Updated Local Title",
+          collision: true,
+          collisionTitleCount: 4,
+        },
+      ]);
+      await retryLookup;
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+    expect(container.querySelector('[aria-label^="Collision results may be stale"]'))
+      .toBeNull();
+    expect(container.textContent).toContain("4 titles");
+
+    const savePromise = mocks.updateMutation.mutate.mock.results.at(-1)
+      ?.value as Promise<void> | undefined;
+    if (!savePromise) throw new Error("The alternate-title save did not start");
+    await act(async () => {
+      resolveOriginalLookup([
+        {
+          alias: "Updated Local Title",
+          collision: true,
+          collisionTitleCount: 7,
+        },
+      ]);
+      await originalLookup;
+      await savePromise;
+    });
+
+    expect(container.textContent).toContain("4 titles");
+    expect(container.textContent).not.toContain("7 titles");
+    expect(container.querySelector('[aria-label^="Collision results may be stale"]'))
+      .toBeNull();
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+  });
+
   it("keeps collision badges current when a timed-out catalog request fails after retry", async () => {
     let rejectTimedOutCatalog!: (error: Error) => void;
     const timedOutCatalog = new Promise<void>((_resolve, reject) => {
