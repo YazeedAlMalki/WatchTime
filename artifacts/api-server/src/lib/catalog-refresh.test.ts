@@ -512,6 +512,160 @@ describe("catalog refresh startup failure", () => {
     }
   });
 
+  it("keeps a single-title refresh retryable after PostgreSQL aborts failure recording", async () => {
+    const [item] = sourceItems;
+    const syncError = new Error("provider failed during single-title refresh");
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
+    const transaction = db.transaction.bind(db);
+    let transactionSpy: MockInstance<typeof db.transaction> | undefined;
+    const transactionSession: { client: any } = { client: null };
+    let querySpy: MockInstance<typeof pool.query> | undefined;
+    let runId!: number;
+    let beforeRun!: typeof catalogSyncRunsTable.$inferSelect;
+    let beforeItem!: typeof catalogSyncItemsTable.$inferSelect;
+    let statementError: unknown;
+
+    runCatalogSyncMock.mockImplementationOnce(async (
+      ...[_options, selected, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+    ) => {
+      if (!selected || selected.length !== 1) throw new Error("Expected exactly one refresh title");
+      await onProgress!({ item: selected[0], status: "running", attempted: 1, succeeded: 0, episodes: 0 });
+      [beforeRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      [beforeItem] = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId));
+
+      transactionSession.client = await pool.connect();
+      const transactionDb = drizzle(transactionSession.client, { schema });
+      querySpy = vi.spyOn(transactionSession.client, "query");
+      transactionSpy = vi.spyOn(db, "transaction").mockImplementationOnce((callback, config) =>
+        transactionDb.transaction(async (tx) => {
+          const update = tx.update.bind(tx);
+          const updateSpy = vi.spyOn(tx, "update").mockImplementation((table) => {
+            if (table === catalogSyncItemsTable) {
+              return {
+                set: () => ({
+                  where: async () => {
+                    const [failedRun] = await tx.select().from(catalogSyncRunsTable)
+                      .where(eq(catalogSyncRunsTable.id, runId));
+                    expect(failedRun).toMatchObject({ status: "failed", error: syncError.message });
+                    expect(failedRun.finishedAt).toBeInstanceOf(Date);
+                    const [runningItem] = await tx.select().from(catalogSyncItemsTable)
+                      .where(eq(catalogSyncItemsTable.runId, runId));
+                    expect(runningItem).toEqual(beforeItem);
+
+                    // Exercise PostgreSQL's aborted-transaction behavior in the
+                    // actual failed-item recording transaction.
+                    try {
+                      await tx.execute(sql`select 1 / 0`);
+                    } catch (error) {
+                      statementError = error;
+                      expect(error).toMatchObject({
+                        cause: { code: "22012", message: "division by zero" },
+                      });
+                      await expect(tx.execute(sql`select 1`)).rejects.toMatchObject({
+                        cause: { code: "25P02" },
+                      });
+                      throw error;
+                    }
+                    throw new Error("Expected PostgreSQL to reject division by zero");
+                  },
+                }),
+              } as unknown as ReturnType<typeof tx.update>;
+            }
+            return update(table);
+          });
+          try {
+            return await callback(tx);
+          } finally {
+            updateSpy.mockRestore();
+          }
+        }, config),
+      );
+      throw syncError;
+    });
+
+    try {
+      expect(item).toBeDefined();
+      runId = await startCatalogRefresh("manual", [item]);
+      createdRunIds.push(runId);
+      await vi.waitFor(() => expect(statementError).toBeDefined());
+      await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+        { err: statementError, runId }, "unable to record catalog refresh failure",
+      ));
+      expect(errorSpy).toHaveBeenCalledWith({ err: syncError, runId }, "catalog refresh failed");
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "rollback" }), expect.any(Array),
+      );
+
+      const healthy = await transactionSession.client!.query("select 1 as value");
+      expect(healthy.rows).toEqual([{ value: 1 }]);
+      transactionSpy!.mockRestore();
+      expect(beforeRun).toMatchObject({ status: "running", error: null, finishedAt: null });
+      expect(beforeItem.status).toBe("running");
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId))).toEqual([beforeRun]);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId))).toEqual([beforeItem]);
+
+      await recoverInterruptedRuns();
+      const [recoveredRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(recoveredRun).toMatchObject({
+        status: "failed", error: "Catalog refresh was interrupted by a server restart",
+        totalItems: 1, processedItems: 1, failedItems: 1, succeededItems: 0, episodesUpdated: 0,
+      });
+      expect(recoveredRun.finishedAt).toBeInstanceOf(Date);
+      const [recoveredItem] = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId));
+      expect(recoveredItem).toMatchObject({
+        itemKey: item.key, status: "failed", error: recoveredRun.error,
+      });
+      expect(recoveredItem.finishedAt).toBeInstanceOf(Date);
+
+      runCatalogSyncMock.mockImplementationOnce(async (
+        ...[_options, retryItems, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+      ) => {
+        if (!retryItems || retryItems.length !== 1) throw new Error("Expected one explicit retry title");
+        await onProgress!({
+          item: retryItems[0], status: "succeeded", attempted: 1, succeeded: 1, episodes: 0,
+        });
+        return { selected: retryItems.length, succeeded: retryItems.length, episodes: 0, failures: [] };
+      });
+      const retryRunId = await retryFailedCatalogTitles(runId);
+      expect(retryRunId).not.toBeNull();
+      createdRunIds.push(retryRunId!);
+      await vi.waitFor(async () => {
+        const [retryRun] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, retryRunId!));
+        expect(retryRun).toMatchObject({
+          trigger: "retry", status: "succeeded", totalItems: 1, processedItems: 1,
+          succeededItems: 1, failedItems: 0,
+        });
+      });
+      expect(runCatalogSyncMock).toHaveBeenLastCalledWith(
+        { dryRun: false, allowPartial: true }, [item], expect.any(Function), false,
+      );
+      const [retriedItem] = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, retryRunId!));
+      expect(retriedItem).toMatchObject({ itemKey: item.key, status: "succeeded", error: null });
+    } finally {
+      transactionSpy?.mockRestore();
+      querySpy?.mockRestore();
+      if (transactionSession.client) {
+        try {
+          await transactionSession.client.query("rollback");
+          await transactionSession.client.query("select pg_advisory_unlock_all()");
+        } finally {
+          transactionSession.client.release();
+        }
+      }
+      errorSpy.mockRestore();
+      runCatalogSyncMock.mockReset();
+    }
+  });
+
   it("preserves the recorded startup failure when history cleanup also rejects", async () => {
     const startupError = new Error("unable to mark refresh running");
     const cleanupError = new Error("history deletion failed");
