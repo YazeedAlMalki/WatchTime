@@ -1017,6 +1017,58 @@ describe("catalog refresh retry audit failure", () => {
 });
 
 describe("catalog refresh recovery", () => {
+  it.each(["success", "transaction error"] as const)(
+    "releases its client exactly once when cleanup unlock fails after %s",
+    async (outcome) => {
+      const recoveryClient = await pool.connect();
+      // Keep the real lock-owning session checked out until finally can unlock
+      // it, even though recovery must still attempt to return its connection.
+      const releaseSpy = vi.spyOn(recoveryClient, "release").mockImplementation(() => {});
+      const connectSpy = vi.spyOn(pool, "connect").mockImplementationOnce(() => Promise.resolve(recoveryClient));
+      const unlockSql = "select pg_advisory_unlock(hashtext('watchtime:catalog-sync'))";
+      const unlockError = new Error("recovery cleanup unlock rejected");
+      const recoveryQuery = recoveryClient.query.bind(recoveryClient);
+      const querySpy = vi.spyOn(recoveryClient, "query").mockImplementation(
+        ((text: string) => text === unlockSql
+          ? Promise.reject(unlockError)
+          : recoveryQuery(text)) as typeof recoveryClient.query,
+      );
+      const transactionError = new Error("original recovery transaction failure");
+      const transactionSpy = vi.spyOn(db, "transaction");
+      if (outcome === "transaction error") {
+        transactionSpy.mockRejectedValueOnce(transactionError);
+      } else {
+        transactionSpy.mockResolvedValueOnce([]);
+      }
+
+      try {
+        if (outcome === "transaction error") {
+          await expect(recoverInterruptedRuns()).rejects.toBe(transactionError);
+        } else {
+          await expect(recoverInterruptedRuns()).resolves.toBeUndefined();
+        }
+        expect(transactionSpy).toHaveBeenCalledTimes(1);
+        expect(querySpy).toHaveBeenCalledTimes(2);
+        expect(querySpy).toHaveBeenNthCalledWith(
+          1,
+          "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+        );
+        expect(querySpy).toHaveBeenNthCalledWith(2, unlockSql);
+        expect(releaseSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        transactionSpy.mockRestore();
+        querySpy.mockRestore();
+        connectSpy.mockRestore();
+        releaseSpy.mockRestore();
+        try {
+          await recoveryClient.query("select pg_advisory_unlock_all()");
+        } finally {
+          recoveryClient.release();
+        }
+      }
+    },
+  );
+
   it("propagates an initial catalog lock query rejection without starting a transaction and releases its client", async () => {
     const recoveryClient = await pool.connect();
     // Keep the session reserved until cleanup even if recovery releases it.
