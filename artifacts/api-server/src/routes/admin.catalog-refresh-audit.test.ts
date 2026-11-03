@@ -835,6 +835,66 @@ describe("other catalog refresh starts", () => {
       .orderBy(catalogSyncItemsTable.id)).toEqual(sourceItemsBefore);
   });
 
+  it("queues and runs each failed catalog key once when failed rows and catalog data repeat it", async () => {
+    const duplicateKey = `catalog-refresh-audit-retry-duplicate-${randomUUID()}`;
+    const secondKey = `catalog-refresh-audit-retry-second-${randomUUID()}`;
+    const duplicateItem = {
+      key: duplicateKey,
+      name: "Repeated failed retry title",
+      source: "tvmaze" as const,
+      type: "tv" as const,
+      popularity: 0,
+    };
+    const secondItem = {
+      key: secondKey,
+      name: "Second failed retry title",
+      source: "tvmaze" as const,
+      type: "tv" as const,
+      popularity: 0,
+    };
+    const originalSourceItemsLength = sourceItems.length;
+    sourceItems.push(duplicateItem, { ...duplicateItem }, secondItem);
+    const sourceRunId = await createSourceRunWithItems([duplicateKey, secondKey]);
+    const duplicatedFailedRows = [
+      { itemKey: duplicateKey },
+      { itemKey: duplicateKey },
+      { itemKey: secondKey },
+    ];
+    vi.spyOn(db, "select").mockImplementationOnce(() => ({
+      from: () => ({
+        where: async () => duplicatedFailedRows,
+      }),
+    } as unknown as ReturnType<typeof db.select>));
+    runCatalogSync.mockResolvedValueOnce({
+      selected: 2, succeeded: 2, episodes: 0, failures: [],
+    });
+
+    try {
+      const response = await request(app)
+        .post(`/api/admin/catalog-refreshes/${sourceRunId}/retry`)
+        .send({ itemKeys: [duplicateKey, secondKey] })
+        .expect(202);
+      const retryRunId = response.body.runId as number;
+      createdRunIds.push(retryRunId);
+      await waitForFinishedRun(retryRunId);
+
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, retryRunId))).toEqual([
+        expect.objectContaining({ trigger: "retry", status: "succeeded", totalItems: 2 }),
+      ]);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, retryRunId))
+        .orderBy(catalogSyncItemsTable.itemKey)).toEqual([
+        expect.objectContaining({ itemKey: duplicateKey, status: "queued" }),
+        expect.objectContaining({ itemKey: secondKey, status: "queued" }),
+      ]);
+      expect(runCatalogSync).toHaveBeenCalledOnce();
+      expect(runCatalogSync.mock.calls[0][1]).toEqual([duplicateItem, secondItem]);
+    } finally {
+      sourceItems.splice(originalSourceItemsLength);
+    }
+  });
+
   it("rejects an empty retry selection before creating a run or audit record", async () => {
     const sourceRunId = await createSourceRun("failed");
     const transactionSpy = vi.spyOn(db, "transaction");

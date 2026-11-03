@@ -197,7 +197,9 @@ export async function retryFailedCatalogTitles(
     ? failedKeys
     : new Set(selectedItemKeys.filter((key) => failedKeys.has(key)));
   if (!keys.size) return null;
-  const items = sourceItems.filter((item) => keys.has(item.key));
+  const items = [...new Map(
+    sourceItems.filter((item) => keys.has(item.key)).map((item) => [item.key, item]),
+  ).values()];
   if (!items.length) return null;
   return startCatalogRefresh("retry", items, beforeStart);
 }
