@@ -199,9 +199,8 @@ jest.mock('@workspace/api-client-react', () => {
         onError: options.mutation.onError,
       }),
     useAddToWatchlist: idleMutation, useRemoveFromWatchlist: idleMutation,
-    getMyShows: async () => {
-      mockShowsFetch();
-      return mockShows();
+    getMyShows: async (params: unknown) => {
+      return mockShowsFetch(params) ?? mockShows();
     },
     getMyInProgressShows: async () => {
       mockInProgressFetch();
@@ -657,6 +656,93 @@ it('switches between TV Shows and Movies without reusing the list layout', async
     await waitFor(() => expect(screen.getByTestId('show-row-42')).toBeTruthy());
   } finally {
     await act(async () => screen.unmount());
+    client.clear();
+  }
+});
+
+it('keeps a pending TV Shows page intact when switching to Movies and back', async () => {
+  mockTitleIsMovie = false;
+  mockMovieWatched = false;
+  mockWatched = false;
+  jest.clearAllMocks();
+  mockShowsFetch.mockReset();
+
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false },
+      mutations: { gcTime: Infinity, retry: false },
+    },
+  });
+  const firstPage = Array.from({ length: 24 }, (_, index) => ({
+    title: { id: 1000 + index, name: `Paged Show ${index + 1}` },
+    totalEpisodes: 2,
+    watchedEpisodes: 0,
+    nextEpisode: {
+      id: 2000 + index, seasonNumber: 1, episodeNumber: 1, name: 'Pilot',
+    },
+  }));
+  const secondPage = [24, 25].map(index => ({
+    title: { id: 1000 + index, name: `Paged Show ${index + 1}` },
+    totalEpisodes: 2,
+    watchedEpisodes: 0,
+    nextEpisode: {
+      id: 2000 + index, seasonNumber: 1, episodeNumber: 1, name: 'Pilot',
+    },
+  }));
+  let resolvePendingPage: ((page: typeof firstPage) => void) | undefined;
+  const pendingPage = new Promise<typeof firstPage>(resolve => {
+    resolvePendingPage = resolve;
+  });
+  mockShowsFetch.mockImplementation(({ beforeId }: { beforeId?: number }) => (
+    beforeId === undefined ? firstPage : pendingPage
+  ));
+
+  const screen = await render(
+    <QueryClientProvider client={client}><MyShowsScreen /></QueryClientProvider>,
+  );
+  try {
+    const showsKey = [
+      ...getGetMyShowsQueryKey(), 'account', 'activity-user', 'infinite',
+      { q: undefined, status: undefined },
+    ];
+    await waitFor(() => {
+      expect(screen.getByTestId('show-row-1000')).toBeTruthy();
+      expect(mockShowsFetch).toHaveBeenCalledTimes(1);
+    });
+
+    await fireEvent(screen.getByTestId('shows-list'), 'onEndReached');
+    await waitFor(() => {
+      expect(mockShowsFetch).toHaveBeenCalledTimes(2);
+      expect(client.getQueryState(showsKey)?.fetchStatus).toBe('fetching');
+    });
+
+    await fireEvent.press(screen.getByTestId('tab-movies'));
+    await waitFor(() => expect(screen.getByText('No movies watched yet')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('tab-shows'));
+    await waitFor(() => expect(screen.getByTestId('show-row-1000')).toBeTruthy());
+
+    await act(async () => {
+      resolvePendingPage?.(secondPage);
+    });
+    await waitFor(() => {
+      const pages = client.getQueryData<{ pages: typeof firstPage[] }>(showsKey)?.pages;
+      expect(pages).toHaveLength(2);
+      expect(pages?.[1]).toEqual(secondPage);
+      expect(client.getQueryState(showsKey)?.status).toBe('success');
+      expect(client.getQueryState(showsKey)?.fetchStatus).toBe('idle');
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    });
+
+    const loadedShows = client.getQueryData<{ pages: typeof firstPage[] }>(showsKey)?.pages.flat() ?? [];
+    const loadedShowIds = loadedShows.map(show => show.title.id);
+    expect(loadedShowIds).toHaveLength(firstPage.length + secondPage.length);
+    expect(new Set(loadedShowIds).size).toBe(loadedShowIds.length);
+    expect(mockShowsFetch).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('show-row-1000')).toBeTruthy();
+    expect(screen.queryByText('No shows tracked yet')).toBeNull();
+  } finally {
+    await act(async () => screen.unmount());
+    mockShowsFetch.mockReset();
     client.clear();
   }
 });

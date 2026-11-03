@@ -584,6 +584,7 @@ export default function MyShowsScreen() {
       ) : activeTab === 'shows' ? (
         <FlatList
           key="shows"
+          testID="shows-list"
           data={filteredShows}
           keyExtractor={(s) => String(s.title.id)}
           keyboardShouldPersistTaps="handled"
