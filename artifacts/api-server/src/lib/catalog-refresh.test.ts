@@ -850,6 +850,95 @@ describe("catalog refresh startup failure", () => {
   });
 });
 
+describe("catalog refresh retry audit failure", () => {
+  it("keeps the source failures retryable without creating a partial retry run", async () => {
+    const items = sourceItems.slice(0, 2);
+    const failedAt = new Date("2026-11-02T12:00:00.000Z");
+    const [sourceRun] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual",
+      status: "failed",
+      totalItems: items.length,
+      processedItems: items.length,
+      failedItems: items.length,
+      error: "original catalog failure",
+      finishedAt: failedAt,
+    }).returning();
+    createdRunIds.push(sourceRun.id);
+    const sourceRows = await db.insert(catalogSyncItemsTable).values(items.map((item) => ({
+      runId: sourceRun.id,
+      itemKey: item.key,
+      title: item.name,
+      provider: item.source === "tvmaze" ? "TVMaze" as const : "Wikipedia" as const,
+      status: "failed" as const,
+      error: `original failure for ${item.key}`,
+      finishedAt: failedAt,
+    }))).returning();
+    const previousRetryRuns = await db.select({ id: catalogSyncRunsTable.id })
+      .from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.trigger, "retry"));
+    const auditError = new Error("unable to write retry audit");
+
+    await expect(retryFailedCatalogTitles(sourceRun.id, async (tx, retryRunId) => {
+      const [queuedRun] = await tx.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, retryRunId));
+      expect(queuedRun).toMatchObject({
+        trigger: "retry",
+        status: "queued",
+        totalItems: items.length,
+      });
+      const queuedItems = await tx.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, retryRunId));
+      expect(queuedItems.map((item) => item.itemKey).sort()).toEqual(items.map((item) => item.key).sort());
+      throw auditError;
+    })).rejects.toBe(auditError);
+
+    expect(await db.select().from(catalogSyncRunsTable)
+      .where(eq(catalogSyncRunsTable.id, sourceRun.id))).toEqual([sourceRun]);
+    expect(await db.select().from(catalogSyncItemsTable)
+      .where(eq(catalogSyncItemsTable.runId, sourceRun.id))
+      .orderBy(catalogSyncItemsTable.id)).toEqual(sourceRows);
+    const retryRunsAfterAuditFailure = await db.select({ id: catalogSyncRunsTable.id })
+      .from(catalogSyncRunsTable).where(eq(catalogSyncRunsTable.trigger, "retry"));
+    expect(retryRunsAfterAuditFailure).toEqual(previousRetryRuns);
+    runCatalogSyncMock.mockImplementationOnce(async (
+      ...[_options, retryItems, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+    ) => {
+      if (!retryItems) throw new Error("Expected explicit retry titles");
+      for (const [index, item] of retryItems.entries()) {
+        await onProgress!({ item, status: "succeeded", attempted: index + 1, succeeded: index + 1, episodes: 0 });
+      }
+      return { selected: retryItems.length, succeeded: retryItems.length, episodes: 0, failures: [] };
+    });
+
+    try {
+      const retryRunId = await retryFailedCatalogTitles(sourceRun.id);
+      expect(retryRunId).not.toBeNull();
+      createdRunIds.push(retryRunId!);
+      await vi.waitFor(async () => {
+        const [retryRun] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, retryRunId!));
+        expect(retryRun).toMatchObject({
+          trigger: "retry",
+          status: "succeeded",
+          totalItems: items.length,
+          succeededItems: items.length,
+          failedItems: 0,
+        });
+      });
+      const retriedItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, retryRunId!));
+      expect(retriedItems.map((item) => item.itemKey).sort()).toEqual(items.map((item) => item.key).sort());
+      expect(retriedItems.every((item) => item.status === "succeeded")).toBe(true);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, sourceRun.id))
+        .orderBy(catalogSyncItemsTable.id)).toEqual(sourceRows);
+      expect(runCatalogSyncMock).toHaveBeenCalledExactlyOnceWith(
+        { dryRun: false, allowPartial: true }, items, expect.any(Function), false,
+      );
+    } finally {
+      runCatalogSyncMock.mockReset();
+    }
+  });
+});
 
 describe("catalog refresh recovery", () => {
   it("propagates an initial catalog lock query rejection without starting a transaction and releases its client", async () => {
