@@ -666,6 +666,40 @@ describe("admin title aliases", () => {
     });
   });
 
+  it("counts editorial-owned collisions hidden by the provider ownership filter", async () => {
+    await db.insert(titleAliasesTable).values([
+      {
+        titleId: createdTitleIds[0],
+        alias: "Provider Review Collision",
+        normalizedAlias: "providerreviewcollision",
+        language: "en",
+        sourceName: "Editorial test",
+        isEditorial: true,
+      },
+      {
+        titleId: createdTitleIds[1],
+        alias: "Provider Review Collision!",
+        normalizedAlias: "providerreviewcollision",
+        language: "en",
+        sourceName: "TVMaze",
+        isEditorial: false,
+      },
+    ]);
+
+    const response = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ ownership: "provider", q: "Provider Review Collision" })
+      .expect(200);
+
+    expect(response.body.items).toHaveLength(1);
+    expect(response.body.items[0]).toMatchObject({
+      alias: "Provider Review Collision!",
+      isEditorial: false,
+      collision: true,
+      collisionTitleCount: 2,
+    });
+  });
+
   it("looks up current collision counts independently of alias-list results", async () => {
     const response = await request(app)
       .post("/api/admin/content-alias-collisions")
