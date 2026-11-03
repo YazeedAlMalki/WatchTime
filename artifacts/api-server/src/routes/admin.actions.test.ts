@@ -462,6 +462,28 @@ describe("restored admin actions", () => {
 
   it.each([
     {
+      kind: "contribution",
+      status: "pending",
+      nextStatus: "approved",
+      entityType: "contribution",
+      action: "approved_contribution",
+      createFixture: async () => {
+        const [contribution] = await db.insert(contributionsTable).values({
+          userId: adminId,
+          titleId,
+          category: "violence",
+          severity: "mild",
+          status: "pending",
+        }).returning();
+        return { id: contribution.id, readStatus: async () => {
+          const [saved] = await db.select().from(contributionsTable)
+            .where(eq(contributionsTable.id, contribution.id));
+          return saved.status;
+        } };
+      },
+      path: (id: number) => `/api/admin/contributions/${id}`,
+    },
+    {
       kind: "report",
       status: "open",
       nextStatus: "resolved",
