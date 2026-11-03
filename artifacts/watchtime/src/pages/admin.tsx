@@ -3399,6 +3399,35 @@ export function AliasReview({
               );
             });
             if (
+              request === "collisions" &&
+              aliasRefreshAttempt.current === attempt &&
+              Array.isArray(result)
+            ) {
+              setCollisionCountOverrides(
+                new Map(result.map((entry) => [entry.alias, entry])),
+              );
+              const catalogStillPending = pendingRequests.has("catalog");
+              const catalogFailed = settledFailures.has("catalog");
+              if (!catalogStillPending && !catalogFailed) {
+                setIsCollisionResultsStale(false);
+              }
+              setRefreshError((current) => {
+                if (!current) return current;
+                const remainingFailures = current.filter(
+                  (failedRequest) =>
+                    failedRequest !== "collisions" &&
+                    !(
+                      failedRequest === "catalog" &&
+                      !catalogStillPending &&
+                      !catalogFailed
+                    ),
+                );
+                return remainingFailures.length > 0
+                  ? remainingFailures
+                  : null;
+              });
+            }
+            if (
               request === "aliases" &&
               aliasRefreshAttempt.current === attempt
             ) {
@@ -3424,20 +3453,6 @@ export function AliasReview({
       );
       if (aliasRefreshAttempt.current !== attempt) return null;
       setRefreshError(failedRequests.length > 0 ? failedRequests : null);
-      const collisionRequestIndex = requests.indexOf("collisions");
-      if (collisionRequestIndex >= 0) {
-        const collisionResult = results[collisionRequestIndex];
-        if (
-          collisionResult.status === "fulfilled" &&
-          Array.isArray(collisionResult.value)
-        ) {
-          setCollisionCountOverrides(
-            new Map(
-              collisionResult.value.map((entry) => [entry.alias, entry]),
-            ),
-          );
-        }
-      }
       if (requests.includes("catalog") || requests.includes("collisions")) {
         setIsCollisionResultsStale(
           failedRequests.includes("catalog") ||

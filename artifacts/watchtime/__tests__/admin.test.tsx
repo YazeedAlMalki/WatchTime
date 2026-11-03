@@ -2237,6 +2237,106 @@ describe("admin alternate-title review", () => {
     );
   });
 
+  it("shows recovered collision counts before the remaining alias refresh finishes", async () => {
+    let resolveAliasRefresh!: () => void;
+    const aliasRefresh = new Promise<void>((resolve) => {
+      resolveAliasRefresh = resolve;
+    });
+    let resolveCollisionRefresh!: (
+      counts: {
+        alias: string;
+        collision: boolean;
+        collisionTitleCount: number;
+      }[],
+    ) => void;
+    const collisionRefresh = new Promise<
+      {
+        alias: string;
+        collision: boolean;
+        collisionTitleCount: number;
+      }[]
+    >((resolve) => {
+      resolveCollisionRefresh = resolve;
+    });
+    const refreshedAlias: AdminContentAlias = {
+      ...initialAlias,
+      alias: "Updated Local Title",
+      collision: true,
+      collisionTitleCount: 4,
+    };
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) =>
+        queryKey[0] === "/api/admin/content-aliases"
+          ? aliasRefresh.then(() => render([refreshedAlias]))
+          : Promise.resolve(),
+    );
+    mocks.lookupAdminContentAliasCollisions.mockReturnValue(collisionRefresh);
+    render();
+    vi.useFakeTimers();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(
+      container.querySelector('[aria-label^="Collision results may be stale"]'),
+    ).not.toBeNull();
+
+    await act(async () => {
+      resolveCollisionRefresh([
+        {
+          alias: "Updated Local Title",
+          collision: true,
+          collisionTitleCount: 4,
+        },
+      ]);
+      await collisionRefresh;
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector("tbody tr td:nth-child(5)")?.textContent,
+    ).toContain("4 titles");
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain(
+      "The alternate-title list may be stale; collision results refreshed successfully.",
+    );
+    expect(
+      container.querySelector('[aria-label^="Collision results may be stale"]'),
+    ).toBeNull();
+
+    const savePromise = mocks.updateMutation.mutate.mock.results.at(-1)
+      ?.value as Promise<void> | undefined;
+    if (!savePromise) throw new Error("The alternate-title save did not start");
+    await act(async () => {
+      resolveAliasRefresh();
+      await aliasRefresh;
+      await savePromise;
+    });
+
+    expect(container.textContent).not.toContain("Alternate-title refresh failed");
+    expect(
+      container.querySelector('[aria-label^="Collision results may be stale"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector("tbody tr td:nth-child(5)")?.textContent,
+    ).toContain("4 titles");
+  });
+
   it("shows a settled collision lookup failure after its recovery timeout", async () => {
     let rejectCollisionRefresh!: (error: Error) => void;
     const collisionRefresh = new Promise<void>((_resolve, reject) => {
