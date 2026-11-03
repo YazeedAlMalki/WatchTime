@@ -11,7 +11,7 @@ import {
   usersTable,
   wikidataIdentityConflictsTable,
 } from "@workspace/db";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, getTableName, inArray, sql } from "drizzle-orm";
 
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
@@ -908,6 +908,118 @@ describe("admin Content review timestamp filter", () => {
       }),
     ]));
     expect(audit).toHaveLength(2);
+  });
+
+  it.each([
+    {
+      action: "correct",
+      path: (recordId: number) => `/api/admin/unclassified-ratings/${recordId}/correct`,
+      requestBody: (expectedUpdatedAt: string) => ({
+        expectedUpdatedAt,
+        classificationIndex: 0,
+        category: "BBFC",
+      }),
+      auditAction: "correct_safety_classification",
+      originalItems: [{
+        category: "UNSUPPORTED_SYSTEM",
+        label: "12A",
+        score: null,
+        maxScore: null,
+        description: null,
+      }],
+    },
+    {
+      action: "dismiss",
+      path: (recordId: number) => `/api/admin/unclassified-ratings/${recordId}/dismiss`,
+      requestBody: (expectedUpdatedAt: string) => ({
+        expectedUpdatedAt,
+        reason: "Confirmed unsupported by source",
+      }),
+      auditAction: "dismiss_safety_classification",
+      originalItems: [{
+        category: "UNKNOWN",
+        label: "R",
+        score: 17,
+        maxScore: 20,
+        description: "Original provider description",
+      }],
+    },
+  ])("keeps the rating unchanged when the $action audit insert fails", async ({
+    action,
+    path,
+    requestBody,
+    auditAction,
+    originalItems,
+  }) => {
+    const fixturePrefix = `unclassified-audit-failure-${action}`;
+    const [title] = await db.insert(titlesTable).values({
+      name: fixturePrefix,
+      type: "movie",
+      popularity: 1,
+    }).returning({ id: titlesTable.id });
+    titleIds.push(title.id);
+    const [record] = await db.insert(safetyRecordsTable).values({
+      titleId: title.id,
+      sourceName: "Wikidata",
+      status: "available",
+      isCommunity: false,
+      url: `https://www.wikidata.org/wiki/Q${fixturePrefix}`,
+      updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+      items: originalItems,
+    }).returning({ id: safetyRecordsTable.id });
+    await markMalformedTimestamp([record.id]);
+
+    const review = await request(app)
+      .get(`/api/admin/content?q=${fixturePrefix}&malformedRegionalClassification=true&malformedRefreshTimestampProvider=Wikidata`)
+      .expect(200);
+    const unclassifiedRating = review.body[0].unclassifiedRating;
+
+    const realTransaction = db.transaction.bind(db);
+    let attemptedAudit: typeof adminAuditLogTable.$inferInsert | undefined;
+    const transactionSpy = vi.spyOn(db, "transaction");
+    transactionSpy.mockImplementationOnce(
+      (fn: Parameters<typeof db.transaction>[0]) => realTransaction((tx) => {
+        const wrapped = new Proxy(tx, {
+          get(target, prop) {
+            if (prop === "insert") {
+              return (table: Parameters<typeof tx.insert>[0]) => {
+                if (getTableName(table) === getTableName(adminAuditLogTable)) {
+                  return { values: async (audit: typeof adminAuditLogTable.$inferInsert) => {
+                    attemptedAudit = audit;
+                    throw new Error("simulated audit insert failure");
+                  } };
+                }
+                return target.insert(table);
+              };
+            }
+            const value = Reflect.get(target, prop);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return fn(wrapped);
+      }) as ReturnType<typeof db.transaction>,
+    );
+
+    await request(app)
+      .post(path(record.id))
+      .send(requestBody(unclassifiedRating.rawUpdatedAt))
+      .expect(500);
+
+    expect(transactionSpy).toHaveBeenCalled();
+    expect(attemptedAudit).toMatchObject({
+      adminId: "test-admin",
+      action: auditAction,
+      entityType: "content",
+      entityId: record.id,
+    });
+    const [savedRecord] = await db.select().from(safetyRecordsTable)
+      .where(eq(safetyRecordsTable.id, record.id));
+    expect(savedRecord.status).toBe("available");
+    expect(savedRecord.items).toEqual(originalItems);
+    expect(await db.select().from(adminAuditLogTable).where(and(
+      eq(adminAuditLogTable.entityType, "content"),
+      eq(adminAuditLogTable.entityId, record.id),
+    ))).toEqual([]);
   });
 
   it("pages every unclassified provider record once in stable order", async () => {
