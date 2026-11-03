@@ -3994,6 +3994,105 @@ describe("admin alternate-title review", () => {
     },
   );
 
+  it.each([
+    {
+      failedRequest: "aliases",
+      expectedWarning:
+        "The alternate-title list may be stale; collision results refreshed successfully.",
+      collisionMayBeStale: false,
+    },
+    {
+      failedRequest: "catalog",
+      expectedWarning:
+        "Collision results may be stale; the alternate-title list refreshed successfully.",
+      collisionMayBeStale: true,
+    },
+  ] as const)(
+    "keeps post-removal collision badges accurate when only $failedRequest refresh fails",
+    async ({ failedRequest, expectedWarning, collisionMayBeStale }) => {
+      const otherAlias: AdminContentAlias = {
+        ...initialAlias,
+        id: 18,
+        titleId: 102,
+        titleName: "The Harbor",
+      };
+      const refreshCalls: RefreshRequest[] = [];
+      mocks.queryClient.invalidateQueries.mockImplementation(
+        ({ queryKey }: { queryKey: string[] }) => {
+          const request: RefreshRequest =
+            queryKey[0] === "/api/admin/content-aliases"
+              ? "aliases"
+              : "catalog";
+          refreshCalls.push(request);
+          return request === failedRequest &&
+            refreshCalls.filter((called) => called === request).length === 1
+            ? Promise.reject(new Error(`${request} refresh unavailable`))
+            : Promise.resolve();
+        },
+      );
+      mocks.lookupAdminContentAliasCollisions.mockImplementation(
+        async ({ aliases }: { aliases: string[] }) =>
+          aliases.map((alias) => ({
+            alias,
+            collision: false,
+            collisionTitleCount: 1,
+          })),
+      );
+      render([initialAlias, otherAlias]);
+      confirmSpy.mockReturnValue(true);
+
+      act(() => button(container, "Remove").click());
+      await flushEffects();
+
+      expect(mocks.deleteMutation.mutate).toHaveBeenCalledWith(
+        {
+          id: initialAlias.id,
+          data: { expectedUpdatedAt: initialAlias.updatedAt },
+        },
+        expect.any(Object),
+      );
+      expect(refreshCalls).toEqual(["aliases", "catalog"]);
+      expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenCalledWith({
+        aliases: [initialAlias.alias],
+      });
+      const remainingRow = Array.from(
+        container.querySelectorAll("tbody tr"),
+      ).find((row) => row.textContent?.includes("The Harbor"));
+      const collisionCell = remainingRow?.querySelector("td:nth-child(5)");
+      expect(collisionCell?.textContent).toContain(
+        collisionMayBeStale ? "Unique · may be stale" : "Unique",
+      );
+      if (!collisionMayBeStale) {
+        expect(collisionCell?.textContent).not.toContain("may be stale");
+      }
+      expect(container.textContent).toContain(expectedWarning);
+      expect(button(container, "Retry refresh")).toBeTruthy();
+
+      act(() => button(container, "Retry refresh").click());
+      await flushEffects();
+
+      expect(refreshCalls).toEqual(["aliases", "catalog", failedRequest]);
+      expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenCalledTimes(1);
+      expect(container.textContent).not.toContain(
+        "Alternate-title refresh failed",
+      );
+      expect(
+        container.querySelector(
+          '[aria-label^="Collision results may be stale:"]',
+        ),
+      ).toBeNull();
+      const refreshedRow = Array.from(
+        container.querySelectorAll("tbody tr"),
+      ).find((row) => row.textContent?.includes("The Harbor"));
+      const refreshedCollisionCell =
+        refreshedRow?.querySelector("td:nth-child(5)");
+      expect(refreshedCollisionCell?.textContent).toContain("Unique");
+      expect(refreshedCollisionCell?.textContent).not.toContain(
+        "may be stale",
+      );
+    },
+  );
+
   it("keeps multiple removed aliases hidden until a failed removal refresh is retried", async () => {
     const secondAlias: AdminContentAlias = {
       ...initialAlias,
