@@ -1000,12 +1000,29 @@ export default function TitleDetailScreen() {
   if (!Number.isFinite(titleId)) return <ErrorState onRetry={() => router.back()} message="Invalid title" />;
   if (title.isLoading && !title.data) return <Loading />;
   if (!title.data) {
+    if (title.error?.status === 404) {
+      return (
+        <View style={{ flex: 1, backgroundColor: c.background, justifyContent: 'center', padding: 24 }}>
+          <Text
+            accessibilityRole="text"
+            style={{
+              color: c.foreground,
+              fontSize: 15,
+              fontFamily: 'Inter_500Medium',
+              textAlign: 'center',
+            }}
+          >
+            This title could not be found.
+          </Text>
+        </View>
+      );
+    }
     return (
       <View style={{ flex: 1, backgroundColor: c.background, justifyContent: 'center' }}>
         <ErrorState
           onRetry={() => void retryTitle()}
           isRetrying={isRetryingTitle}
-          message="Couldn't load this title"
+          message="Couldn't load this title. Check your connection and try again."
         />
       </View>
     );

@@ -73,7 +73,12 @@ const mockPublicTitle: {
   overview: 'A public synopsis remains available while sign-in is down.',
 };
 const mockTitleQueryState: {
-  current: { data: typeof mockPublicTitle | null; isLoading: boolean; isError: boolean };
+  current: {
+    data: typeof mockPublicTitle | null;
+    isLoading: boolean;
+    isError: boolean;
+    error?: { status: number } | null;
+  };
 } = {
   current: { data: mockPublicTitle, isLoading: false, isError: false },
 };
@@ -251,6 +256,7 @@ describe('public browsing while authentication is unavailable', () => {
       data: mockPublicTitle,
       isLoading: false,
       isError: false,
+      error: null,
     };
     mockTitleSafetyQueryState.current = {
       data: null,
@@ -288,7 +294,12 @@ describe('public browsing while authentication is unavailable', () => {
 
   it('opens a shared title URL directly while sign-in is unavailable', async () => {
     mockRoute.current = { id: '771' };
-    mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
+    mockTitleQueryState.current = {
+      data: null,
+      isLoading: false,
+      isError: true,
+      error: { status: 503 },
+    };
 
     const detail = await render(
       <AppAuthUnavailableProvider>
@@ -296,7 +307,9 @@ describe('public browsing while authentication is unavailable', () => {
       </AppAuthUnavailableProvider>,
     );
 
-    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(
+      detail.getByText("Couldn't load this title. Check your connection and try again."),
+    ).toBeTruthy();
     expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
 
@@ -305,6 +318,7 @@ describe('public browsing while authentication is unavailable', () => {
         data: mockPublicTitle,
         isLoading: false,
         isError: false,
+        error: null,
       };
       return { data: mockPublicTitle };
     });
@@ -339,7 +353,9 @@ describe('public browsing while authentication is unavailable', () => {
       </AppAuthUnavailableProvider>,
     );
 
-    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(
+      detail.getByText("Couldn't load this title. Check your connection and try again."),
+    ).toBeTruthy();
 
     mockTitleRefetch.mockImplementationOnce(async () => ({
       data: mockPublicTitle,
@@ -382,9 +398,14 @@ describe('public browsing while authentication is unavailable', () => {
     expect(mockRouter.replace).not.toHaveBeenCalled();
   });
 
-  it('keeps title retry available after another public request fails while sign-in is unavailable', async () => {
+  it('explains when a shared title link points to a title that does not exist', async () => {
     mockRoute.current = { id: '771' };
-    mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
+    mockTitleQueryState.current = {
+      data: null,
+      isLoading: false,
+      isError: true,
+      error: { status: 404 },
+    };
 
     const detail = await render(
       <AppAuthUnavailableProvider>
@@ -392,11 +413,44 @@ describe('public browsing while authentication is unavailable', () => {
       </AppAuthUnavailableProvider>,
     );
 
-    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(detail.getByText('This title could not be found.')).toBeTruthy();
+    expect(detail.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(
+      detail.queryByText("Couldn't load this title. Check your connection and try again."),
+    ).toBeNull();
+    expect(mockTitleFetch).toHaveBeenCalledWith(771);
+    expect(mockPrivateQueryCalls).toEqual([]);
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+
+  it('keeps title retry available after another public request fails while sign-in is unavailable', async () => {
+    mockRoute.current = { id: '771' };
+    mockTitleQueryState.current = {
+      data: null,
+      isLoading: false,
+      isError: true,
+      error: { status: 503 },
+    };
+
+    const detail = await render(
+      <AppAuthUnavailableProvider>
+        <TitleDetailScreen />
+      </AppAuthUnavailableProvider>,
+    );
+
+    expect(
+      detail.getByText("Couldn't load this title. Check your connection and try again."),
+    ).toBeTruthy();
     expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
 
     mockTitleRefetch.mockImplementationOnce(async () => {
-      mockTitleQueryState.current = { data: null, isLoading: false, isError: true };
+      mockTitleQueryState.current = {
+        data: null,
+        isLoading: false,
+        isError: true,
+        error: { status: 503 },
+      };
     });
     await fireEvent.press(detail.getByRole('button', { name: 'Retry' }));
     await detail.rerender(
@@ -405,7 +459,9 @@ describe('public browsing while authentication is unavailable', () => {
       </AppAuthUnavailableProvider>,
     );
 
-    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(
+      detail.getByText("Couldn't load this title. Check your connection and try again."),
+    ).toBeTruthy();
     expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
     expect(mockTitleFetch).toHaveBeenCalledWith(771);
     expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
@@ -451,7 +507,9 @@ describe('public browsing while authentication is unavailable', () => {
     await waitFor(() => {
       expect(detail.getByRole('button', { name: 'Retry' })).toBeTruthy();
     });
-    expect(detail.getByText("Couldn't load this title")).toBeTruthy();
+    expect(
+      detail.getByText("Couldn't load this title. Check your connection and try again."),
+    ).toBeTruthy();
     expect(mockTitleRefetch).toHaveBeenCalledTimes(1);
   });
 
