@@ -2178,6 +2178,67 @@ describe("admin title aliases", () => {
     ]));
   });
 
+  it("updates both collision groups when an alias is corrected to another shared spelling", async () => {
+    const [thirdTitle] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "Alias Test Three",
+      year: 2022,
+      imdbId: "tt-alias-test-3",
+    }).returning({ id: titlesTable.id });
+    createdTitleIds.push(thirdTitle.id);
+    const [thirdAlias] = await db.insert(titleAliasesTable).values({
+      titleId: thirdTitle.id,
+      alias: "Third Local Alias",
+      normalizedAlias: "thirdlocalalias",
+      language: "en",
+      sourceName: "Editorial test",
+      sourceUrl: "https://example.test/source-three",
+      isEditorial: true,
+    }).returning();
+    const [correctedRow] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
+    const [oldCollisionPeer] = await db.select().from(titleAliasesTable)
+      .where(eq(titleAliasesTable.titleId, createdTitleIds[1]));
+
+    expect(correctedRow.normalizedAlias).toBe(oldCollisionPeer.normalizedAlias);
+    expect(thirdAlias.normalizedAlias).not.toBe(correctedRow.normalizedAlias);
+
+    await request(app)
+      .patch(`/api/admin/content-aliases/${correctedRow.id}`)
+      .send({
+        alias: "Third Local Alias",
+        language: "en",
+        sourceUrl: "https://example.test/corrected-to-third",
+        expectedUpdatedAt: correctedRow.updatedAt.toISOString(),
+      })
+      .expect(200);
+
+    const refreshedList = await request(app)
+      .get("/api/admin/content-aliases")
+      .expect(200);
+
+    expect(refreshedList.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: oldCollisionPeer.id,
+        alias: "Shared Local Title",
+        collision: false,
+        collisionTitleCount: 1,
+      }),
+      expect.objectContaining({
+        id: correctedRow.id,
+        alias: "Third Local Alias",
+        collision: true,
+        collisionTitleCount: 2,
+      }),
+      expect.objectContaining({
+        id: thirdAlias.id,
+        alias: "Third Local Alias",
+        collision: true,
+        collisionTitleCount: 2,
+      }),
+    ]));
+  });
+
   it("rejects a stale correction without leaving collision badges behind", async () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
