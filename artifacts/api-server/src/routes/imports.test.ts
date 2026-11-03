@@ -147,6 +147,51 @@ describe("private, idempotent watch-history imports", () => {
     expect(recent.body.some((item: { titleId: number }) => item.titleId === showId)).toBe(true);
   });
 
+  it("prevents another account from resolving an owner's ambiguous import item", async () => {
+    const created = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({
+      source: "generic",
+      fileName: "private-ambiguous-review.csv",
+      content: "kind,title,type,year,watchedAt\nwatched_movie,__import_ambiguous_title__,movie,2023,2024-02-03",
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe("ready");
+    expect(created.body.items).toHaveLength(1);
+    const item = created.body.items[0];
+    expect(item).toMatchObject({
+      classification: "ambiguous",
+      titleId: null,
+      episodeId: null,
+      selected: false,
+      errorCode: "multiple_titles",
+    });
+    expect(item.candidates.map((candidate: { titleId: number }) => candidate.titleId).sort((a: number, b: number) => a - b))
+      .toEqual([...ambiguousTitleIds].sort((a, b) => a - b));
+    const [storedBefore] = await db.select().from(importItemsTable).where(eq(importItemsTable.id, item.id));
+    expect(storedBefore).toBeDefined();
+    const readTracking = () => Promise.all([
+      db.select().from(watchedTitlesTable).where(inArray(watchedTitlesTable.userId, [USER_A, USER_B])).orderBy(watchedTitlesTable.id),
+      db.select().from(watchedEpisodesTable).where(inArray(watchedEpisodesTable.userId, [USER_A, USER_B])).orderBy(watchedEpisodesTable.id),
+      db.select().from(watchlistTable).where(inArray(watchlistTable.userId, [USER_A, USER_B])).orderBy(watchlistTable.id),
+    ]);
+    const trackingBefore = await readTracking();
+
+    // The candidate is valid for this unresolved item, so ownership alone
+    // must prevent the second account from resolving it.
+    const rejected = await supertest(app)
+      .patch(`/api/imports/${created.body.id}/items/${item.id}`)
+      .set("x-test-user", USER_B)
+      .send({ titleId: item.candidates[0].titleId });
+    expect(rejected.status).toBe(404);
+    expect(rejected.body).toEqual({ error: "Import not found" });
+
+    const [storedAfter] = await db.select().from(importItemsTable).where(eq(importItemsTable.id, item.id));
+    expect(storedAfter).toEqual(storedBefore);
+    const preview = await supertest(app).get(`/api/imports/${created.body.id}`).set("x-test-user", USER_A);
+    expect(preview.status).toBe(200);
+    expect(preview.body).toEqual(created.body);
+    expect(await readTracking()).toEqual(trackingBefore);
+  });
+
   it("returns the same job for a repeat upload and never applies it twice", async () => {
     const content = "kind,title,type,year\nwatched_movie,__import_integration_movie__,movie,2024";
     const first = await supertest(app).post("/api/imports").set("x-test-user", USER_A).send({ source: "generic", fileName: "repeat.csv", content });
