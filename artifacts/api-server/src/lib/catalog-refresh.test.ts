@@ -2311,6 +2311,10 @@ describe("catalog refresh recovery", () => {
     const syncGate = new Promise<void>((resolve) => { finishSync = resolve; });
     let signalProgressWritten!: () => void;
     const progressWritten = new Promise<void>((resolve) => { signalProgressWritten = resolve; });
+    let signalSuccessWritten!: () => void;
+    const successWritten = new Promise<void>((resolve) => { signalSuccessWritten = resolve; });
+    let resumeFailures!: () => void;
+    const failuresGate = new Promise<void>((resolve) => { resumeFailures = resolve; });
     let signalCleanup!: () => void;
     const cleanupReached = new Promise<void>((resolve) => { signalCleanup = resolve; });
     const recoveryError = new Error("unable to commit recovery before partial provider result");
@@ -2364,6 +2368,8 @@ describe("catalog refresh recovery", () => {
       await onProgress({
         item: successfulItem, status: "succeeded", attempted: 1, succeeded: 1, episodes: 4,
       });
+      signalSuccessWritten();
+      await failuresGate;
       await onProgress({
         item: tvmazeFailure, status: "running", attempted: 2, succeeded: 1, episodes: 4,
       });
@@ -2416,6 +2422,7 @@ describe("catalog refresh recovery", () => {
       expect(uncommittedRun).toMatchObject({
         status: "failed", startedAt: null,
         error: "Catalog refresh worker stopped before starting (server restart or database outage); retry the failed titles",
+        totalItems: 3, processedItems: 3, succeededItems: 0, failedItems: 3, episodesUpdated: 0,
       });
       expect(uncommittedRun.finishedAt).toBeInstanceOf(Date);
       expect(uncommittedItems).toHaveLength(items.length);
@@ -2466,6 +2473,24 @@ describe("catalog refresh recovery", () => {
         .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id)).toEqual(queuedItems);
 
       resumeProgress();
+      await successWritten;
+      const [successfulProgressRun] = await db.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, runId));
+      expect(successfulProgressRun).toMatchObject({
+        status: "running", error: null, finishedAt: null,
+        totalItems: 3, processedItems: 1, succeededItems: 1, failedItems: 0, episodesUpdated: 4,
+      });
+      const successfulProgressItems = await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+      expect(successfulProgressItems[0]).toMatchObject({
+        itemKey: items[0].key, status: "succeeded", error: null,
+      });
+      // Neither failed recovery diagnostics nor another title's successful
+      // progress may leak into titles that the resumed worker has not visited.
+      expect(successfulProgressItems.slice(1)).toEqual(queuedItems.slice(1));
+      expect(cleanupSpy).not.toHaveBeenCalled();
+
+      resumeFailures();
       await progressWritten;
       const progressedItems = await db.select().from(catalogSyncItemsTable)
         .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
@@ -2508,6 +2533,7 @@ describe("catalog refresh recovery", () => {
       finishStartup();
       rollbackRecovery();
       resumeProgress();
+      resumeFailures();
       finishSync();
       try {
         await recoveryOutcome;
