@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockRouter = {
   push: jest.fn(),
@@ -15,6 +16,13 @@ const mockTitleFetch = jest.fn();
 const mockTitleRefetch = jest.fn();
 const mockTitleSafetyFetch = jest.fn();
 const mockTitleSafetyRefetch = jest.fn();
+const mockUseActualSimilarQuery: { current: boolean } = { current: false };
+const mockSimilarRequests: number[] = [];
+const mockSimilarFetch = jest.fn();
+const mockResolveSimilarById: Record<
+  number,
+  (suggestions: { id: number; name: string }[]) => void
+> = {};
 const mockSeasonFetch = jest.fn();
 const mockSeasonRefetch = jest.fn();
 const mockSeasonData = {
@@ -134,7 +142,17 @@ jest.mock('@workspace/api-client-react', () => ({
     mockSeasonFetch(id, seasonNumber, options?.query?.enabled);
     return { ...mockSeasonQueryState.current, refetch: mockSeasonRefetch };
   },
-  useGetSimilarTitles: () => mockSimilarQueryState.current,
+  useGetSimilarTitles: (id: number) => {
+    if (!mockUseActualSimilarQuery.current) return mockSimilarQueryState.current;
+    const { useQuery } = require('@tanstack/react-query');
+    return useQuery({
+      queryKey: [`/api/titles/${id}/similar`],
+      queryFn: () => {
+        mockSimilarRequests.push(id);
+        return mockSimilarFetch(id);
+      },
+    });
+  },
   useGetTitleSafety: (params: unknown) => {
     mockTitleSafetyFetch(params);
     return {
@@ -187,6 +205,7 @@ jest.mock('@/components/ui', () => {
 });
 
 jest.mock('@tanstack/react-query', () => ({
+  ...jest.requireActual('@tanstack/react-query'),
   useQueryClient: () => ({ invalidateQueries: jest.fn() }),
 }));
 
@@ -232,6 +251,12 @@ describe('public browsing while authentication is unavailable', () => {
     mockTitleRefetch.mockClear();
     mockTitleSafetyFetch.mockClear();
     mockTitleSafetyRefetch.mockClear();
+    mockUseActualSimilarQuery.current = false;
+    mockSimilarRequests.length = 0;
+    mockSimilarFetch.mockReset();
+    Object.keys(mockResolveSimilarById).forEach((id) => {
+      delete mockResolveSimilarById[Number(id)];
+    });
     mockSeasonFetch.mockClear();
     mockSeasonRefetch.mockClear();
     mockSeasonQueryState.current = { data: null, isLoading: false, isError: true };
@@ -570,6 +595,86 @@ describe('public browsing while authentication is unavailable', () => {
     expect(mockPrivateQueryCalls).toEqual([]);
     expect(mockRouter.push).not.toHaveBeenCalled();
     expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+
+  it('keeps similar-title suggestions matched to the newly opened shared title', async () => {
+    mockUseActualSimilarQuery.current = true;
+    mockTitleQueryState.current = {
+      data: mockPublicTitle,
+      isLoading: false,
+      isError: false,
+    };
+    mockSimilarFetch.mockImplementation(
+      (id: number) =>
+        new Promise((resolve) => {
+          mockResolveSimilarById[id] = resolve;
+        }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <AppAuthUnavailableProvider>
+          <TitleDetailScreen />
+        </AppAuthUnavailableProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(mockSimilarRequests).toContain(771);
+      expect(mockResolveSimilarById[771]).toEqual(expect.any(Function));
+    });
+
+    const currentTitle = {
+      ...mockPublicTitle,
+      id: 772,
+      name: 'The newly opened shared title',
+      overview: 'Details for the newly opened shared title.',
+    };
+    mockRoute.current = { id: '772' };
+    mockTitleQueryState.current = { data: currentTitle, isLoading: false, isError: false };
+    await act(async () => {
+      screen.rerender(
+        <QueryClientProvider client={queryClient}>
+          <AppAuthUnavailableProvider>
+            <TitleDetailScreen />
+          </AppAuthUnavailableProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitFor(() => {
+      expect(mockTitleFetch).toHaveBeenLastCalledWith(772);
+      expect(mockSimilarRequests).toContain(772);
+      expect(mockResolveSimilarById[772]).toEqual(expect.any(Function));
+      expect(screen.getByText('The newly opened shared title')).toBeTruthy();
+      expect(screen.getByText('Details for the newly opened shared title.')).toBeTruthy();
+    });
+
+    await act(async () => {
+      mockResolveSimilarById[772]([{ id: 902, name: 'A suggestion for title 772' }]);
+    });
+    await waitFor(() => {
+      expect(screen.getByText('A suggestion for title 772')).toBeTruthy();
+      expect(screen.queryByText('A delayed suggestion for title 771')).toBeNull();
+    });
+
+    const olderRequest = mockSimilarFetch.mock.results[
+      mockSimilarRequests.indexOf(771)
+    ].value as Promise<{ id: number; name: string }[]>;
+    await act(async () => {
+      mockResolveSimilarById[771]([{ id: 901, name: 'A delayed suggestion for title 771' }]);
+      await olderRequest;
+    });
+
+    expect(screen.getByText('The newly opened shared title')).toBeTruthy();
+    expect(screen.getByText('Details for the newly opened shared title.')).toBeTruthy();
+    expect(screen.getByText('A suggestion for title 772')).toBeTruthy();
+    expect(screen.queryByText('A delayed suggestion for title 771')).toBeNull();
+
+    await screen.unmount();
+    queryClient.clear();
   });
 
   it('opens a trending title publicly without sign-in or personal-data requests', async () => {
