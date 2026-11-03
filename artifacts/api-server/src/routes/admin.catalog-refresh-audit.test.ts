@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { and, eq, getTableName, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
+import { sourceItems } from "../seed-real";
 
 const adminId = "test-catalog-refresh-audit";
 const missingAdminId = `test-catalog-refresh-audit-missing-${randomUUID()}`;
@@ -526,6 +527,188 @@ describe.each(["manual", "retry"] as const)("%s catalog refresh audit boundary",
 });
 
 describe("other catalog refresh starts", () => {
+  it("waits for the audit before retrying every failed title and excludes successful titles", async () => {
+    const failedItems = [
+      {
+        key: "catalog-refresh-audit-retry-failed-one",
+        name: "First failed retry title",
+        source: "tvmaze" as const,
+        type: "tv" as const,
+        popularity: 0,
+      },
+      {
+        key: "catalog-refresh-audit-retry-failed-two",
+        name: "Second failed retry title",
+        source: "tvmaze" as const,
+        type: "tv" as const,
+        popularity: 0,
+      },
+    ];
+    const succeededItem = {
+      key: "catalog-refresh-audit-retry-succeeded",
+      name: "Already succeeded title",
+      source: "tvmaze" as const,
+      type: "tv" as const,
+      popularity: 0,
+    };
+    const originalSourceItemsLength = sourceItems.length;
+    sourceItems.push(...failedItems, succeededItem);
+
+    const [sourceRun] = await db.insert(catalogSyncRunsTable).values({
+      trigger: "manual",
+      status: "failed",
+      totalItems: 3,
+      failedItems: 2,
+      succeededItems: 1,
+    }).returning();
+    createdRunIds.push(sourceRun.id);
+    await db.insert(catalogSyncItemsTable).values([
+      ...failedItems.map((item) => ({
+        runId: sourceRun.id,
+        itemKey: item.key,
+        title: item.name,
+        provider: "TVMaze",
+        status: "failed" as const,
+      })),
+      {
+        runId: sourceRun.id,
+        itemKey: succeededItem.key,
+        title: succeededItem.name,
+        provider: "TVMaze",
+        status: "succeeded" as const,
+      },
+    ]);
+
+    const observerClient = await pool.connect();
+    const observer = drizzle(observerClient);
+    let releaseAudit!: () => void;
+    const auditGate = new Promise<void>((resolve) => { releaseAudit = resolve; });
+    let auditHeld = false;
+    let retryRunId: number | undefined;
+    let requestSettled = false;
+    let rowsSeenAtExecution: unknown;
+    const realTransaction = db.transaction.bind(db);
+    vi.spyOn(db, "transaction").mockImplementationOnce(
+      (fn: Parameters<typeof db.transaction>[0]) => realTransaction((tx) => {
+        const wrapped = new Proxy(tx, {
+          get(target, prop) {
+            if (prop === "insert") {
+              return (table: Parameters<typeof tx.insert>[0]) => {
+                if (getTableName(table) === getTableName(adminAuditLogTable)) {
+                  return { values: async (audit: typeof adminAuditLogTable.$inferInsert) => {
+                    expect(audit).toMatchObject({
+                      adminId,
+                      action: "retry_catalog_refresh",
+                      entityType: "catalog_sync",
+                      details: { sourceRunId: sourceRun.id },
+                    });
+                    retryRunId = audit.entityId!;
+                    createdRunIds.push(retryRunId);
+                    expect(await tx.select().from(catalogSyncRunsTable)
+                      .where(eq(catalogSyncRunsTable.id, retryRunId))).toEqual([
+                      expect.objectContaining({ status: "queued", trigger: "retry", totalItems: 2 }),
+                    ]);
+                    expect(await tx.select().from(catalogSyncItemsTable)
+                      .where(eq(catalogSyncItemsTable.runId, retryRunId))
+                      .orderBy(catalogSyncItemsTable.itemKey)).toEqual(
+                      failedItems.map((item) => expect.objectContaining({
+                        itemKey: item.key,
+                        status: "queued",
+                      })),
+                    );
+                    auditHeld = true;
+                    await auditGate;
+                    await target.insert(adminAuditLogTable).values(audit);
+                  } };
+                }
+                return target.insert(table);
+              };
+            }
+            const value = Reflect.get(target, prop);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return fn(wrapped);
+      }) as ReturnType<typeof db.transaction>,
+    );
+    runCatalogSync.mockImplementationOnce(async () => {
+      rowsSeenAtExecution = {
+        runs: await observer.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, retryRunId!)),
+        items: await observer.select().from(catalogSyncItemsTable)
+          .where(eq(catalogSyncItemsTable.runId, retryRunId!))
+          .orderBy(catalogSyncItemsTable.itemKey),
+        audits: await observer.select().from(adminAuditLogTable).where(and(
+          eq(adminAuditLogTable.adminId, adminId),
+          eq(adminAuditLogTable.entityId, retryRunId!),
+        )),
+      };
+      return { selected: 2, succeeded: 2, episodes: 0, failures: [] };
+    });
+    const responsePromise = request(app)
+      .post(`/api/admin/catalog-refreshes/${sourceRun.id}/retry`)
+      .send({ itemKeys: failedItems.map((item) => item.key) })
+      .then(
+        (response) => { requestSettled = true; return response; },
+        (error) => { requestSettled = true; throw error; },
+      );
+
+    try {
+      await vi.waitFor(() => expect(auditHeld).toBe(true));
+      expect(retryRunId).toBeDefined();
+      expect(await observer.select().from(catalogSyncRunsTable)
+        .where(eq(catalogSyncRunsTable.id, retryRunId!))).toEqual([]);
+      expect(await observer.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, retryRunId!))).toEqual([]);
+      expect(await observer.select().from(adminAuditLogTable).where(and(
+        eq(adminAuditLogTable.adminId, adminId),
+        eq(adminAuditLogTable.entityId, retryRunId!),
+      ))).toEqual([]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(requestSettled).toBe(false);
+      expect(runCatalogSync).not.toHaveBeenCalled();
+
+      releaseAudit();
+      const response = await responsePromise;
+      expect(response.status).toBe(202);
+      expect(response.body.runId).toBe(retryRunId);
+      await vi.waitFor(() => expect(rowsSeenAtExecution).toEqual({
+        runs: [expect.objectContaining({ id: retryRunId, trigger: "retry", totalItems: 2 })],
+        items: failedItems.map((item) => expect.objectContaining({
+          runId: retryRunId,
+          itemKey: item.key,
+        })),
+        audits: [expect.objectContaining({
+          adminId,
+          action: "retry_catalog_refresh",
+          entityType: "catalog_sync",
+          entityId: retryRunId,
+          details: { sourceRunId: sourceRun.id },
+        })],
+      }));
+      expect(runCatalogSync).toHaveBeenCalledOnce();
+      expect(runCatalogSync.mock.calls[0][1]).toEqual(failedItems);
+      await waitForFinishedRun(retryRunId!);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(eq(catalogSyncItemsTable.runId, retryRunId!))
+        .orderBy(catalogSyncItemsTable.itemKey)).toEqual(
+        failedItems.map((item) => expect.objectContaining({
+          itemKey: item.key,
+          status: "queued",
+        })),
+      );
+    } finally {
+      releaseAudit();
+      try {
+        const response = await responsePromise;
+        if (response.status === 202) await waitForFinishedRun(response.body.runId);
+      } finally {
+        observerClient.release();
+        sourceItems.splice(originalSourceItemsLength);
+      }
+    }
+  });
+
   it("retries only the selected failed title and preserves the source run", async () => {
     const sourceRunId = await createSourceRunWithItems([
       "catalog-refresh-audit-item",
