@@ -2464,7 +2464,7 @@ describe("admin alternate-title review", () => {
       collisionStatus: "Unique",
     },
   ])(
-    "marks conflict collision details stale after a failed catalog refresh and clears them after recovery ($collisionStatus)",
+    "keeps conflict collision details stale across failed catalog refreshes and clears them after recovery ($collisionStatus)",
     async ({ collision, collisionTitleCount, collisionStatus }) => {
     const currentCorrection: AdminContentAlias = {
       ...initialAlias,
@@ -2511,6 +2511,15 @@ describe("admin alternate-title review", () => {
     );
 
     mocks.queryClient.invalidateQueries.mockClear();
+    setRefreshFailures(["catalog"]);
+    act(() => button(container, "Retry refresh").click());
+    await flushEffects();
+
+    expect(findConflictNotice()?.textContent).toContain(
+      `${collisionStatus} · may be stale`,
+    );
+
+    mocks.queryClient.invalidateQueries.mockClear();
     setRefreshFailures([]);
     act(() => button(container, "Retry refresh").click());
     await flushEffects();
@@ -2522,7 +2531,7 @@ describe("admin alternate-title review", () => {
     },
   );
 
-  it("marks conflict collision details stale when catalog refresh times out and clears them when it succeeds", async () => {
+  it("keeps conflict collision details stale after a timed-out refresh and failed retry, then clears them after recovery", async () => {
     const currentCorrection: AdminContentAlias = {
       ...initialAlias,
       alias: "Newer shared correction",
@@ -2534,10 +2543,15 @@ describe("admin alternate-title review", () => {
     const catalogRefresh = new Promise<void>((resolve) => {
       resolveCatalogRefresh = resolve;
     });
+    let catalogRefreshAttempts = 0;
     mocks.queryClient.invalidateQueries.mockImplementation(
       ({ queryKey }: { queryKey: string[] }) =>
         queryKey[0] === "/api/admin/content"
-          ? catalogRefresh
+          ? ++catalogRefreshAttempts === 1
+            ? catalogRefresh
+            : catalogRefreshAttempts === 2
+              ? Promise.reject(new Error("catalog refresh unavailable"))
+              : Promise.resolve()
           : Promise.resolve(),
     );
     mocks.updateMutation.mutate.mockImplementation(
@@ -2589,6 +2603,27 @@ describe("admin alternate-title review", () => {
     expect(findConflictNotice()?.textContent).toContain(
       "3 titles share this alias · may be stale",
     );
+
+    act(() => button(container, "Retry refresh").click());
+    await act(async () => {
+      for (let index = 0; index < 8; index += 1) {
+        await Promise.resolve();
+      }
+    });
+    expect(findConflictNotice()?.textContent).toContain(
+      "3 titles share this alias · may be stale",
+    );
+
+    act(() => button(container, "Retry refresh").click());
+    await act(async () => {
+      for (let index = 0; index < 8; index += 1) {
+        await Promise.resolve();
+      }
+    });
+    expect(findConflictNotice()?.textContent).toContain(
+      "3 titles share this alias",
+    );
+    expect(findConflictNotice()?.textContent).not.toContain("may be stale");
 
     await act(async () => {
       resolveCatalogRefresh();
