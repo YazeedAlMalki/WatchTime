@@ -428,22 +428,45 @@ describe("restored admin actions", () => {
     expect(unchangedFeedback.status).toBe("new");
     expect(await db.select().from(adminAuditLogTable)
       .where(eq(adminAuditLogTable.adminId, adminId))).toEqual([]);
+  });
+
+  it("preserves the status trail across successive report and feedback decisions", async () => {
+    const [report] = await db.insert(reportsTable).values({
+      userId: adminId,
+      titleId,
+      reason: "wrong_title",
+      status: "open",
+    }).returning();
+    reportIds.push(report.id);
+    const [feedback] = await db.insert(feedbackTable).values({
+      userId: adminId,
+      category: "bug",
+      message: "successive moderation decisions test",
+      status: "new",
+    }).returning();
 
     await request(app).patch(`/api/admin/reports/${report.id}`)
       .send({ status: "resolved" }).expect(200);
+    await request(app).patch(`/api/admin/reports/${report.id}`)
+      .send({ status: "dismissed" }).expect(200);
     await request(app).patch(`/api/admin/feedback/${feedback.id}`)
       .send({ status: "reviewing" }).expect(200);
+    await request(app).patch(`/api/admin/feedback/${feedback.id}`)
+      .send({ status: "closed" }).expect(200);
 
     const [updatedReport] = await db.select().from(reportsTable)
       .where(eq(reportsTable.id, report.id));
     const [updatedFeedback] = await db.select().from(feedbackTable)
       .where(eq(feedbackTable.id, feedback.id));
-    expect(updatedReport.status).toBe("resolved");
-    expect(updatedFeedback.status).toBe("reviewing");
+    expect(updatedReport.status).toBe("dismissed");
+    expect(updatedFeedback.status).toBe("closed");
 
-    const auditEntries = await db.select().from(adminAuditLogTable)
-      .where(eq(adminAuditLogTable.adminId, adminId));
-    expect(auditEntries).toEqual(expect.arrayContaining([
+    const reportAuditEntries = await db.select().from(adminAuditLogTable).where(and(
+      eq(adminAuditLogTable.entityType, "report"),
+      eq(adminAuditLogTable.entityId, report.id),
+    ));
+    expect(reportAuditEntries).toHaveLength(2);
+    expect(reportAuditEntries).toEqual(expect.arrayContaining([
       expect.objectContaining({
         action: "resolved_report",
         entityType: "report",
@@ -454,12 +477,38 @@ describe("restored admin actions", () => {
         }),
       }),
       expect.objectContaining({
+        action: "dismissed_report",
+        entityType: "report",
+        entityId: report.id,
+        details: expect.objectContaining({
+          statusBefore: "resolved",
+          statusAfter: "dismissed",
+        }),
+      }),
+    ]));
+
+    const feedbackAuditEntries = await db.select().from(adminAuditLogTable).where(and(
+      eq(adminAuditLogTable.entityType, "feedback"),
+      eq(adminAuditLogTable.entityId, feedback.id),
+    ));
+    expect(feedbackAuditEntries).toHaveLength(2);
+    expect(feedbackAuditEntries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
         action: "feedback_reviewing",
         entityType: "feedback",
         entityId: feedback.id,
         details: expect.objectContaining({
           statusBefore: "new",
           statusAfter: "reviewing",
+        }),
+      }),
+      expect.objectContaining({
+        action: "feedback_closed",
+        entityType: "feedback",
+        entityId: feedback.id,
+        details: expect.objectContaining({
+          statusBefore: "reviewing",
+          statusAfter: "closed",
         }),
       }),
     ]));
