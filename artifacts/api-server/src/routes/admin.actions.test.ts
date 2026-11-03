@@ -56,6 +56,39 @@ startCatalogRefresh.mockImplementation(async (
 const adminId = "test-admin-actions";
 let titleId: number;
 let reportIds: number[] = [];
+const auditFailureTriggerName = "admin_actions_reject_audit_insert_test";
+const auditFailureFunctionName = "admin_actions_reject_audit_insert_test_fn";
+
+async function installAuditInsertFailureTrigger() {
+  const auditTableName = getTableName(adminAuditLogTable);
+  await db.execute(sql.raw(`DROP TRIGGER IF EXISTS ${auditFailureTriggerName} ON "${auditTableName}"`));
+  await db.execute(sql.raw(`DROP FUNCTION IF EXISTS ${auditFailureFunctionName}()`));
+  await db.execute(sql.raw(`
+    CREATE FUNCTION ${auditFailureFunctionName}()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      IF NEW.admin_id = '${adminId}' AND NEW.entity_type IN ('report', 'feedback') THEN
+        RAISE EXCEPTION 'triggered audit insert failure';
+      END IF;
+      RETURN NEW;
+    END;
+    $$
+  `));
+  await db.execute(sql.raw(`
+    CREATE TRIGGER ${auditFailureTriggerName}
+    BEFORE INSERT ON "${auditTableName}"
+    FOR EACH ROW
+    EXECUTE FUNCTION ${auditFailureFunctionName}()
+  `));
+}
+
+async function removeAuditInsertFailureTrigger() {
+  const auditTableName = getTableName(adminAuditLogTable);
+  await db.execute(sql.raw(`DROP TRIGGER IF EXISTS ${auditFailureTriggerName} ON "${auditTableName}"`));
+  await db.execute(sql.raw(`DROP FUNCTION IF EXISTS ${auditFailureFunctionName}()`));
+}
 
 beforeAll(async () => {
   await db.insert(usersTable).values({ id: adminId, email: "admin-actions@example.test" }).onConflictDoNothing();
@@ -624,6 +657,66 @@ describe("restored admin actions", () => {
       eq(adminAuditLogTable.entityType, entityType),
       eq(adminAuditLogTable.entityId, fixture.id),
     ))).toEqual([]);
+  });
+
+  it.each([
+    {
+      kind: "report",
+      status: "open",
+      nextStatus: "resolved",
+      entityType: "report",
+      createFixture: async () => {
+        const [report] = await db.insert(reportsTable).values({
+          userId: adminId,
+          titleId,
+          reason: "wrong_title",
+          status: "open",
+        }).returning();
+        reportIds.push(report.id);
+        return { id: report.id, readStatus: async () => {
+          const [saved] = await db.select().from(reportsTable)
+            .where(eq(reportsTable.id, report.id));
+          return saved.status;
+        } };
+      },
+      path: (id: number) => `/api/admin/reports/${id}`,
+    },
+    {
+      kind: "feedback",
+      status: "new",
+      nextStatus: "reviewing",
+      entityType: "feedback",
+      createFixture: async () => {
+        const [feedback] = await db.insert(feedbackTable).values({
+          userId: adminId,
+          category: "bug",
+          message: "database audit rollback test",
+          status: "new",
+        }).returning();
+        return { id: feedback.id, readStatus: async () => {
+          const [saved] = await db.select().from(feedbackTable)
+            .where(eq(feedbackTable.id, feedback.id));
+          return saved.status;
+        } };
+      },
+      path: (id: number) => `/api/admin/feedback/${id}`,
+    },
+  ])("rolls back a $kind decision after PostgreSQL rejects its audit insert", async ({
+    status, nextStatus, entityType, createFixture, path,
+  }) => {
+    const fixture = await createFixture();
+    try {
+      await installAuditInsertFailureTrigger();
+      await request(app).patch(path(fixture.id)).send({ status: nextStatus }).expect(500);
+
+      expect(await fixture.readStatus()).toBe(status);
+      expect(await db.select().from(adminAuditLogTable).where(and(
+        eq(adminAuditLogTable.entityType, entityType),
+        eq(adminAuditLogTable.entityId, fixture.id),
+      ))).toEqual([]);
+    } finally {
+      await removeAuditInsertFailureTrigger();
+    }
   });
 
   it("rejects report and feedback pagination outside the supported bounds", async () => {
