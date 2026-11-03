@@ -456,6 +456,105 @@ it("returns to the previous filtered review page only after a remote repair empt
   }
 });
 
+it("keeps a filtered review page visible through a failed poll before recovering", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata&offset=50",
+  );
+  const activeParams = {
+    region: "US" as const,
+    malformedRefreshTimestamp: true,
+    malformedRefreshTimestampProvider: "Wikidata",
+    offset: 50,
+  };
+  const previousParams = { ...activeParams, offset: 0 };
+  mocks.searchResults = [];
+  mocks.earlierPageResults = Array.from({ length: 50 }, (_, index) =>
+    malformedRating(index + 1, `Earlier filtered title ${index + 1}`),
+  );
+  mocks.searchCalls = [];
+  mocks.searchFailuresRemaining = 1;
+  mocks.holdNextSearchResponse = true;
+  mocks.searchEnabled = true;
+  mocks.refetchIntervalOverride = 25;
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  });
+  client.setQueryData(
+    getSearchAdminContentQueryKey(activeParams),
+    [malformedRating(1251, "Last filtered review title")],
+  );
+  client.setQueryData(
+    getSearchAdminContentQueryKey(previousParams),
+    mocks.earlierPageResults,
+  );
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+
+    await expect.element(page.getByText(/The latest refresh failed/)).toBeVisible();
+    await expect.element(page.getByText("Last filtered review title", { exact: true }))
+      .toBeVisible();
+    await expect.element(page.getByText("Page 2", { exact: true })).toBeVisible();
+    await expect.element(
+      page.getByText("Earlier filtered title 1", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(location.search).toContain("region=US");
+    expect(location.search).toContain("malformedRefreshTimestampProvider=Wikidata");
+    expect(location.search).toContain("offset=50");
+    expect(client.getQueryData(
+      getSearchAdminContentQueryKey(activeParams),
+    )).toEqual([malformedRating(1251, "Last filtered review title")]);
+    expect(mocks.searchCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining(previousParams),
+    ]));
+
+    await vi.waitFor(() => {
+      if (!mocks.releaseSearchResponse) {
+        throw new Error("The next review poll has not started");
+      }
+    });
+    mocks.releaseSearchResponse?.();
+
+    await vi.waitFor(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await expect.element(page.getByText("Page 1", { exact: true })).toBeVisible();
+      await expect.element(
+        page.getByText("Earlier filtered title 1", { exact: true }),
+      ).toBeVisible();
+    }, { timeout: 10_000 });
+
+    expect(location.search).toContain("region=US");
+    expect(location.search).toContain("malformedRefreshTimestampProvider=Wikidata");
+    expect(location.search).not.toContain("offset=");
+    expect(client.getQueryData(
+      getSearchAdminContentQueryKey(activeParams),
+    )).toEqual([]);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.searchResults = [];
+    mocks.earlierPageResults = [];
+    mocks.searchCalls = [];
+    mocks.searchFailuresRemaining = 0;
+    mocks.releaseSearchResponse?.();
+    mocks.releaseSearchResponse = undefined;
+    mocks.holdNextSearchResponse = false;
+    mocks.searchEnabled = false;
+    mocks.refetchIntervalOverride = undefined;
+    mocks.configuredRefetchInterval = undefined;
+    mocks.configuredRefetchOnWindowFocus = undefined;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("continues back through consecutive empty filtered review pages after remote repairs", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState(

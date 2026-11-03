@@ -1488,6 +1488,7 @@ function ContentTab({
     if (
       malformedRefreshTimestamp &&
       contentSuccess &&
+      !contentError &&
       !contentFetching &&
       content?.length === 0 &&
       contentOffset > 0
@@ -1496,6 +1497,7 @@ function ContentTab({
     }
   }, [
     content,
+    contentError,
     contentFetching,
     contentOffset,
     contentSuccess,
