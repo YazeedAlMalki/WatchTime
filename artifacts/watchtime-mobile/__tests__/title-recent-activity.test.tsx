@@ -549,13 +549,18 @@ it.each([
   client.clear();
 });
 
-it('keeps the watched checkmark, account progress, in-progress feed and History unchanged after a rejected unmark', async () => {
+it.each([
+  { action: 'mark', initiallyWatched: false },
+  { action: 'unmark', initiallyWatched: true },
+])('keeps the saved checkmark, account progress, in-progress feed and History unchanged after a rejected $action', async ({ initiallyWatched }) => {
   mockTitleIsMovie = false;
   mockMovieWatched = false;
-  mockWatched = true;
+  mockWatched = initiallyWatched;
   jest.clearAllMocks();
   const failure = new Error('Offline');
-  mockUnmarkRequest.mockRejectedValueOnce(failure);
+  const request = initiallyWatched ? mockUnmarkRequest : mockMarkRequest;
+  const otherRequest = initiallyWatched ? mockMarkRequest : mockUnmarkRequest;
+  request.mockRejectedValueOnce(failure);
 
   const client = new QueryClient({
     defaultOptions: {
@@ -571,9 +576,24 @@ it('keeps the watched checkmark, account progress, in-progress feed and History 
   const inProgressKey = [
     ...getGetMyInProgressShowsQueryKey(), 'account', 'activity-user', 'infinite',
   ];
-  client.setQueryData(activityKey, mockActivity());
-  client.setQueryData(showsKey, { pages: [mockShows()], pageParams: [undefined] });
-  client.setQueryData(inProgressKey, { pages: [mockInProgress()], pageParams: [undefined] });
+  // Keep every baseline nonempty: a failed first mark must not clear another
+  // show's in-progress entry, or advance the unwatched show's next episode.
+  const cachedActivity = initiallyWatched ? mockActivity() : [{
+    titleId: 99, titleName: 'Previously Watched Show', posterUrl: null,
+    kind: 'episode', episodeLabel: 'S1E1 — Earlier', watchedAt: '2026-10-17T00:00:00.000Z',
+  }];
+  const cachedShows = { pages: [mockShows()], pageParams: [undefined] };
+  const cachedInProgress = {
+    pages: [initiallyWatched ? mockInProgress() : [{
+      title: { id: 99, name: 'Previously Watched Show' },
+      totalEpisodes: 3, watchedEpisodes: 1,
+      nextEpisode: { id: 992, seasonNumber: 1, episodeNumber: 2, name: 'Next' },
+    }]],
+    pageParams: [undefined],
+  };
+  client.setQueryData(activityKey, cachedActivity);
+  client.setQueryData(showsKey, cachedShows);
+  client.setQueryData(inProgressKey, cachedInProgress);
   const invalidate = jest.spyOn(client, 'invalidateQueries');
   const screens = await render(
     <QueryClientProvider client={client}>
@@ -584,38 +604,47 @@ it('keeps the watched checkmark, account progress, in-progress feed and History 
   try {
     const shows = within(screens.getByTestId('mounted-my-shows'));
     const detail = within(screens.getByTestId('open-title-detail'));
-    await waitFor(() => expect(shows.getByText('1 / 2 episodes')).toBeTruthy());
-    expect(shows.getByTestId('mark-watched-102')).toBeTruthy();
+    const progress = `${Number(initiallyWatched)} / 2 episodes`;
+    const detailProgress = `${Number(initiallyWatched)}/2 watched`;
+    const nextEpisodeId = initiallyWatched ? 102 : 101;
+    await waitFor(() => expect(shows.getByText(progress)).toBeTruthy());
+    expect(shows.getByTestId(`mark-watched-${nextEpisodeId}`)).toBeTruthy();
     await waitFor(() => expect(detail.getByTestId('season-1')).toBeTruthy());
     await fireEvent.press(detail.getByTestId('season-1'));
     await waitFor(() => expect(detail.getByTestId('episode-check-101')).toBeEnabled());
-    expect(within(detail.getByTestId('episode-check-101')).getByTestId('icon-check')).toBeTruthy();
-    expect(detail.getByText('1/2 watched')).toBeTruthy();
+    expect(detail.getByRole('checkbox', { name: 'S1E1 — Pilot', checked: initiallyWatched })).toBeTruthy();
+    expect(detail.getByText(detailProgress)).toBeTruthy();
 
     const snapshots = [activityKey, showsKey, inProgressKey].map((key) => ({
       key, data: client.getQueryData(key), state: client.getQueryState(key),
     }));
     await fireEvent.press(detail.getByTestId('episode-check-101'));
     await waitFor(() => {
-      expect(mockUnmarkRequest).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(1);
       expect(client.getMutationCache().getAll()).toHaveLength(1);
       expect(client.getMutationCache().getAll()[0].state.status).toBe('error');
       expect(detail.getByTestId('episode-check-101')).toBeEnabled();
     });
     expect(client.getMutationCache().getAll()[0].state.error).toBe(failure);
-    expect(mockUnmarkRequest).toHaveBeenCalledWith({ episodeId: 101 });
-    expect(mockMarkRequest).not.toHaveBeenCalled();
-    expect(mockWatched).toBe(true);
-    expect(within(detail.getByTestId('episode-check-101')).getByTestId('icon-check')).toBeTruthy();
-    expect(detail.getByText('1/2 watched')).toBeTruthy();
-    expect(shows.getByText('1 / 2 episodes')).toBeTruthy();
-    expect(shows.getByTestId('mark-watched-102')).toBeTruthy();
-    expect(shows.queryByTestId('mark-watched-101')).toBeNull();
+    expect(request).toHaveBeenCalledWith(
+      initiallyWatched ? { episodeId: 101 } : { episodeId: 101, data: {} },
+    );
+    expect(otherRequest).not.toHaveBeenCalled();
+    expect(mockWatched).toBe(initiallyWatched);
+    expect(detail.getByRole('checkbox', { name: 'S1E1 — Pilot', checked: initiallyWatched })).toBeTruthy();
+    expect(detail.getByText(detailProgress)).toBeTruthy();
+    expect(shows.getByText(progress)).toBeTruthy();
+    expect(shows.getByTestId(`mark-watched-${nextEpisodeId}`)).toBeTruthy();
+    expect(shows.queryByTestId(`mark-watched-${initiallyWatched ? 101 : 102}`)).toBeNull();
 
     await fireEvent.press(shows.getByTestId('tab-history'));
-    await waitFor(() => expect(shows.getByTestId('history-item-42')).toBeTruthy());
-    expect(shows.getByText('S1E1 — Pilot')).toBeTruthy();
+    await waitFor(() => expect(shows.getByTestId(`history-item-${initiallyWatched ? 42 : 99}`)).toBeTruthy());
+    expect(shows.getByText(initiallyWatched ? 'S1E1 — Pilot' : 'S1E1 — Earlier')).toBeTruthy();
+    if (!initiallyWatched) expect(shows.queryByTestId('history-item-42')).toBeNull();
     expect(shows.queryByText('No recent activity')).toBeNull();
+    expect(client.getQueryData(activityKey)).toEqual(cachedActivity);
+    expect(client.getQueryData(showsKey)).toEqual(cachedShows);
+    expect(client.getQueryData(inProgressKey)).toEqual(cachedInProgress);
     for (const { key, data, state } of snapshots) {
       expect(client.getQueryData(key)).toBe(data);
       expect(client.getQueryState(key)).toEqual(state);
