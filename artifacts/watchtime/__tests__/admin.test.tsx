@@ -2237,6 +2237,74 @@ describe("admin alternate-title review", () => {
     );
   });
 
+  it("shows a settled collision lookup failure after its recovery timeout", async () => {
+    let rejectCollisionRefresh!: (error: Error) => void;
+    const collisionRefresh = new Promise<void>((_resolve, reject) => {
+      rejectCollisionRefresh = reject;
+    });
+    mocks.lookupAdminContentAliasCollisions.mockReturnValue(collisionRefresh);
+    render();
+    vi.useFakeTimers();
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenCalledTimes(1);
+    expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenCalledWith({
+      aliases: ["Updated Local Title"],
+    });
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(container.textContent).toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).toContain(
+      "Collision results may be stale; the alternate-title list refreshed successfully.",
+    );
+    expect(
+      container.querySelector('[aria-label^="Collision results may be stale"]'),
+    ).not.toBeNull();
+    expect(button(container, "Retry refresh").disabled).toBe(false);
+
+    const savePromise = mocks.updateMutation.mutate.mock.results.at(-1)
+      ?.value as Promise<void> | undefined;
+    if (!savePromise) throw new Error("The alternate-title save did not start");
+    await act(async () => {
+      rejectCollisionRefresh(new Error("collision lookup unavailable"));
+      await collisionRefresh.catch(() => undefined);
+      await savePromise;
+    });
+
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh is taking longer than expected",
+    );
+    expect(container.textContent).toContain("Alternate-title refresh failed");
+    expect(container.textContent).toContain(
+      "Failed refresh request: alternate-title collision counts.",
+    );
+    expect(
+      container.querySelector('[aria-label^="Collision results may be stale"]'),
+    ).not.toBeNull();
+    expect(button(container, "Retry refresh").disabled).toBe(false);
+    expect(mocks.lookupAdminContentAliasCollisions).toHaveBeenCalledTimes(1);
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps collision badges current when a timed-out catalog request fails after retry", async () => {
     let rejectTimedOutCatalog!: (error: Error) => void;
     const timedOutCatalog = new Promise<void>((_resolve, reject) => {
