@@ -454,6 +454,74 @@ it("returns to the previous filtered review page only after a remote repair empt
   }
 });
 
+it("returns all-region reviewers to earlier results after a remote repair empties the page", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&malformedRefreshTimestamp=true&malformedRefreshTimestampProvider=Wikidata&malformedRefreshTimestampAllRegions=true&offset=50",
+  );
+  mocks.searchResults = [malformedRating(1301, "Last all-region title")];
+  mocks.earlierPageResults = Array.from({ length: 50 }, (_, index) =>
+    malformedRating(index + 1, `Earlier all-region title ${index + 1}`),
+  );
+  mocks.searchEnabled = true;
+  mocks.refetchIntervalOverride = 25;
+
+  const activeParams = {
+    malformedRefreshTimestamp: true,
+    malformedRefreshTimestampProvider: "Wikidata",
+    malformedRefreshTimestampAllRegions: true,
+    offset: 50,
+  };
+  const previousParams = { ...activeParams, offset: 0 };
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  });
+  client.setQueryData(
+    getSearchAdminContentQueryKey(previousParams),
+    mocks.earlierPageResults,
+  );
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Last all-region title", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Page 2", { exact: true })).toBeVisible();
+    await expect.element(
+      page.getByRole("checkbox", { name: "Review malformed ratings across all regions" }),
+    ).toBeChecked();
+
+    // Another admin repairs the final result; the next poll empties this page.
+    mocks.searchResults = [];
+    await expect.element(page.getByText("Last all-region title", { exact: true }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText("Page 1", { exact: true })).toBeVisible();
+    await expect.element(
+      page.getByText("Earlier all-region title 1", { exact: true }),
+    ).toBeVisible();
+    expect(location.search).toContain("malformedRefreshTimestampAllRegions=true");
+    expect(location.search).toContain("malformedRefreshTimestampProvider=Wikidata");
+    expect(location.search).toContain("malformedRefreshTimestamp=true");
+    expect(client.getQueryData(
+      getSearchAdminContentQueryKey(previousParams),
+    )).toEqual(mocks.earlierPageResults);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.searchResults = [];
+    mocks.earlierPageResults = [];
+    mocks.searchEnabled = false;
+    mocks.refetchIntervalOverride = undefined;
+    mocks.configuredRefetchInterval = undefined;
+    mocks.configuredRefetchOnWindowFocus = undefined;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("keeps a failed Wikidata refresh visible with its region and allows another attempt", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState(
