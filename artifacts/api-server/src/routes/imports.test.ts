@@ -429,11 +429,12 @@ describe("private, idempotent watch-history imports", () => {
     { name: "leaves a fresh import unmatched after its regional alias is removed without changing an earlier preview", freshImport: true, removeAlias: true, resolveEpisode: false },
     { name: "matches a fresh import to an editorially preserved regional alias after its provider withdraws it", freshImport: true, removeAlias: true, resolveEpisode: false, preserveEditorial: true },
     { name: "matches and tracks a fresh regional import while another catalog provider still supports its alias", freshImport: true, removeAlias: false, resolveEpisode: false, retainProvider: true },
+    { name: "leaves a fresh regional import unmatched after both providers sequentially withdraw its alias without changing an earlier preview", freshImport: true, removeAlias: true, resolveEpisode: false, retainProvider: true, withdrawLastProvider: true },
     { name: "records only the chosen show's episode and parent history after reviewing a shared regional title", freshImport: false, removeAlias: false, resolveEpisode: true },
     { name: "does not add history twice when a shared-alias episode becomes watched before manual review", freshImport: false, removeAlias: false, resolveEpisode: true, alreadyWatched: true },
     { name: "does not let another account's watched shared-alias episode block manual review or confirmation", freshImport: false, removeAlias: false, resolveEpisode: true, otherAccountWatched: true },
     { name: "imports the chosen shared-alias episode when a different episode of that show is already watched", freshImport: false, removeAlias: false, resolveEpisode: true, differentEpisodeWatched: true },
-  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, otherAccountWatched = false, differentEpisodeWatched = false, preserveEditorial = false, retainProvider = false, confirmBeforeRefresh = false }) => {
+  ])("$name", async ({ freshImport, removeAlias, resolveEpisode, alreadyWatched = false, otherAccountWatched = false, differentEpisodeWatched = false, preserveEditorial = false, retainProvider = false, withdrawLastProvider = false, confirmBeforeRefresh = false }) => {
     // Catalog-refresh scenarios must not consume the quota of later import tests.
     await db.delete(rateLimitHitsTable).where(inArray(rateLimitHitsTable.key, [
       `import_create:${USER_A}`,
@@ -827,7 +828,7 @@ describe("private, idempotent watch-history imports", () => {
       expect(changed?.succeeded).toBe(2);
       expect(changed?.failures).toEqual([]);
       const movedAlias = await db.select().from(titleAliasesTable).where(eq(titleAliasesTable.alias, "地域限定タイトル"));
-      const expectedAliasOwners = preserveEditorial || retainProvider ? [primaryId] : removeAlias ? [] : [secondaryId];
+      let expectedAliasOwners = preserveEditorial || retainProvider ? [primaryId] : removeAlias ? [] : [secondaryId];
       expect(movedAlias.filter((alias) => [primaryId, secondaryId].includes(alias.titleId)).map((alias) => alias.titleId))
         .toEqual(expectedAliasOwners);
       if (preserveEditorial) {
@@ -860,6 +861,34 @@ describe("private, idempotent watch-history imports", () => {
       expect(updatedTitles.find((title) => title.id === primaryId)!.altTitles).toContain("地域限定タイトル改訂");
       expect(updatedTitles.filter((title) => title.altTitles.includes("地域限定タイトル")).map((title) => title.id))
         .toEqual(expectedAliasOwners);
+
+      if (withdrawLastProvider) {
+        // The first refresh above leaves Wikipedia ownership and the matching
+        // projection intact. Only its subsequent withdrawal removes the alias.
+        const finalWithdrawal = await runCatalogSync({ dryRun: false, allowPartial: true }, [{
+          key: "test:import-refresh-primary-wikipedia",
+          source: "wikipedia",
+          type: "tv",
+          name: fixtures[0].name,
+          imdbId: fixtures[0].expectedImdbId!,
+          wikiPage: "Import_refresh_primary",
+          aliases: [],
+          popularity: 0,
+        }]);
+        expect(finalWithdrawal?.succeeded).toBe(1);
+        expect(finalWithdrawal?.failures).toEqual([]);
+        const remainingAliases = await db.select().from(titleAliasesTable).where(and(
+          inArray(titleAliasesTable.titleId, [primaryId, secondaryId]),
+          eq(titleAliasesTable.alias, "地域限定タイトル"),
+        ));
+        expect(remainingAliases).toEqual([]);
+        const finalTitles = await db.select().from(titlesTable).where(inArray(titlesTable.id, [primaryId, secondaryId]));
+        expect(finalTitles).toHaveLength(2);
+        expect(finalTitles.filter((title) => title.altTitles.includes("地域限定タイトル"))).toEqual([]);
+        expect(finalTitles.find((title) => title.id === primaryId)!.altTitles).toContain("地域限定タイトル改訂");
+        expectedAliasOwners = [];
+      }
+
       const persistedPreview = await supertest(app).get(`/api/imports/${importId}`).set("x-test-user", USER_A);
       expect(persistedPreview.status).toBe(200);
       // Database reads do not guarantee the original CSV row order.
@@ -867,6 +896,11 @@ describe("private, idempotent watch-history imports", () => {
       expect(persistedPreview.body.items[0]).toMatchObject({ classification: "matched", titleId: primaryId, selected: true });
       expect(persistedPreview.body.items[2]).toMatchObject({ classification: "matched", titleId: primaryId, episodeId: regionalEpisode.id, selected: true });
       expect(persistedPreview.body.items[3]).toMatchObject(ambiguousEpisode);
+      if (withdrawLastProvider) {
+        expect(persistedPreview.body.status).toBe("ready");
+        expect(persistedPreview.body.summary).toEqual(created.body.summary);
+        expect(persistedPreview.body.items).toEqual(created.body.items);
+      }
       if (confirmBeforeRefresh) expect(persistedPreview.body).toEqual(savedResult);
 
       if (freshImport) {
