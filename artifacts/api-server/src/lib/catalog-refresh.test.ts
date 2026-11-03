@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { catalogSyncItemsTable, catalogSyncRunsTable, db, pool } from "@workspace/db";
+import { catalogSyncItemsTable, catalogSyncRunsTable, db, integrationHealthTable, pool } from "@workspace/db";
 import * as databaseModule from "@workspace/db";
 import * as schema from "@workspace/db/schema";
 import { logger } from "./logger";
@@ -3162,6 +3162,119 @@ describe("catalog refresh recovery", () => {
       }
     }
   });
+});
+
+describe("catalog refresh post-sync provider-health failure", () => {
+  it.each(["succeeded", "partial"] as const)(
+    "preserves completed title results and totals after a %s sync when the health lookup throws",
+    async (completionStatus) => {
+      const items = sourceItems.slice(0, 3);
+      expect(items).toHaveLength(3);
+      const healthError = new Error("post-sync integration-health lookup failed");
+      const providerError = "Original title provider timeout";
+      const failures = completionStatus === "partial" ? [{
+        key: items[2].key, title: items[2].name,
+        provider: items[2].source === "tvmaze" ? "TVMaze" : "Wikipedia",
+        error: providerError,
+      }] : [];
+      const succeeded = items.length - failures.length;
+      const episodes = succeeded * 4;
+      let releaseHealth!: () => void;
+      const healthGate = new Promise<void>((resolve) => { releaseHealth = resolve; });
+      // Reject only after the test has inspected the committed completion state.
+      const healthWhere = vi.fn(async () => {
+        await healthGate;
+        throw healthError;
+      });
+      const healthFrom = vi.fn(() => ({ where: healthWhere }));
+      const selectSpy = vi.spyOn(db, "select");
+      const cleanupSpy = vi.spyOn(db, "delete");
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
+      runCatalogSyncMock.mockImplementationOnce(async (
+        ...[_options, selected, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+      ) => {
+        let successfulTitles = 0;
+        for (const [index, item] of selected.entries()) {
+          await onProgress!({
+            item, status: "running", attempted: index + 1,
+            succeeded: successfulTitles, episodes: successfulTitles * 4,
+          });
+          const failed = failures.some((failure) => failure.key === item.key);
+          if (!failed) successfulTitles++;
+          await onProgress!({
+            item, status: failed ? "failed" : "succeeded", attempted: index + 1,
+            succeeded: successfulTitles, episodes: successfulTitles * 4,
+            error: failed ? providerError : undefined,
+          });
+        }
+        // No select occurs between returning the sync result and checking health.
+        selectSpy.mockReturnValueOnce({
+          from: healthFrom,
+        } as unknown as ReturnType<typeof db.select>);
+        return { selected: selected.length, succeeded, episodes, failures };
+      });
+      let runId: number | undefined;
+      try {
+        runId = await startCatalogRefresh("manual", items);
+        createdRunIds.push(runId);
+        await vi.waitFor(() => expect(healthWhere).toHaveBeenCalledTimes(1));
+        expect(healthFrom).toHaveBeenCalledExactlyOnceWith(integrationHealthTable);
+        const [completedRun] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, runId));
+        const completedItems = await db.select().from(catalogSyncItemsTable)
+          .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id);
+        expect(completedRun).toMatchObject({
+          status: completionStatus, error: failures[0]?.error ?? null,
+          totalItems: items.length, processedItems: items.length,
+          failedItems: failures.length, succeededItems: succeeded, episodesUpdated: episodes,
+          startedAt: expect.any(Date), finishedAt: expect.any(Date),
+        });
+        expect(completedItems).toHaveLength(items.length);
+        for (const [index, item] of completedItems.entries()) {
+          const failed = failures.some((failure) => failure.key === items[index].key);
+          expect(item).toMatchObject({
+            itemKey: items[index].key, status: failed ? "failed" : "succeeded",
+            error: failed ? providerError : null,
+            startedAt: expect.any(Date), finishedAt: expect.any(Date),
+          });
+        }
+        // Ensure rewriting a completed title's timestamp cannot compare equal.
+        await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(
+          Math.max(...completedItems.map((item) => item.finishedAt!.getTime())),
+        ));
+        releaseHealth();
+        // Pruning starts only after the exceptional-termination transaction ends.
+        await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+        expect(errorSpy).toHaveBeenCalledWith(
+          { err: healthError, runId }, "catalog refresh failed",
+        );
+        const [terminatedRun] = await db.select().from(catalogSyncRunsTable)
+          .where(eq(catalogSyncRunsTable.id, runId));
+        expect(terminatedRun).toEqual({
+          ...completedRun, status: "failed", error: healthError.message,
+          processedItems: completedItems.filter((item) => ["succeeded", "failed"].includes(item.status)).length,
+          failedItems: completedItems.filter((item) => item.status === "failed").length,
+          finishedAt: expect.any(Date),
+        });
+        expect(await db.select().from(catalogSyncItemsTable)
+          .where(eq(catalogSyncItemsTable.runId, runId)).orderBy(catalogSyncItemsTable.id))
+          .toEqual(completedItems);
+        expect(runCatalogSyncMock).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseHealth();
+        try {
+          if (runId !== undefined) {
+            await vi.waitFor(() => expect(cleanupSpy).toHaveBeenCalledWith(catalogSyncRunsTable));
+          }
+        } finally {
+          selectSpy.mockRestore();
+          cleanupSpy.mockRestore();
+          errorSpy.mockRestore();
+          runCatalogSyncMock.mockReset();
+        }
+      }
+    },
+  );
 });
 
 describe("catalog refresh history cleanup failure", () => {
