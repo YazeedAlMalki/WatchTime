@@ -2237,6 +2237,82 @@ describe("admin alternate-title review", () => {
     );
   });
 
+  it("keeps collision badges current when a timed-out catalog request fails after retry", async () => {
+    let rejectTimedOutCatalog!: (error: Error) => void;
+    const timedOutCatalog = new Promise<void>((_resolve, reject) => {
+      rejectTimedOutCatalog = reject;
+    });
+    let catalogRefreshCall = 0;
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) => {
+        if (queryKey[0] === "/api/admin/content-aliases") {
+          return Promise.resolve();
+        }
+        catalogRefreshCall += 1;
+        return catalogRefreshCall === 1
+          ? timedOutCatalog
+          : Promise.resolve();
+      },
+    );
+
+    render();
+    vi.useFakeTimers();
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        "Updated Local Title",
+      );
+      button(container, "Save").click();
+    });
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(catalogRefreshCall).toBe(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(container.textContent).toContain(
+      "Failed refresh request: catalog search (collision results).",
+    );
+    expect(
+      container.querySelector('[aria-label^="Collision results may be stale"]'),
+    ).not.toBeNull();
+
+    act(() => button(container, "Retry refresh").click());
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        await Promise.resolve();
+      }
+    });
+    expect(catalogRefreshCall).toBe(2);
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+    expect(
+      container.querySelector('[aria-label^="Collision results may be stale"]'),
+    ).toBeNull();
+
+    const savePromise = mocks.updateMutation.mutate.mock.results.at(-1)
+      ?.value as Promise<void> | undefined;
+    if (!savePromise) throw new Error("The alternate-title save did not start");
+    await act(async () => {
+      rejectTimedOutCatalog(new Error("late catalog refresh failure"));
+      await timedOutCatalog.catch(() => undefined);
+      await savePromise;
+    });
+    expect(container.textContent).not.toContain(
+      "Alternate-title refresh failed",
+    );
+    expect(
+      container.querySelector('[aria-label^="Collision results may be stale"]'),
+    ).toBeNull();
+  });
+
   it("retries only the catalog request and updates its failure state", async () => {
     await saveAliasToTriggerRefresh(["catalog"]);
     expectRefreshCalls(["aliases", "catalog"]);
