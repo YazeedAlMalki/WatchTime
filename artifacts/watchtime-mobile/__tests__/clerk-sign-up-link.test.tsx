@@ -1258,6 +1258,41 @@ describe('Clerk sign-up switch to sign-in', () => {
     },
   );
 
+  it('blocks resends while Clerk is fetching and allows one after Clerk returns to idle', async () => {
+    mockUseLocalSearchParams.mockReturnValue({});
+    let fetchStatus: 'idle' | 'fetching' = 'fetching';
+    const sendEmailCode = jest.fn(async () => ({ error: null }));
+    mockUseSignUp.mockImplementation(() => ({
+      signUp: {
+        status: 'missing_requirements',
+        unverifiedFields: ['email_address'],
+        missingFields: [],
+        verifications: { sendEmailCode },
+      },
+      errors: { fields: {} },
+      fetchStatus,
+    }));
+
+    const screen = await render(<SignUpScreen />);
+    expect(screen.getByTestId('code-input')).toBeTruthy();
+    expect(screen.getByTestId('resend-code-button')).toBeDisabled();
+    await act(async () => {
+      // Bypass the disabled control to exercise handleResend's Clerk guard.
+      await getPressHandler(screen, 'resend-code-button')();
+    });
+    expect(sendEmailCode).not.toHaveBeenCalled();
+
+    fetchStatus = 'idle';
+    await screen.rerender(<SignUpScreen />);
+    expect(screen.getByTestId('resend-code-button')).toBeEnabled();
+    await fireEvent.press(screen.getByTestId('resend-code-button'));
+
+    expect(sendEmailCode).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('resend-code-status').props.children).toBe(
+      'A new code is on its way. Check your email.',
+    );
+  });
+
   it('reports a failed resend and lets the user retry without leaving verification', async () => {
     mockUseLocalSearchParams.mockReturnValue({});
     const sendEmailCode = jest.fn()
