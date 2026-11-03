@@ -3232,6 +3232,8 @@ export function AliasReview({
   const [conflictAlias, setConflictAlias] = useState<AdminContentAlias | null>(
     null,
   );
+  const [isConflictCorrectionStale, setIsConflictCorrectionStale] =
+    useState(false);
   const [collisionCountOverrides, setCollisionCountOverrides] = useState<
     Map<string, AdminContentAliasCollisionCount>
   >(() => new Map());
@@ -3322,6 +3324,7 @@ export function AliasReview({
   ): Promise<ReviewRefreshRequest[] | null> => {
     const attempt = ++aliasRefreshAttempt.current;
     const pendingRequests = new Set(requests);
+    const settledFailures = new Set<ReviewRefreshRequest>();
     setIsAliasRefreshTimedOut(false);
     setIsRefreshingAliasViews(true);
     if (requests.includes("catalog") || requests.includes("collisions")) {
@@ -3329,10 +3332,15 @@ export function AliasReview({
     }
     const recoveryTimer = window.setTimeout(() => {
       if (aliasRefreshAttempt.current !== attempt) return;
-      const timedOutRequests = Array.from(pendingRequests);
+      const timedOutRequests = Array.from(
+        new Set([...settledFailures, ...pendingRequests]),
+      );
       if (timedOutRequests.length === 0) return;
       setIsAliasRefreshTimedOut(true);
       setRefreshError(timedOutRequests);
+      if (timedOutRequests.includes("aliases")) {
+        setIsConflictCorrectionStale(true);
+      }
       setIsCollisionResultsStale(
         timedOutRequests.includes("catalog") ||
           timedOutRequests.includes("collisions"),
@@ -3343,7 +3351,7 @@ export function AliasReview({
       const results = await Promise.allSettled(
         requests.map(async (request) => {
           try {
-            return await Promise.resolve().then(async () => {
+            const result = await Promise.resolve().then(async () => {
               if (request === "collisions") {
                 return aliasesForCollisionLookup.length === 0
                   ? []
@@ -3361,6 +3369,22 @@ export function AliasReview({
                 { throwOnError: true },
               );
             });
+            if (
+              request === "aliases" &&
+              aliasRefreshAttempt.current === attempt
+            ) {
+              setIsConflictCorrectionStale(false);
+            }
+            return result;
+          } catch (error) {
+            settledFailures.add(request);
+            if (
+              request === "aliases" &&
+              aliasRefreshAttempt.current === attempt
+            ) {
+              setIsConflictCorrectionStale(true);
+            }
+            throw error;
           } finally {
             pendingRequests.delete(request);
           }
@@ -3521,6 +3545,7 @@ export function AliasReview({
           setConflictAlias((current) =>
             current?.id === editingId ? null : current,
           );
+          setIsConflictCorrectionStale(false);
           const savedAlias = savedRecord?.alias ?? alias;
           const aliasesForCollisionLookup = Array.from(
             new Set(
@@ -3596,6 +3621,7 @@ export function AliasReview({
               : null;
           if (staleConflict) {
             setConflictAlias(staleConflict);
+            setIsConflictCorrectionStale(false);
             setEditingId(null);
             await refreshAliasViews();
           }
@@ -3658,6 +3684,7 @@ export function AliasReview({
           setConflictAlias((current) =>
             current?.id === alias.id ? null : current,
           );
+          setIsConflictCorrectionStale(false);
           const aliasesForCollisionLookup = Array.from(
             new Set(
               (visibleAliases ?? [])
@@ -3882,6 +3909,16 @@ export function AliasReview({
                 Your draft was not saved. Compare the current values below before
                 trying again.
               </p>
+              {isConflictCorrectionStale && (
+                <p
+                  className="mt-2 font-medium"
+                  data-testid="status-conflict-correction-stale"
+                >
+                  The alternate-title list refresh failed or timed out. The
+                  alternate title, language, and source shown here may
+                  no longer match the latest saved correction.
+                </p>
+              )}
               <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
                 <div>
                   <dt className="text-xs font-semibold uppercase tracking-wide text-orange-700/80 dark:text-orange-300/80">
