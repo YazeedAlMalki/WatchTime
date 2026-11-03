@@ -129,3 +129,76 @@ describe("episode unwatch account isolation", () => {
     expect(rowsAfter).toEqual(expect.arrayContaining(expectedRows));
   });
 });
+
+describe("movie unwatch account isolation", () => {
+  const movieAccountIds = [`movie-unwatch-a-${fixtureId}`, `movie-unwatch-b-${fixtureId}`];
+  let movieId: number | undefined;
+
+  beforeAll(async () => {
+    await db.insert(usersTable).values(movieAccountIds.map((id) => ({
+      id, email: `${id}@example.test`,
+    })));
+    const [movie] = await db.insert(titlesTable).values({
+      name: `__movie_unwatch_isolation_${fixtureId}__`, type: "movie",
+    }).returning({ id: titlesTable.id });
+    movieId = movie.id;
+  });
+
+  afterAll(async () => {
+    await db.delete(watchedTitlesTable).where(inArray(watchedTitlesTable.userId, movieAccountIds));
+    if (movieId !== undefined) {
+      await db.delete(titlesTable).where(eq(titlesTable.id, movieId));
+    }
+    await db.delete(usersTable).where(inArray(usersTable.id, movieAccountIds));
+  });
+
+  async function readMovieAccount(userId: string) {
+    const [movies, recent] = await Promise.all([
+      supertest(app).get("/api/me/movies").set("x-test-user-id", userId),
+      supertest(app).get("/api/me/recent").set("x-test-user-id", userId),
+    ]);
+    expect(movies.status).toBe(200);
+    expect(recent.status).toBe(200);
+    return { movies: movies.body, recent: recent.body };
+  }
+
+  it("removes only the initiating account's movie and preserves the other account's row and history", async () => {
+    for (const userId of movieAccountIds) {
+      const watched = await supertest(app)
+        .post(`/api/titles/${movieId}/watched`)
+        .set("x-test-user-id", userId)
+        .send({});
+      expect(watched.status).toBe(200);
+      expect(watched.body).toEqual({ ok: true });
+    }
+
+    const before = await Promise.all(movieAccountIds.map(readMovieAccount));
+    for (const account of before) {
+      expect(account.movies).toEqual([
+        expect.objectContaining({ id: movieId, type: "movie" }),
+      ]);
+      expect(account.recent).toEqual([
+        expect.objectContaining({ titleId: movieId, kind: "movie" }),
+      ]);
+    }
+    const rowsBefore = await db.select().from(watchedTitlesTable)
+      .where(eq(watchedTitlesTable.titleId, movieId!));
+    expect(rowsBefore).toHaveLength(2);
+    expect(rowsBefore.map((row) => row.userId).sort()).toEqual([...movieAccountIds].sort());
+
+    const unwatch = await supertest(app)
+      .delete(`/api/titles/${movieId}/watched`)
+      .set("x-test-user-id", movieAccountIds[0]);
+    expect(unwatch.status).toBe(200);
+    expect(unwatch.body).toEqual({ ok: true });
+
+    const [initiatorAfter, otherAfter] = await Promise.all(movieAccountIds.map(readMovieAccount));
+    expect(initiatorAfter).toEqual({ movies: [], recent: [] });
+    // Full equality also protects the other account's activity timestamps.
+    expect(otherAfter).toEqual(before[1]);
+
+    const rowsAfter = await db.select().from(watchedTitlesTable)
+      .where(eq(watchedTitlesTable.titleId, movieId!));
+    expect(rowsAfter).toEqual(rowsBefore.filter((row) => row.userId === movieAccountIds[1]));
+  });
+});
