@@ -688,6 +688,7 @@ router.get("/content/mapping-counts", async (req, res): Promise<void> => {
     return;
   }
   const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const searchPattern = `%${escapeLikePattern(q)}%`;
   const counts = await db
     .select({
       provider: providerMappingsTable.provider,
@@ -697,7 +698,7 @@ router.get("/content/mapping-counts", async (req, res): Promise<void> => {
     })
     .from(providerMappingsTable)
     .innerJoin(titlesTable, eq(providerMappingsTable.titleId, titlesTable.id))
-    .where(q ? ilike(titlesTable.name, `%${q}%`) : undefined)
+    .where(q ? ilike(titlesTable.name, searchPattern) : undefined)
     .groupBy(providerMappingsTable.provider)
     .orderBy(asc(providerMappingsTable.provider));
   res.json(counts);
@@ -749,6 +750,7 @@ router.get("/content", async (req, res) => {
   }
 
   const q = parsedParams.data.q?.trim() ?? "";
+  const searchPattern = `%${escapeLikePattern(q)}%`;
 
   const region = (typeof regionParam === "string" ? regionParam : "US") as RatingRegion;
   const malformedRefreshTimestamp = malformedRefreshTimestampParam === "true";
@@ -783,7 +785,7 @@ router.get("/content", async (req, res) => {
     .select()
     .from(titlesTable)
     .where(and(
-      q ? ilike(titlesTable.name, `%${q}%`) : undefined,
+      q ? ilike(titlesTable.name, searchPattern) : undefined,
       matchingProviderMapping,
     ))
     .orderBy(desc(titlesTable.popularity), asc(titlesTable.id));
@@ -975,7 +977,7 @@ router.get("/content", async (req, res) => {
         ${malformedRefreshTimestampProvider
           ? sql`AND rating.source_name = ${malformedRefreshTimestampProvider}`
           : sql``}
-        AND (${q} = '' OR title.name ILIKE ${`%${q}%`})
+        AND (${q} = '' OR title.name ILIKE ${searchPattern})
         ${mappingFilterSql}
       ORDER BY title.popularity DESC, title.id ASC, rating.id ASC
       LIMIT ${CONTENT_REVIEW_PAGE_SIZE + 1}
@@ -1045,7 +1047,7 @@ router.get("/content", async (req, res) => {
         AND rating.is_community = false
         AND rating.source_name = ${malformedRefreshTimestampProvider || "Wikidata"}
         AND item.value->>'category' = regions.system
-        AND (${q} = '' OR title.name ILIKE ${`%${q}%`})
+        AND (${q} = '' OR title.name ILIKE ${searchPattern})
         ${mappingFilterSql}
     )
     SELECT title.id, selected.region

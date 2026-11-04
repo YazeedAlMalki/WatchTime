@@ -79,6 +79,34 @@ afterEach(async () => {
 });
 
 describe("admin title aliases", () => {
+  it("treats percent and underscore literally in admin title searches", async () => {
+    const searchTitles = await db.insert(titlesTable).values([
+      { type: "movie", name: "Literal 100% Match", year: 2020, imdbId: "tt-literal-percent" },
+      { type: "movie", name: "Literal 100 Percent Match", year: 2020, imdbId: "tt-word-percent" },
+      { type: "movie", name: "Under_score Match", year: 2020, imdbId: "tt-literal-underscore" },
+      { type: "movie", name: "UnderXscore Match", year: 2020, imdbId: "tt-wildcard-underscore" },
+    ]).returning({ id: titlesTable.id, name: titlesTable.name });
+    createdTitleIds.push(...searchTitles.map(({ id }) => id));
+
+    const percentResponse = await request(app)
+      .get(`/api/admin/content?q=${encodeURIComponent("%")}`)
+      .expect(200);
+    expect(percentResponse.body.map(({ name }: { name: string }) => name))
+      .toEqual(["Literal 100% Match"]);
+
+    const underscoreResponse = await request(app)
+      .get(`/api/admin/content?q=${encodeURIComponent("_score")}`)
+      .expect(200);
+    expect(underscoreResponse.body.map(({ name }: { name: string }) => name))
+      .toEqual(["Under_score Match"]);
+
+    const ordinarySearchResponse = await request(app)
+      .get("/api/admin/content?q=Alias%20Test%20One")
+      .expect(200);
+    expect(ordinarySearchResponse.body.map(({ name }: { name: string }) => name))
+      .toEqual(["Alias Test One"]);
+  });
+
   it("shows the Wikidata record selected by the public rating resolver", async () => {
     const newerUpdatedAt = new Date("2026-02-01T00:00:00.000Z");
     const [newer] = await db.insert(safetyRecordsTable).values({
