@@ -1595,6 +1595,118 @@ it("keeps the selected alias page when an older page response finishes late", as
   }
 });
 
+it("keeps the selected alias page when an older page request fails late", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&region=US");
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174001";
+  const nextPageCursor = `${snapshotId}:50:0`;
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  let resolveOlderPage!: (response: Response) => void;
+  let markOlderPageRequested!: () => void;
+  let markOlderPageCompleted!: () => void;
+  let olderPageIsCompleted = false;
+  const olderPageResponse = new Promise<Response>((resolve) => {
+    resolveOlderPage = resolve;
+  });
+  const olderPageRequested = new Promise<void>((resolve) => {
+    markOlderPageRequested = resolve;
+  });
+  const olderPageCompleted = new Promise<void>((resolve) => {
+    markOlderPageCompleted = resolve;
+  });
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "en",
+    sourceName: "TVMaze",
+    sourceUrl: null,
+    isEditorial: false,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  const firstPage = {
+    items: [makeAlias(401, "First page alias")],
+    total: 2,
+    limit: 50,
+    offset: 0,
+    nextCursor: nextPageCursor,
+    previousCursor: null,
+  };
+  const responseFor = (body: typeof firstPage) => new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+  window.fetch = vi.fn((input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    if (url.searchParams.get("cursor") === nextPageCursor) {
+      return Promise.resolve(responseFor({
+        ...firstPage,
+        items: [makeAlias(402, "Second page alias")],
+        offset: 50,
+        nextCursor: null,
+        previousCursor: `${snapshotId}:0`,
+      }));
+    }
+    markOlderPageRequested();
+    return olderPageResponse.then((response) => {
+      olderPageIsCompleted = true;
+      markOlderPageCompleted();
+      return response;
+    });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(getListAdminContentAliasesQueryKey({ limit: 50 }), firstPage);
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("First page alias")).toBeVisible();
+    await olderPageRequested;
+
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await expect.element(page.getByText("Page 2 · 2 matching aliases")).toBeVisible();
+    await expect.element(page.getByText("Second page alias")).toBeVisible();
+    expect(olderPageIsCompleted).toBe(false);
+    expect(requests).toHaveLength(2);
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe(nextPageCursor);
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(nextPageCursor);
+
+    resolveOlderPage(new Response(JSON.stringify({ error: "Unavailable" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    }));
+    await olderPageCompleted;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    await expect.element(page.getByText("Page 2 · 2 matching aliases")).toBeVisible();
+    await expect.element(page.getByText("Second page alias")).toBeVisible();
+    await expect.element(page.getByText("First page alias")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Could not load alternate titles.")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("2");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(nextPageCursor);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("restores filtered alias pages and rows with browser Back and Forward", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const snapshotId = "123e4567-e89b-12d3-a456-426614174003";
