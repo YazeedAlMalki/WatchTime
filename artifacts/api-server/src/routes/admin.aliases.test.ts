@@ -12,7 +12,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import * as workspaceDb from "@workspace/db";
-import { eq, inArray, lt, sql } from "drizzle-orm";
+import { eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { runCatalogSync, type SourceItem } from "../seed-real";
 import {
   mockMalformedSafetyTimestamp,
@@ -1407,6 +1407,20 @@ describe("admin title aliases", () => {
       ...secondPage.body.items.map((alias: { id: number }) => alias.id),
       ...thirdPage.body.items.map((alias: { id: number }) => alias.id),
     ]).size).toBe(4);
+  });
+
+  it("keeps saved alias reviews within the shared limit under concurrent requests", async () => {
+    const requests = Array.from({ length: 25 }, (_, index) =>
+      request(app)
+        .get("/api/admin/content-aliases")
+        .query({ q: `Concurrent Snapshot ${index}`, ownership: "editorial", limit: 1 })
+        .expect(200));
+    await Promise.all(requests);
+
+    const activeSnapshots = await db.select({ id: aliasReviewSnapshotsTable.id })
+      .from(aliasReviewSnapshotsTable)
+      .where(gt(aliasReviewSnapshotsTable.expiresAt, new Date()));
+    expect(activeSnapshots).toHaveLength(20);
   });
 
   it("explains when an alias review snapshot has expired", async () => {

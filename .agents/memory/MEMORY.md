@@ -56,3 +56,4 @@
 - [Inspectable Expo release bundles](expo-release-bundle-checks.md) — use production minification with `--no-bytecode` to inspect optimized native JavaScript instead of opaque Hermes output.
 - [Unclassified rating corrections](unclassified-rating-corrections.md) — correct only the selected classification system; preserve provider labels and scores rather than inventing rating data.
 - [Drizzle migration generation](drizzle-migration-generation.md) — without baseline snapshots, drizzle-kit generate may emit a full-schema migration; verify generated SQL before keeping it.
+- [Shared snapshot retention](shared-snapshot-retention.md) — shared row caps need a database-level lock around cleanup, counting, eviction, and insertion.

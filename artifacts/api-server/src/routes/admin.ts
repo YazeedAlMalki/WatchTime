@@ -1369,22 +1369,22 @@ function createAliasReviewSnapshotCursor(
     : `${snapshotId}:${offset}:${previousOffset}`;
 }
 
-async function pruneAliasReviewSnapshots(now = new Date()) {
-  await db.delete(aliasReviewSnapshotsTable)
+async function pruneAliasReviewSnapshots(now = new Date(), executor: any = db) {
+  await executor.delete(aliasReviewSnapshotsTable)
     .where(lte(aliasReviewSnapshotsTable.expiresAt, now));
 }
 
-async function makeRoomForAliasReviewSnapshot(now = new Date()) {
-  const activeSnapshots = await db.select({ id: aliasReviewSnapshotsTable.id })
+async function makeRoomForAliasReviewSnapshot(now = new Date(), executor: any = db) {
+  const activeSnapshots = await executor.select({ id: aliasReviewSnapshotsTable.id })
     .from(aliasReviewSnapshotsTable)
     .where(gt(aliasReviewSnapshotsTable.expiresAt, now))
     .orderBy(asc(aliasReviewSnapshotsTable.expiresAt));
   const excess = activeSnapshots.length - ALIAS_REVIEW_SNAPSHOT_LIMIT + 1;
   if (excess > 0) {
-    await db.delete(aliasReviewSnapshotsTable)
+    await executor.delete(aliasReviewSnapshotsTable)
       .where(inArray(
         aliasReviewSnapshotsTable.id,
-        activeSnapshots.slice(0, excess).map(({ id }) => id),
+        activeSnapshots.slice(0, excess).map(({ id }: { id: string }) => id),
       ));
   }
 }
@@ -1738,36 +1738,41 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
         )
       : null;
   } else if (snapshotMode) {
-    await pruneAliasReviewSnapshots();
     const snapshotId = randomUUID();
     const now = new Date();
-    await makeRoomForAliasReviewSnapshot(now);
     const snapshot = {
       filterKey,
       expiresAt: new Date(now.getTime() + ALIAS_REVIEW_SNAPSHOT_TTL_MS),
     };
-    await db.insert(aliasReviewSnapshotsTable).values({
-      id: snapshotId,
-      filterKey: snapshot.filterKey,
-      aliasIds: sql`
-        (
-          select coalesce(
-            array_agg(
-              ${titleAliasesTable.id}
-              order by
-                ${titleAliasesTable.normalizedAlias},
-                ${titlesTable.name},
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        select pg_advisory_xact_lock(hashtext('alias_review_snapshots')::bigint)
+      `);
+      await pruneAliasReviewSnapshots(now, tx);
+      await makeRoomForAliasReviewSnapshot(now, tx);
+      await tx.insert(aliasReviewSnapshotsTable).values({
+        id: snapshotId,
+        filterKey: snapshot.filterKey,
+        aliasIds: sql`
+          (
+            select coalesce(
+              array_agg(
                 ${titleAliasesTable.id}
-            ),
-            '{}'::integer[]
+                order by
+                  ${titleAliasesTable.normalizedAlias},
+                  ${titlesTable.name},
+                  ${titleAliasesTable.id}
+              ),
+              '{}'::integer[]
+            )
+            from ${titleAliasesTable}
+            inner join ${titlesTable}
+              on ${titlesTable.id} = ${titleAliasesTable.titleId}
+            where ${snapshotWhere}
           )
-          from ${titleAliasesTable}
-          inner join ${titlesTable}
-            on ${titlesTable.id} = ${titleAliasesTable.titleId}
-          where ${snapshotWhere}
-        )
-      `,
-      expiresAt: snapshot.expiresAt,
+        `,
+        expiresAt: snapshot.expiresAt,
+      });
     });
     const [snapshotPage] = await db.select({
       total: sql<number>`cardinality(${aliasReviewSnapshotsTable.aliasIds})`,
