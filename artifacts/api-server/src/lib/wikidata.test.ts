@@ -1229,6 +1229,8 @@ describe("Wikidata refresh persistence", () => {
   });
 
   it("preserves verified Wikidata data when a later lookup is ambiguous", async () => {
+    const previousHealthRows = await db.select().from(integrationHealthTable)
+      .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
     const [title] = await db.insert(titlesTable).values({
       type: "movie",
       name: "__wikidata_ambiguous_mapping_test__",
@@ -1311,8 +1313,22 @@ describe("Wikidata refresh persistence", () => {
         },
       }),
     });
+    const previousSuccessAt = new Date("2024-01-01T00:00:00.000Z");
 
     try {
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      await db.insert(integrationHealthTable).values({
+        provider: WIKIDATA_PROVIDER,
+        status: "healthy",
+        lastSyncAt: previousSuccessAt,
+        lastSuccessAt: previousSuccessAt,
+        lastError: null,
+        successRatePercent: 100,
+        refreshAttempts: 7,
+        successfulRefreshes: 7,
+      });
+
       await expect(refreshWikidataTitle(title.id, client)).resolves.toMatchObject({
         ok: false,
         status: "error",
@@ -1340,7 +1356,12 @@ describe("Wikidata refresh persistence", () => {
       expect(health).toMatchObject({
         status: "failing",
         lastError: ambiguity,
+        lastSuccessAt: previousSuccessAt,
+        refreshAttempts: 8,
+        successfulRefreshes: 7,
+        successRatePercent: 87.5,
       });
+      expect(health.lastSyncAt?.getTime()).toBeGreaterThan(previousSuccessAt.getTime());
 
       await expect(refreshWikidataTitle(title.id, {
         queryByImdbId: async () => ({ ...matchedItem, imdbId: "tt7654323" }),
@@ -1354,6 +1375,11 @@ describe("Wikidata refresh persistence", () => {
       });
     } finally {
       await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+      await db.delete(integrationHealthTable)
+        .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
+      if (previousHealthRows.length > 0) {
+        await db.insert(integrationHealthTable).values(previousHealthRows);
+      }
     }
   });
 
