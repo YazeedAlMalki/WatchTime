@@ -164,6 +164,139 @@ it("keeps a failed saved-correction review available after switching admin tabs"
   }
 });
 
+it("removes a saved correction that no longer matches search without changing the filtered total", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=US&q=Shared%20Local%20Title",
+  );
+  const originalFetch = window.fetch;
+  const requests: URL[] = [];
+  const originalAlias = {
+    id: 17,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie",
+    titleYear: 2019,
+    alias: "Shared Local Title",
+    language: "en",
+    sourceName: "Editorial test",
+    sourceUrl: "https://example.test/source",
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  };
+  const savedAliasRecord = {
+    id: originalAlias.id,
+    titleId: originalAlias.titleId,
+    alias: "Corrected Harbor Name",
+    normalizedAlias: "corrected harbor name",
+    language: "fr",
+    sourceName: originalAlias.sourceName,
+    sourceUrl: "https://example.test/updated",
+    isEditorial: true,
+    createdAt: originalAlias.updatedAt,
+    updatedAt: "2026-09-17T00:00:00.000Z",
+  };
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(
+      typeof input === "string" ? input : input.toString(),
+      location.origin,
+    );
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const items = requests.length === 1 ? [originalAlias] : [];
+    return new Response(JSON.stringify({
+      items,
+      total: items.length,
+      limit: 50,
+      offset: 0,
+      nextCursor: null,
+      previousCursor: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  updateAliasMutate.mockImplementation(
+    (
+      _variables: unknown,
+      options: {
+        onSuccess?: (record: typeof savedAliasRecord) => unknown;
+      },
+    ) => {
+      void options.onSuccess?.(savedAliasRecord);
+    },
+  );
+  deleteAliasMutate.mockImplementation(
+    (_variables: unknown, options: { onSuccess?: () => unknown }) => {
+      void options.onSuccess?.();
+    },
+  );
+
+  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(
+      <QueryClientProvider client={client}>
+        <AdminPage />
+        <Toaster />
+      </QueryClientProvider>,
+    );
+    await expect.element(page.getByText("Shared Local Title", { exact: true }))
+      .toBeVisible();
+    await expect.element(page.getByText("1 aliases", { exact: true })).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Edit" }));
+    await userEvent.fill(
+      page.getByRole("textbox", { name: "Alternate title for The Lighthouse" }),
+      savedAliasRecord.alias,
+    );
+    await userEvent.click(page.getByRole("button", { name: "Save" }));
+
+    await expect.element(page.getByText("0 aliases", { exact: true })).toBeVisible();
+    await expect.element(
+      page.getByRole("cell", { name: savedAliasRecord.alias, exact: true }),
+    ).toBeVisible();
+    await expect.element(
+      page.getByText(`Saved correction: ${savedAliasRecord.alias}`, {
+        exact: false,
+      }),
+    ).toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: "Remove" }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      `Remove “${savedAliasRecord.alias}” from The Lighthouse? This cannot be undone.`,
+    );
+    expect(deleteAliasMutate).toHaveBeenCalledTimes(1);
+    await expect.element(page.getByText("Alternate title removed", { exact: true }))
+      .toBeVisible();
+    await expect.element(page.getByText("0 aliases", { exact: true })).toBeVisible();
+    await expect.element(
+      page.getByRole("cell", { name: savedAliasRecord.alias, exact: true }),
+    ).not.toBeInTheDocument();
+    await expect.element(page.getByText("Shared Local Title", { exact: true }))
+      .not.toBeInTheDocument();
+    expect(requests.length).toBeGreaterThanOrEqual(3);
+    expect(requests.every((request) =>
+      request.searchParams.get("q") === "Shared Local Title"
+    )).toBe(true);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    confirmSpy.mockRestore();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("distinguishes an alias-list failure from an empty result and retries the current filters", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState(

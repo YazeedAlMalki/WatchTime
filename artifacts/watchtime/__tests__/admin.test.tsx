@@ -1132,6 +1132,157 @@ describe("admin alternate-title review", () => {
     );
   });
 
+  it("does not subtract a saved correction twice after it stops matching search", async () => {
+    const otherAlias: AdminContentAlias = {
+      ...initialAlias,
+      id: 18,
+      titleId: 102,
+      titleName: "The Harbor",
+      alias: "Shared Local Title Alternate",
+    };
+    const savedAliasRecord: AdminContentAliasRecord = {
+      id: initialAlias.id,
+      titleId: initialAlias.titleId,
+      alias: "Corrected Harbor Name",
+      normalizedAlias: "corrected harbor name",
+      language: initialAlias.language,
+      sourceName: initialAlias.sourceName,
+      sourceUrl: initialAlias.sourceUrl,
+      isEditorial: true,
+      createdAt: initialAlias.updatedAt,
+      updatedAt: "2026-09-17T00:00:00.000Z",
+    };
+    let setFilteredResults!: (
+      aliases: AdminContentAlias[],
+      total: number,
+    ) => void;
+    let aliasRefreshes = 0;
+    mocks.updateMutation.mutate.mockImplementation(
+      async (
+        _variables: unknown,
+        options?: {
+          onSuccess?: (savedRecord?: AdminContentAliasRecord) => Promise<void>;
+        },
+      ) => {
+        await options?.onSuccess?.(savedAliasRecord);
+      },
+    );
+    mocks.queryClient.invalidateQueries.mockImplementation(
+      ({ queryKey }: { queryKey: string[] }) => {
+        if (queryKey[0] === "/api/admin/content-aliases") {
+          aliasRefreshes += 1;
+          if (aliasRefreshes === 1) {
+            // The filtered total already excludes the edited alias, but the
+            // current page still has its stale pre-edit row.
+            setFilteredResults([initialAlias, otherAlias], 1);
+            return Promise.reject(new Error("Alias refresh unavailable"));
+          }
+          return Promise.reject(new Error("Alias refresh unavailable"));
+        }
+        return Promise.resolve();
+      },
+    );
+    let updateCachedPage:
+      | ((current: {
+          items: AdminContentAlias[];
+          total: number;
+          limit: number;
+          offset: number;
+        }) => {
+          items: AdminContentAlias[];
+          total: number;
+          limit: number;
+          offset: number;
+        } | undefined)
+      | undefined;
+    mocks.queryClient.setQueriesData.mockImplementation(
+      (_filters: unknown, update: typeof updateCachedPage) => {
+        updateCachedPage = update;
+      },
+    );
+    function FilteredAliasReview() {
+      const [aliases, setAliases] = React.useState([initialAlias]);
+      const [total, setTotal] = React.useState(1);
+      setFilteredResults = (nextAliases, nextTotal) => {
+        setAliases(nextAliases);
+        setTotal(nextTotal);
+      };
+      return (
+        <AliasReview
+          aliases={aliases}
+          q="Shared Local Title"
+          aliasTotal={total}
+          isLoading={false}
+          isError={false}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="all"
+          onOwnershipChange={() => {}}
+        />
+      );
+    }
+    act(() => root.render(<FilteredAliasReview />));
+
+    act(() => button(container, "Edit").click());
+    act(() => {
+      setInput(
+        container,
+        "Alternate title for The Lighthouse",
+        savedAliasRecord.alias,
+      );
+      button(container, "Save").click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("1 aliases");
+    const correctedRow = Array.from(
+      container.querySelectorAll("tbody tr"),
+    ).find((row) => row.textContent?.includes(savedAliasRecord.alias));
+    expect(correctedRow).toBeTruthy();
+    expect(correctedRow?.textContent).toContain("Saved correction preview");
+    expect(container.textContent).toContain(otherAlias.alias);
+
+    confirmSpy.mockReturnValue(true);
+    act(() => {
+      const removeButton = Array.from(
+        correctedRow?.querySelectorAll("button") ?? [],
+      ).find((candidate) => candidate.textContent?.trim() === "Remove");
+      removeButton?.click();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("1 aliases");
+    expect(container.textContent).toContain(otherAlias.alias);
+    expect(
+      Array.from(container.querySelectorAll("tbody tr")).some((row) =>
+        row.textContent?.includes(savedAliasRecord.alias),
+      ),
+    ).toBe(false);
+    expect(container.textContent).toContain(
+      `Removed alternate title: ${savedAliasRecord.alias}. It is hidden until the list refresh succeeds.`,
+    );
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: "Alternate title removed, but refresh failed",
+      description:
+        "The removal succeeded, but the review table may still be stale. Failed refresh request: alternate-title list (alias records). Retry the refresh below.",
+      variant: "destructive",
+    });
+    expect(updateCachedPage).toEqual(expect.any(Function));
+    expect(
+      updateCachedPage?.({
+        items: [initialAlias, otherAlias],
+        total: 1,
+        limit: 50,
+        offset: 0,
+      }),
+    ).toEqual({
+      items: [otherAlias],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+  });
+
   it("identifies a saved correction preview after a failed active-search refresh and replaces it on retry", async () => {
     const refreshedAlias: AdminContentAlias = {
       ...initialAlias,

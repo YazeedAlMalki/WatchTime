@@ -3124,14 +3124,42 @@ export function AliasReview({
     });
   }, [q, ownership, aliases]);
   const [removedAliasPreviews, setRemovedAliasPreviews] = useState<
-    AdminContentAlias[]
+    { alias: AdminContentAlias; countsTowardFilteredTotal: boolean }[]
   >([]);
   React.useEffect(() => {
     if (linkedAlias) linkedRowRef.current?.scrollIntoView?.({ block: "center" });
   }, [linkedAlias?.id]);
   const removedAliasIds = new Set(
-    removedAliasPreviews.map((alias) => alias.id),
+    removedAliasPreviews.map(({ alias }) => alias.id),
   );
+  const aliasMatchesCurrentFilters = (alias: AdminContentAlias) => {
+    if (
+      ownership === "editorial" && !alias.isEditorial ||
+      ownership === "provider" && alias.isEditorial
+    ) {
+      return false;
+    }
+    const query = q.trim();
+    if (!query) return true;
+    const lowerQuery = query.toLowerCase();
+    if (
+      alias.alias.toLowerCase().includes(lowerQuery) ||
+      alias.titleName.toLowerCase().includes(lowerQuery)
+    ) {
+      return true;
+    }
+    if (/[%_]/u.test(query)) return false;
+    const normalize = (value: string) =>
+      value
+        .normalize("NFKD")
+        .replace(/\p{M}+/gu, "")
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, "");
+    const normalizedQuery = normalize(query);
+    return Boolean(
+      normalizedQuery && normalize(alias.alias).includes(normalizedQuery),
+    );
+  };
   const aliasesWithSavedPreview = aliases?.map((alias) => {
     const savedPreview = getSavedAliasPreviewState(alias.id);
     return savedPreview && !savedPreview.refreshed ? savedPreview.alias : alias;
@@ -3154,7 +3182,14 @@ export function AliasReview({
   const visibleAliasTotal = Math.max(
     0,
     aliasTotal -
-      (aliases?.filter((alias) => removedAliasIds.has(alias.id)).length ?? 0),
+      (aliases?.filter(
+        (alias) =>
+          removedAliasPreviews.some(
+            (removedPreview) =>
+              removedPreview.alias.id === alias.id &&
+              removedPreview.countsTowardFilteredTotal,
+          ),
+      ).length ?? 0),
   );
   const collisionLookupAliases = Array.from(
     new Set(visibleAliases?.map((alias) => alias.alias) ?? []),
@@ -3689,6 +3724,10 @@ export function AliasReview({
   };
 
   const removeAlias = (alias: AdminContentAlias) => {
+    const savedPreview = getSavedAliasPreview(alias.id);
+    const countsTowardFilteredTotal = aliasMatchesCurrentFilters(
+      savedPreview ?? alias,
+    );
     const discardsUnsavedChanges =
       editingId === alias.id && hasUnsavedAliasChanges();
     if (
@@ -3716,7 +3755,10 @@ export function AliasReview({
               return {
                 ...current,
                 items: current.items.filter((item) => item.id !== alias.id),
-                total: Math.max(0, current.total - 1),
+                total: Math.max(
+                  0,
+                  current.total - Number(countsTowardFilteredTotal),
+                ),
               };
             },
           );
@@ -3725,9 +3767,14 @@ export function AliasReview({
           onAliasPageChange(1, null);
           if (editingId === alias.id) setEditingId(null);
           setRemovedAliasPreviews((current) =>
-            current.some((removedAlias) => removedAlias.id === alias.id)
+            current.some(
+              (removedPreview) => removedPreview.alias.id === alias.id,
+            )
               ? current
-              : [...current, alias],
+              : [
+                  ...current,
+                  { alias, countsTowardFilteredTotal },
+                ],
           );
           setSavedAliasPreviewStates((current) =>
             current.filter((preview) => preview.alias.id !== alias.id),
@@ -3838,7 +3885,7 @@ export function AliasReview({
           {removedAliasPreviews.length === 1 ? (
             <>
               Removed alternate title:{" "}
-              <strong>{removedAliasPreviews[0].alias}</strong>. It is hidden
+              <strong>{removedAliasPreviews[0].alias.alias}</strong>. It is hidden
               until the list refresh succeeds.
             </>
           ) : (
