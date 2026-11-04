@@ -1435,6 +1435,27 @@ describe("admin title aliases", () => {
       .where(eq(aliasReviewSnapshotsTable.id, snapshotId))).toHaveLength(0);
   });
 
+  it("rejects a saved alias page link beyond its snapshot results", async () => {
+    const firstPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Shared Local Title", limit: 1 })
+      .expect(200);
+    const snapshotId = firstPage.body.nextCursor.split(":")[0];
+
+    const outOfRangePage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Shared Local Title",
+        limit: 1,
+        cursor: `${snapshotId}:3`,
+      });
+
+    expect(outOfRangePage.status).toBe(400);
+    expect(outOfRangePage.body).toEqual({
+      error: "Invalid alias snapshot offset",
+    });
+  });
+
   it("resumes a saved review after the admin route is reloaded and cleans up expired snapshots", async () => {
     const aliases = ["Restart Snapshot Alpha", "Restart Snapshot Bravo", "Restart Snapshot Charlie"];
     const rows = await db.insert(titleAliasesTable).values(
