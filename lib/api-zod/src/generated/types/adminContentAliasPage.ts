@@ -27,4 +27,6 @@ export interface AdminContentAliasPage {
   nextCursor: string | null;
   /** @nullable */
   previousCursor: string | null;
+  /** @minimum 0 */
+  missingAliasCount?: number;
 }

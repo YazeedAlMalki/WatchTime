@@ -1423,6 +1423,52 @@ describe("admin title aliases", () => {
     expect(activeSnapshots).toHaveLength(20);
   });
 
+  it("reports removed aliases on resumed snapshots and can restart with current results", async () => {
+    const aliases = [
+      "Removed Alias Review Alpha",
+      "Removed Alias Review Bravo",
+      "Removed Alias Review Charlie",
+    ];
+    const rows = await db.insert(titleAliasesTable).values(
+      aliases.map((alias) => ({
+        titleId: createdTitleIds[0],
+        alias,
+        normalizedAlias: alias.toLowerCase().replaceAll(" ", ""),
+        sourceName: "Removed alias snapshot test",
+        isEditorial: true,
+      })),
+    ).returning({ id: titleAliasesTable.id });
+
+    const firstPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Removed Alias Review", ownership: "editorial", limit: 1 })
+      .expect(200);
+    expect(firstPage.body.total).toBe(3);
+    expect(firstPage.body.missingAliasCount).toBe(0);
+    expect(firstPage.body.nextCursor).toBeTruthy();
+
+    await db.delete(titleAliasesTable).where(eq(titleAliasesTable.id, rows[1].id));
+    const resumedPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        q: "Removed Alias Review",
+        ownership: "editorial",
+        limit: 1,
+        cursor: firstPage.body.nextCursor,
+      })
+      .expect(200);
+    expect(resumedPage.body.items).toEqual([]);
+    expect(resumedPage.body.total).toBe(3);
+    expect(resumedPage.body.missingAliasCount).toBe(1);
+
+    const restartedPage = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "Removed Alias Review", ownership: "editorial", limit: 1 })
+      .expect(200);
+    expect(restartedPage.body.total).toBe(2);
+    expect(restartedPage.body.missingAliasCount).toBe(0);
+    expect(restartedPage.body.items).toHaveLength(1);
+  });
   it("explains when an alias review snapshot has expired", async () => {
     const firstPage = await request(app)
       .get("/api/admin/content-aliases")

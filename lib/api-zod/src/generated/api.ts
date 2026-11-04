@@ -1592,6 +1592,8 @@ export const listAdminContentAliasesResponseLimitMax = 100;
 export const listAdminContentAliasesResponseOffsetMin = 0;
 
 
+export const listAdminContentAliasesResponseMissingAliasCountMin = 0;
+
 
 
 export const ListAdminContentAliasesResponse = zod.object({
@@ -1620,7 +1622,8 @@ export const ListAdminContentAliasesResponse = zod.object({
   "offset": zod.int().min(listAdminContentAliasesResponseOffsetMin),
   "nextAfterId": zod.int().min(1).nullish(),
   "nextCursor": zod.string().nullable(),
-  "previousCursor": zod.string().nullable()
+  "previousCursor": zod.string().nullable(),
+  "missingAliasCount": zod.int().min(listAdminContentAliasesResponseMissingAliasCountMin).optional()
 })
 
 

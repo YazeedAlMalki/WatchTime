@@ -2103,6 +2103,7 @@ components:
         nextAfterId: { type: ["integer", "null"], minimum: 1 }
         nextCursor: { type: ["string", "null"] }
         previousCursor: { type: ["string", "null"] }
+        missingAliasCount: { type: integer, minimum: 0 }
     AdminContentAliasUpdate:
       type: object
       required: [alias, expectedUpdatedAt]

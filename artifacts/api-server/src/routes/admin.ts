@@ -1356,6 +1356,7 @@ const ALIAS_REVIEW_SNAPSHOT_LIMIT = 20;
 type AliasReviewSnapshot = {
   filterKey: string;
   total: number;
+  missingAliasCount: number;
   expiresAt: Date;
 };
 
@@ -1652,6 +1653,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
   let nextAfterId: number | null = null;
   let nextCursor: string | null = null;
   let previousCursor: string | null = null;
+  let missingAliasCount = 0;
 
   if (cursor !== undefined) {
     if (!snapshotMode) {
@@ -1669,6 +1671,15 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
     const [snapshotRow] = await db.select({
       filterKey: aliasReviewSnapshotsTable.filterKey,
       total: sql<number>`cardinality(${aliasReviewSnapshotsTable.aliasIds})`,
+      missingAliasCount: sql<number>`(
+        select count(*)::int
+        from unnest(${aliasReviewSnapshotsTable.aliasIds}) as saved_alias(alias_id)
+        where not exists (
+          select 1
+          from ${titleAliasesTable}
+          where ${titleAliasesTable.id} = saved_alias.alias_id
+        )
+      )`,
       expiresAt: aliasReviewSnapshotsTable.expiresAt,
     }).from(aliasReviewSnapshotsTable)
       .where(and(
@@ -1685,6 +1696,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       res.status(400).json({ error: "Alias snapshot cursor does not match the active filters" });
       return;
     }
+    missingAliasCount = snapshot.missingAliasCount;
     const snapshotOffset = Number(match[2]);
     if (!Number.isSafeInteger(snapshotOffset) || snapshotOffset > snapshot.total) {
       res.status(400).json({ error: "Invalid alias snapshot offset" });
@@ -1776,6 +1788,15 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
     });
     const [snapshotPage] = await db.select({
       total: sql<number>`cardinality(${aliasReviewSnapshotsTable.aliasIds})`,
+      missingAliasCount: sql<number>`(
+        select count(*)::int
+        from unnest(${aliasReviewSnapshotsTable.aliasIds}) as saved_alias(alias_id)
+        where not exists (
+          select 1
+          from ${titleAliasesTable}
+          where ${titleAliasesTable.id} = saved_alias.alias_id
+        )
+      )`,
       aliasIds: sql<number[]>`
         coalesce(
           ${aliasReviewSnapshotsTable.aliasIds}[1:${limit}],
@@ -1786,6 +1807,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
       .where(eq(aliasReviewSnapshotsTable.id, snapshotId))
       .limit(1);
     total = snapshotPage?.total ?? 0;
+    missingAliasCount = snapshotPage?.missingAliasCount ?? 0;
     const nextOffset = Math.min(limit, total);
     const windowIds = snapshotPage?.aliasIds ?? [];
     const liveRows = windowIds.length
@@ -1875,6 +1897,7 @@ router.get("/content-aliases", async (req, res): Promise<void> => {
     nextAfterId,
     nextCursor,
     previousCursor,
+    missingAliasCount,
   }));
 });
 

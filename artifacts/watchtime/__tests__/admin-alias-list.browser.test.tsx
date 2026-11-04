@@ -3208,3 +3208,86 @@ it("exports all matching aliases and explains empty or failed downloads", async 
     window.history.replaceState({}, "", previousUrl);
   }
 });
+
+it("warns when saved aliases were removed and restarts against current results", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174002";
+  const pageTwoCursor = `${snapshotId}:50:0`;
+  window.history.replaceState(
+    {},
+    "",
+    `/admin?tab=content&region=US&q=Lighthouse&ownership=editorial&aliasPage=2&aliasCursor=${encodeURIComponent(pageTwoCursor)}`,
+  );
+  const originalFetch = window.fetch;
+  const requests: URL[] = [];
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "en",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const isSavedPage = url.searchParams.has("cursor");
+    return new Response(JSON.stringify(isSavedPage
+      ? {
+          items: [makeAlias(501, "Lighthouse saved page alias")],
+          total: 51,
+          limit: 50,
+          offset: 50,
+          nextCursor: null,
+          previousCursor: `${snapshotId}:0`,
+          missingAliasCount: 1,
+        }
+      : {
+          items: [makeAlias(502, "Lighthouse current alias")],
+          total: 50,
+          limit: 50,
+          offset: 0,
+          nextCursor: null,
+          previousCursor: null,
+          missingAliasCount: 0,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByTestId("status-missing-aliases")).toHaveTextContent(
+      "1 saved alternate title no longer exists.",
+    );
+    await expect.element(page.getByText("Lighthouse saved page alias")).toBeVisible();
+    expect(requests[0]?.searchParams.get("cursor")).toBe(pageTwoCursor);
+
+    await userEvent.click(page.getByRole("button", { name: "Restart with current aliases" }));
+    await expect.element(page.getByText("Lighthouse current alias")).toBeVisible();
+    await expect.element(page.getByTestId("status-missing-aliases")).not.toBeInTheDocument();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.searchParams.has("cursor")).toBe(false);
+    expect(new URLSearchParams(location.search).has("aliasCursor")).toBe(false);
+    expect(new URLSearchParams(location.search).has("aliasPage")).toBe(false);
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});

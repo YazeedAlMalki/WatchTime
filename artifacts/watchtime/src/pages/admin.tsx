@@ -2971,6 +2971,7 @@ function ContentTab({
         searchPending={q.trim() !== debouncedQ.trim()}
         getToken={getToken}
         aliasTotal={aliasesPage?.total}
+        missingAliasCount={aliasesPage?.missingAliasCount}
         aliasPage={aliasPage}
         currentAliasCursor={aliasCursor}
         nextAliasCursor={aliasesPage?.nextCursor}
@@ -3024,6 +3025,7 @@ export function AliasReview({
   searchPending = false,
   getToken = async () => null,
   aliasTotal = aliases?.length ?? 0,
+  missingAliasCount = 0,
   aliasPage = 1,
   currentAliasCursor = null,
   nextAliasCursor,
@@ -3050,6 +3052,7 @@ export function AliasReview({
   searchPending?: boolean;
   getToken?: () => Promise<string | null>;
   aliasTotal?: number;
+  missingAliasCount?: number;
   aliasPage?: number;
   currentAliasCursor?: string | null;
   nextAliasCursor?: string | null;
@@ -4188,6 +4191,28 @@ export function AliasReview({
         <p role="status" className="mb-3 text-sm text-muted-foreground">
           Loading alternate titles for page {aliasPage}…
         </p>
+      )}
+      {missingAliasCount > 0 && (
+        <div
+          role="alert"
+          data-testid="status-missing-aliases"
+          className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm"
+        >
+          <p>
+            {missingAliasCount} saved{" "}
+            {missingAliasCount === 1 ? "alternate title no longer exists" : "alternate titles no longer exist"}.
+            The saved total may be higher than the rows on this page.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 rounded-xl"
+            data-testid="button-restart-current-alias-review"
+            onClick={() => onAliasPageChange(1, null)}
+          >
+            Restart with current aliases
+          </Button>
+        </div>
       )}
       {searchPending ? (
         <p role="status" className="mb-3 text-sm text-muted-foreground">
