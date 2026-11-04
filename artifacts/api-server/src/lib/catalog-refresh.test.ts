@@ -100,15 +100,16 @@ describe("catalog refresh scheduling history failures", () => {
 });
 
 describe("pruneCatalogRefreshHistory", () => {
-  it("removes only completed runs before the cutoff and cascades their items", async () => {
+  it("removes only strictly older completed runs and preserves cutoff, newer, and unfinished runs with their items", async () => {
     const cutoff = new Date("2026-01-01T00:00:00.000Z");
-    const oldFinishedAt = new Date("2025-12-31T23:59:59.000Z");
-    const recentFinishedAt = new Date("2026-01-01T00:00:01.000Z");
+    const oldFinishedAt = new Date(cutoff.getTime() - 1);
+    const recentFinishedAt = new Date(cutoff.getTime() + 1);
     const runs = await db.insert(catalogSyncRunsTable).values([
       { trigger: "scheduled", status: "failed", finishedAt: oldFinishedAt },
+      { trigger: "manual", status: "succeeded", finishedAt: cutoff },
       { trigger: "manual", status: "partial", finishedAt: recentFinishedAt },
       { trigger: "manual", status: "running", startedAt: oldFinishedAt },
-      { trigger: "scheduled", status: "queued" },
+      { trigger: "scheduled", status: "queued", startedAt: oldFinishedAt },
     ]).returning({ id: catalogSyncRunsTable.id });
     createdRunIds.push(...runs.map((run) => run.id));
 
@@ -117,8 +118,8 @@ describe("pruneCatalogRefreshHistory", () => {
       itemKey: `retention-test-${run.id}`,
       title: `Retention test ${index}`,
       provider: "TVMaze",
-      status: index <= 1 ? "failed" : "queued",
-      error: index === 0 ? "old diagnostic details" : index === 1 ? "recent diagnostic details" : null,
+      status: index === 1 ? "succeeded" : index <= 2 ? "failed" : "queued",
+      error: index === 0 ? "old diagnostic details" : index === 2 ? "recent diagnostic details" : null,
     })));
 
     await expect(pruneCatalogRefreshHistory(cutoff)).resolves.toBe(1);
@@ -141,6 +142,10 @@ describe("pruneCatalogRefreshHistory", () => {
     );
     expect(remainingItems).toContainEqual({
       runId: runs[1].id,
+      error: null,
+    });
+    expect(remainingItems).toContainEqual({
+      runId: runs[2].id,
       error: "recent diagnostic details",
     });
   });
