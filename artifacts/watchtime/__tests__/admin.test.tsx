@@ -444,6 +444,36 @@ describe("admin alternate-title review", () => {
     }
   });
 
+  it("explains when a saved alias page link includes legacy filters and offers a restart", () => {
+    const onAliasPageChange = vi.fn();
+    act(() =>
+      root.render(
+        <AliasReview
+          aliases={undefined}
+          isLoading={false}
+          isError
+          loadError={{
+            data: {
+              error: "Snapshot cursors cannot be combined with offset or id filters",
+            },
+          }}
+          isFetching={false}
+          onRetry={() => {}}
+          ownership="provider"
+          onOwnershipChange={() => {}}
+          hasAliasCursor
+          onAliasPageChange={onAliasPageChange}
+        />,
+      ),
+    );
+
+    expect(container.textContent).toContain(
+      "This saved page link includes an offset or exact-ID filter. Saved review pages cannot be combined with those legacy filters. Restart the review to load page 1 with the current search and ownership filters.",
+    );
+    act(() => button(container, "Restart alternate-title review").click());
+    expect(onAliasPageChange).toHaveBeenCalledWith(1, null);
+  });
+
   it("saves alias text, language, and source link, then refreshes collision views", async () => {
     render();
 

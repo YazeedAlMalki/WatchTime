@@ -3006,6 +3006,8 @@ function getAliasReviewLoadExplanation(error: unknown): string | undefined {
     case "Invalid alias snapshot cursor":
     case "Invalid alias snapshot offset":
       return "The saved page link is invalid, so this review cannot resume. Restart the review to load page 1.";
+    case "Snapshot cursors cannot be combined with offset or id filters":
+      return "This saved page link includes an offset or exact-ID filter. Saved review pages cannot be combined with those legacy filters. Restart the review to load page 1 with the current search and ownership filters.";
     case "Alias snapshot cursor does not match the active filters":
       return "The saved page was created with different search or ownership filters. Restart the review to load page 1 with the current filters.";
     case "This alias review snapshot expired. Restart the search.":

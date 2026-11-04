@@ -2300,6 +2300,23 @@ describe("admin title aliases", () => {
     expect((await request(app).get("/api/admin/content-aliases?cursor=invalid")).status).toBe(400);
   });
 
+  it.each([
+    ["offset", { offset: 1 }],
+    ["exact-ID", { id: 1 }],
+  ])("rejects a snapshot cursor combined with a legacy %s filter", async (_filter, legacyFilter) => {
+    const response = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({
+        cursor: "11111111-1111-4111-8111-111111111111:1",
+        ...legacyFilter,
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: "Snapshot cursors cannot be combined with offset or id filters",
+    });
+  });
+
   it("locates an exact alias ID even if the shared filters do not match", async () => {
     const [row] = await db.select().from(titleAliasesTable)
       .where(eq(titleAliasesTable.titleId, createdTitleIds[0]));
