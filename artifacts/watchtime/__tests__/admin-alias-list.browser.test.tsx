@@ -684,7 +684,7 @@ it("continues forward from a restored filtered alias page", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 151 matching aliases");
+    await expect.element(page.getByText("Page 2 · 151 matching aliases", { exact: true })).toBeVisible();
     await expect.element(page.getByText("Lighthouse restored page two alias")).toBeVisible();
     expect(requests).toHaveLength(1);
     expect(requests[0]?.searchParams.get("cursor")).toBe(restoredPageCursor);
@@ -693,7 +693,7 @@ it("continues forward from a restored filtered alias page", async () => {
 
     await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
 
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 3 · 151 matching aliases");
+    await expect.element(page.getByText("Page 3 · 151 matching aliases", { exact: true })).toBeVisible();
     await expect.element(page.getByText("Lighthouse restored page three alias")).toBeVisible();
     await expect.element(page.getByText("Lighthouse restored page two alias")).not.toBeInTheDocument();
     expect(requests).toHaveLength(2);
@@ -789,7 +789,7 @@ it("starts a fresh filtered alias page after deleting the last alias on a later 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 51 matching aliases");
+    await expect.element(page.getByText("Page 2 · 51 matching aliases", { exact: true })).toBeVisible();
     await expect.element(page.getByText("Lighthouse final page alias")).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Previous aliases" })).toBeEnabled();
 
@@ -1034,7 +1034,7 @@ it("refreshes the first-page total and next-page navigation after deleting an al
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 1 · 51 matching aliases");
+    await expect.element(page.getByText("Page 1 · 51 matching aliases", { exact: true })).toBeVisible();
     await expect.element(page.getByText("Lighthouse alias 01")).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Next aliases" })).toBeEnabled();
 
@@ -1050,6 +1050,125 @@ it("refreshes the first-page total and next-page navigation after deleting an al
     expect(requests[1]?.searchParams.get("cursor")).toBeNull();
     expect(requests[1]?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests[1]?.searchParams.get("ownership")).toBe("editorial");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    confirmSpy.mockRestore();
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("uses the refreshed snapshot cursor to open the next page after deleting an alias", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const oldSnapshotId = "123e4567-e89b-12d3-a456-426614174000";
+  const refreshedSnapshotId = "123e4567-e89b-12d3-a456-426614174001";
+  const oldPageCursor = `${oldSnapshotId}:50:0`;
+  const refreshedPageCursor = `${refreshedSnapshotId}:50:0`;
+  window.history.replaceState(
+    {},
+    "",
+    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial",
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  const initialAliases = Array.from({ length: 50 }, (_, index) =>
+    makeAlias(100 + index, `Lighthouse alias ${String(index + 1).padStart(2, "0")}`),
+  );
+  const refreshedAliases = [
+    ...initialAliases.slice(1),
+    makeAlias(200, "Lighthouse alias from refreshed result"),
+  ];
+  let finishRefresh: ((response: Response) => void) | undefined;
+  const refreshResponse = new Promise<Response>((resolve) => {
+    finishRefresh = resolve;
+  });
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const cursor = url.searchParams.get("cursor");
+    if (cursor === refreshedPageCursor) {
+      return new Response(JSON.stringify({
+        items: [makeAlias(201, "Lighthouse alias on refreshed page two")],
+        total: 51,
+        limit: 50,
+        offset: 0,
+        nextCursor: null,
+        previousCursor: `${refreshedSnapshotId}:0`,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (cursor === oldPageCursor) {
+      throw new Error("The deleted alias snapshot cursor must not be reused");
+    }
+    if (requests.length === 1) {
+      return new Response(JSON.stringify({
+        items: initialAliases,
+        total: 52,
+        limit: 50,
+        offset: 0,
+        nextCursor: oldPageCursor,
+        previousCursor: null,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return refreshResponse;
+  });
+
+  deleteAliasMutate.mockImplementation(
+    (_variables: unknown, options: { onSuccess?: () => unknown }) => {
+      void options.onSuccess?.();
+    },
+  );
+  const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Page 1 · 52 matching aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Next aliases" })).toBeEnabled();
+
+    await userEvent.click(page.getByRole("button", { name: "Remove" }).first());
+
+    await expect.poll(() => requests.length).toBe(2);
+    await expect.element(page.getByText("Page 1 · 51 matching aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Next aliases" })).toBeDisabled();
+    expect(requests[1]?.searchParams.get("cursor")).toBeNull();
+    finishRefresh?.(new Response(JSON.stringify({
+      items: refreshedAliases,
+      total: 51,
+      limit: 50,
+      offset: 0,
+      nextCursor: refreshedPageCursor,
+      previousCursor: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await expect.element(page.getByRole("button", { name: "Next aliases" })).toBeEnabled();
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await expect.element(page.getByText("Page 2 · 51 matching aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Lighthouse alias on refreshed page two")).toBeVisible();
+    expect(requests).toHaveLength(3);
+    expect(requests[2]?.searchParams.get("cursor")).toBe(refreshedPageCursor);
   } finally {
     root.unmount();
     container.remove();
@@ -1149,7 +1268,7 @@ it("keeps ownership and region when clearing alias search from a later page", as
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByRole("status")).toHaveTextContent("Page 2 · 51 matching aliases");
+    await expect.element(page.getByText("Page 2 · 51 matching aliases", { exact: true })).toBeVisible();
     await expect.element(page.getByText("Lighthouse later-page alias")).toBeVisible();
 
     const search = page.getByPlaceholder("Search titles…");

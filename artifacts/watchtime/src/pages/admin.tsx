@@ -4463,7 +4463,10 @@ export function AliasReview({
                   onAliasPageChange(aliasPage + 1, nextAliasCursor);
                 }
               }}
-              disabled={nextAliasCursor == null}
+              disabled={
+                nextAliasCursor == null ||
+                (isRefreshingAliasViews && isFetching)
+              }
             >
               Next aliases
             </Button>
