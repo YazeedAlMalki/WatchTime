@@ -381,6 +381,112 @@ it("distinguishes an alias-list failure from an empty result and retries the cur
   }
 });
 
+it("keeps alias results matched to ownership when an older request finishes last", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=content&ownership=provider");
+  const originalFetch = window.fetch;
+  const requests: URL[] = [];
+  let resolveProviderResponse!: (response: Response) => void;
+  let markProviderRequestStarted!: () => void;
+  let markProviderResponseReturned!: () => void;
+  const providerResponse = new Promise<Response>((resolve) => {
+    resolveProviderResponse = resolve;
+  });
+  const providerRequestStarted = new Promise<void>((resolve) => {
+    markProviderRequestStarted = resolve;
+  });
+  const providerResponseReturned = new Promise<void>((resolve) => {
+    markProviderResponseReturned = resolve;
+  });
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Ownership test",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: false,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    if (url.searchParams.get("ownership") === "provider") {
+      markProviderRequestStarted();
+      return providerResponse.then((response) => {
+        markProviderResponseReturned();
+        return response;
+      });
+    }
+
+    const aliases = [
+      makeAlias(2, "Editorial result one"),
+      makeAlias(3, "Editorial result two"),
+    ].map((alias) => ({ ...alias, isEditorial: true }));
+    return new Response(JSON.stringify({
+      items: aliases,
+      total: 2,
+      limit: 50,
+      offset: 0,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await providerRequestStarted;
+
+    const ownership = page.getByRole("combobox", { name: "Alias ownership" });
+    await userEvent.click(ownership);
+    await userEvent.click(page.getByRole("option", { name: "Editorial" }));
+
+    await expect.element(ownership).toHaveTextContent("Editorial");
+    await expect.element(page.getByText("Editorial result one")).toBeVisible();
+    await expect.element(page.getByText("Editorial result two")).toBeVisible();
+    await expect.element(page.getByText("2 aliases")).toBeVisible();
+    expect(new URLSearchParams(location.search).get("ownership")).toBe("editorial");
+    expect(requests.map((request) => request.searchParams.get("ownership"))).toEqual([
+      "provider",
+      "editorial",
+    ]);
+
+    resolveProviderResponse(new Response(JSON.stringify({
+      items: [makeAlias(1, "Late provider result")],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await providerResponseReturned;
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    await expect.element(ownership).toHaveTextContent("Editorial");
+    await expect.element(page.getByText("Editorial result one")).toBeVisible();
+    await expect.element(page.getByText("Editorial result two")).toBeVisible();
+    await expect.element(page.getByText("Late provider result")).not.toBeInTheDocument();
+    await expect.element(page.getByText("2 aliases")).toBeVisible();
+    await expect.element(page.getByText("1 aliases")).not.toBeInTheDocument();
+    expect(new URLSearchParams(location.search).get("ownership")).toBe("editorial");
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("explains how to narrow an alias review that exceeds the snapshot limit", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   window.history.replaceState(
