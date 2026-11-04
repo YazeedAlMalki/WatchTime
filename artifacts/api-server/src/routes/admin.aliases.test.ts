@@ -940,6 +940,34 @@ describe("admin title aliases", () => {
     ]);
   });
 
+  it("treats a backslash before a letter as a literal character in alias searches", async () => {
+    await db.insert(titleAliasesTable).values([
+      {
+        titleId: createdTitleIds[0],
+        alias: "Literal backslash \\n marker",
+        normalizedAlias: "literalbackslashnmarker",
+        sourceName: "Editorial test",
+        isEditorial: true,
+      },
+      {
+        titleId: createdTitleIds[1],
+        alias: "Literal n marker",
+        normalizedAlias: "literalnmarker",
+        sourceName: "Editorial test",
+        isEditorial: true,
+      },
+    ]);
+
+    const response = await request(app)
+      .get("/api/admin/content-aliases")
+      .query({ q: "\\n" })
+      .expect(200);
+
+    expect(response.body.items.map(({ alias }: { alias: string }) => alias)).toEqual([
+      "Literal backslash \\n marker",
+    ]);
+  });
+
   it("shows the remaining provider citation after another provider withdraws a shared alias", async () => {
     const tvMazeCitation = {
       sourceName: "TVMaze",

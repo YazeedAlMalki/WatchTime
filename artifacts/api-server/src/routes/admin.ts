@@ -1292,7 +1292,7 @@ function buildContentAliasWhere(
   if (requestedId !== undefined) return eq(titleAliasesTable.id, requestedId);
 
   const normalizedQ = normalizeAlias(q);
-  const hasLikeWildcard = /[%_]/u.test(q);
+  const hasLikeWildcard = /[%_\\]/u.test(q);
   const searchPattern = `%${escapeLikePattern(q)}%`;
   const searchFilter = q
     ? or(
