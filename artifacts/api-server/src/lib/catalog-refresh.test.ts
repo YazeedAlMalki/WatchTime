@@ -1169,6 +1169,55 @@ describe("catalog refresh recovery", () => {
     }
   });
 
+  it("releases the catalog lock when no runs qualify for repair and preserves fresh and completed work", async () => {
+    const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
+    const freshAt = new Date(cutoff.getTime() + 1_000);
+    const completedAt = new Date(cutoff.getTime() - 1_000);
+    const runs = await db.insert(catalogSyncRunsTable).values([
+      { trigger: "manual", status: "queued", createdAt: freshAt },
+      {
+        trigger: "manual", status: "succeeded", createdAt: completedAt,
+        startedAt: completedAt, finishedAt: completedAt, totalItems: 1, processedItems: 1,
+      },
+    ]).returning();
+    const runIds = runs.map((run) => run.id);
+    createdRunIds.push(...runIds);
+    const items = await db.insert(catalogSyncItemsTable).values(runs.map((run) => ({
+      runId: run.id, itemKey: `empty-recovery-${run.id}`,
+      title: "Empty recovery test", provider: "TVMaze",
+      status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt,
+    }))).returning();
+
+    // Check out a distinct session before recovery: reentrant advisory locks
+    // would hide a leak if the probe reused recovery's released session.
+    const lockProbe = await pool.connect();
+    const transactionSpy = vi.spyOn(db, "transaction");
+    try {
+      await expect(recoverInterruptedRuns(cutoff)).resolves.toBeUndefined();
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+      await expect(transactionSpy.mock.results[0].value).resolves.toEqual([]);
+
+      expect(await db.select().from(catalogSyncRunsTable)
+        .where(inArray(catalogSyncRunsTable.id, runIds))
+        .orderBy(catalogSyncRunsTable.id)).toEqual(runs);
+      expect(await db.select().from(catalogSyncItemsTable)
+        .where(inArray(catalogSyncItemsTable.runId, runIds))
+        .orderBy(catalogSyncItemsTable.id)).toEqual(items);
+
+      const catalogLock = await lockProbe.query<{ locked: boolean }>(
+        "select pg_try_advisory_lock(hashtext('watchtime:catalog-sync')) as locked",
+      );
+      expect(catalogLock.rows[0].locked).toBe(true);
+    } finally {
+      transactionSpy.mockRestore();
+      try {
+        await lockProbe.query("select pg_advisory_unlock_all()");
+      } finally {
+        lockProbe.release();
+      }
+    }
+  });
+
   it("releases the catalog and every recovered worker lock after committing repairs", async () => {
     const cutoff = new Date(Date.now() - STALE_QUEUED_REFRESH_MS);
     const staleAt = new Date(cutoff.getTime() - 1_000);
