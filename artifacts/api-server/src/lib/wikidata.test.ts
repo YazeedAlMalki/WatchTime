@@ -1279,7 +1279,7 @@ describe("Wikidata refresh persistence", () => {
     }
   });
 
-  it("preserves verified Wikidata data when a later lookup is ambiguous", async () => {
+  it("reopens a reviewed conflict with new IDs while preserving verified data and health history", async () => {
     const previousHealthRows = await db.select().from(integrationHealthTable)
       .where(eq(integrationHealthTable.provider, WIKIDATA_PROVIDER));
     const [title] = await db.insert(titlesTable).values({
@@ -1424,6 +1424,55 @@ describe("Wikidata refresh persistence", () => {
         error: ambiguity,
         reviewedAt: null,
       });
+      const [mappingBeforeReopen] = await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.id, mapping.id));
+      const recordsBeforeReopen = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id));
+
+      const reviewedAt = new Date("2026-01-01T00:00:00.000Z");
+      await db.update(wikidataIdentityConflictsTable)
+        .set({ reviewedAt })
+        .where(eq(wikidataIdentityConflictsTable.titleId, title.id));
+
+      const updatedAmbiguity = "Ambiguous Wikidata entity match for IMDb ID tt7654323";
+      const updatedClient = createWikidataClient({
+        retries: 0,
+        fetchFn: async () => jsonResponse({
+          results: {
+            bindings: [
+              {
+                item: { value: "https://www.wikidata.org/entity/Q44" },
+                imdbId: { value: "tt7654323" },
+              },
+              {
+                item: { value: "https://www.wikidata.org/entity/Q45" },
+                imdbId: { value: "tt7654323" },
+              },
+            ],
+          },
+        }),
+      });
+      await expect(refreshWikidataTitle(title.id, updatedClient)).resolves.toMatchObject({
+        ok: false,
+        status: "error",
+        error: updatedAmbiguity,
+      });
+
+      const [reopenedConflict] = await db.select().from(wikidataIdentityConflictsTable)
+        .where(eq(wikidataIdentityConflictsTable.titleId, title.id));
+      const [mappingAfterReopen] = await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.id, mapping.id));
+      const recordsAfterReopen = await db.select().from(safetyRecordsTable)
+        .where(eq(safetyRecordsTable.titleId, title.id));
+      expect(reopenedConflict).toMatchObject({
+        titleId: title.id,
+        imdbId: "tt7654323",
+        conflictingEntityIds: ["Q44", "Q45"],
+        error: updatedAmbiguity,
+        reviewedAt: null,
+      });
+      expect(mappingAfterReopen).toEqual(mappingBeforeReopen);
+      expect(recordsAfterReopen).toEqual(recordsBeforeReopen);
     } finally {
       await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
       await db.delete(integrationHealthTable)

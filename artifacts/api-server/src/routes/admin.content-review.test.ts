@@ -12,6 +12,7 @@ import {
   wikidataIdentityConflictsTable,
 } from "@workspace/db";
 import { and, eq, getTableName, inArray, sql } from "drizzle-orm";
+import { createWikidataClient, refreshWikidataTitle } from "../lib/wikidata";
 
 vi.mock("../middlewares/auth", () => ({
   requireAdmin: (req: any, _res: any, next: any) => {
@@ -1443,5 +1444,49 @@ describe("admin Content review timestamp filter", () => {
       verifiedWikidataId: "Q42",
     });
     expect(allConflicts.body.items[0].reviewedAt).toEqual(reviewed.body.reviewedAt);
+
+    const updatedAmbiguity = "Ambiguous Wikidata entity match for IMDb ID tt1234567";
+    const client = createWikidataClient({
+      retries: 0,
+      fetchFn: async () => new Response(JSON.stringify({
+        results: {
+          bindings: [
+            {
+              item: { value: "https://www.wikidata.org/entity/Q44" },
+              imdbId: { value: "tt1234567" },
+            },
+            {
+              item: { value: "https://www.wikidata.org/entity/Q45" },
+              imdbId: { value: "tt1234567" },
+            },
+          ],
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/sparql-results+json" },
+      }),
+    });
+    await expect(refreshWikidataTitle(title.id, client)).resolves.toMatchObject({
+      ok: false,
+      status: "error",
+      error: updatedAmbiguity,
+    });
+
+    const reopened = await request(app)
+      .get("/api/admin/wikidata-identity-conflicts?status=pending")
+      .expect(200);
+    expect(reopened.body.items).toMatchObject([{
+      titleId: title.id,
+      imdbId: "tt1234567",
+      conflictingEntityIds: ["Q44", "Q45"],
+      verifiedWikidataId: "Q42",
+      reviewedAt: null,
+    }]);
+    const [mappingAfterRefresh] = await db.select().from(providerMappingsTable)
+      .where(eq(providerMappingsTable.id, mapping.id));
+    const [safetyAfterRefresh] = await db.select().from(safetyRecordsTable)
+      .where(eq(safetyRecordsTable.id, safetyRecord.id));
+    expect(mappingAfterRefresh).toEqual(mapping);
+    expect(safetyAfterRefresh).toEqual(safetyRecord);
   });
 });
