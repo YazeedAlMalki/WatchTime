@@ -444,7 +444,8 @@ async function updateMappingStatus(
     }
     // A provider failure, ambiguous response, or invalid IMDb ID must never
     // destroy a verified mapping that can still be used by the rest of the
-    // application. This status-only update leaves its safety record untouched.
+    // application. Every non-mapped row has an unverified ID, so clear it when
+    // recording the new status; safety records remain untouched.
     if (currentMapping.status === "mapped" && currentMapping.externalId) return;
     await tx.update(providerMappingsTable)
       .set({ externalId: null, status })

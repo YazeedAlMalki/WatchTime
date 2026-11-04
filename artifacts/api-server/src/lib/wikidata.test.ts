@@ -974,6 +974,57 @@ describe("Wikidata refresh persistence", () => {
     expect(after).toEqual(before);
   });
 
+  it("clears stale IDs for missing mappings but preserves verified mapped IDs", async () => {
+    const [title] = await db.insert(titlesTable).values({
+      type: "movie",
+      name: "__wikidata_missing_stale_id_test__",
+      year: 2020,
+      imdbId: "tt7654325",
+      popularity: 0,
+    }).returning();
+    const [mapping] = await db.insert(providerMappingsTable).values({
+      titleId: title.id,
+      provider: WIKIDATA_PROVIDER,
+      externalId: "Q999",
+      status: "error",
+    }).returning();
+    const missingClient = {
+      queryByImdbId: async () => {
+        throw new WikidataError("No Wikidata item matched IMDb ID tt7654325", "missing_mapping");
+      },
+    };
+
+    try {
+      await expect(refreshWikidataTitle(title.id, missingClient)).resolves.toMatchObject({
+        ok: false,
+        titleId: title.id,
+        status: "missing",
+      });
+      const [clearedMapping] = await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.id, mapping.id));
+      expect(clearedMapping).toMatchObject({
+        externalId: null,
+        status: "missing",
+      });
+
+      await db.update(providerMappingsTable)
+        .set({ externalId: "Q42", status: "mapped" })
+        .where(eq(providerMappingsTable.id, mapping.id));
+      await expect(refreshWikidataTitle(title.id, missingClient)).resolves.toMatchObject({
+        ok: false,
+        status: "missing",
+      });
+      const [verifiedMapping] = await db.select().from(providerMappingsTable)
+        .where(eq(providerMappingsTable.id, mapping.id));
+      expect(verifiedMapping).toMatchObject({
+        externalId: "Q42",
+        status: "mapped",
+      });
+    } finally {
+      await db.delete(titlesTable).where(eq(titlesTable.id, title.id));
+    }
+  });
+
   it.each([
     { description: "removed", imdbId: null },
     { description: "malformed", imdbId: "not-an-imdb-id" },
