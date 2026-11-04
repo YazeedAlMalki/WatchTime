@@ -2192,9 +2192,12 @@ router.get("/wikidata-identity-conflicts", async (req, res): Promise<void> => {
     error: wikidataIdentityConflictsTable.error,
     detectedAt: wikidataIdentityConflictsTable.detectedAt,
     reviewedAt: wikidataIdentityConflictsTable.reviewedAt,
+    reviewedByAdminId: wikidataIdentityConflictsTable.reviewedByAdminId,
+    reviewedByAdminEmail: usersTable.email,
   })
     .from(wikidataIdentityConflictsTable)
     .innerJoin(titlesTable, eq(titlesTable.id, wikidataIdentityConflictsTable.titleId))
+    .leftJoin(usersTable, eq(usersTable.id, wikidataIdentityConflictsTable.reviewedByAdminId))
     .where(reviewedFilter)
     .orderBy(desc(wikidataIdentityConflictsTable.detectedAt), asc(wikidataIdentityConflictsTable.id))
     .limit(limit + 1)
@@ -2227,6 +2230,8 @@ router.get("/wikidata-identity-conflicts", async (req, res): Promise<void> => {
       verifiedWikidataId: verifiedMappings.get(row.titleId) ?? null,
       detectedAt: row.detectedAt.toISOString(),
       reviewedAt: row.reviewedAt?.toISOString() ?? null,
+      reviewedByAdminId: row.reviewedByAdminId,
+      reviewedByAdminEmail: row.reviewedByAdminEmail,
     })),
     hasMore,
   });
@@ -2240,25 +2245,23 @@ router.post("/wikidata-identity-conflicts/:titleId/review", async (req, res): Pr
     res.status(400).json({ error: "Invalid title ID" });
     return;
   }
-  const [updated] = await db.update(wikidataIdentityConflictsTable)
-    .set({ reviewedAt: new Date() })
+  await db.update(wikidataIdentityConflictsTable)
+    .set({ reviewedAt: new Date(), reviewedByAdminId: req.userId! })
     .where(and(
       eq(wikidataIdentityConflictsTable.titleId, titleId),
       isNull(wikidataIdentityConflictsTable.reviewedAt),
-    ))
-    .returning({
+    ));
+  const [current] = await db
+    .select({
       titleId: wikidataIdentityConflictsTable.titleId,
       reviewedAt: wikidataIdentityConflictsTable.reviewedAt,
-    });
-  const [current] = updated
-    ? [updated]
-    : await db.select({
-        titleId: wikidataIdentityConflictsTable.titleId,
-        reviewedAt: wikidataIdentityConflictsTable.reviewedAt,
-      })
-        .from(wikidataIdentityConflictsTable)
-        .where(eq(wikidataIdentityConflictsTable.titleId, titleId))
-        .limit(1);
+      reviewedByAdminId: wikidataIdentityConflictsTable.reviewedByAdminId,
+      reviewedByAdminEmail: usersTable.email,
+    })
+    .from(wikidataIdentityConflictsTable)
+    .leftJoin(usersTable, eq(usersTable.id, wikidataIdentityConflictsTable.reviewedByAdminId))
+    .where(eq(wikidataIdentityConflictsTable.titleId, titleId))
+    .limit(1);
   if (!current?.reviewedAt) {
     res.status(404).json({ error: "Wikidata identity conflict not found" });
     return;
@@ -2266,6 +2269,8 @@ router.post("/wikidata-identity-conflicts/:titleId/review", async (req, res): Pr
   res.json(ReviewAdminWikidataIdentityConflictResponse.parse({
     titleId: current.titleId,
     reviewedAt: current.reviewedAt.toISOString(),
+    reviewedByAdminId: current.reviewedByAdminId,
+    reviewedByAdminEmail: current.reviewedByAdminEmail,
   }));
 });
 

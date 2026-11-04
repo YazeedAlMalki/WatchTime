@@ -1534,7 +1534,9 @@ export const ListAdminWikidataIdentityConflictsResponse = zod.object({
   "verifiedWikidataId": zod.string().nullable(),
   "error": zod.string(),
   "detectedAt": zod.coerce.date(),
-  "reviewedAt": zod.coerce.date().nullable()
+  "reviewedAt": zod.coerce.date().nullable(),
+  "reviewedByAdminId": zod.string().nullable(),
+  "reviewedByAdminEmail": zod.string().nullable()
 })),
   "hasMore": zod.boolean()
 })
@@ -1552,7 +1554,9 @@ export const ReviewAdminWikidataIdentityConflictParams = zod.object({
 
 export const ReviewAdminWikidataIdentityConflictResponse = zod.object({
   "titleId": zod.int(),
-  "reviewedAt": zod.coerce.date()
+  "reviewedAt": zod.coerce.date(),
+  "reviewedByAdminId": zod.string().nullable(),
+  "reviewedByAdminEmail": zod.string().nullable()
 })
 
 

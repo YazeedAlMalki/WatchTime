@@ -2363,6 +2363,13 @@ function ContentTab({
                       {conflict.reviewedAt && (
                         <span>Reviewed {new Date(conflict.reviewedAt).toLocaleString()}</span>
                       )}
+                      {conflict.reviewedAt && (
+                        <span>
+                          Reviewed by {conflict.reviewedByAdminEmail
+                            ?? conflict.reviewedByAdminId
+                            ?? "an account not recorded"}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {!conflict.reviewedAt && (

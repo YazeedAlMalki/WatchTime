@@ -918,6 +918,10 @@ export interface AdminWikidataIdentityConflict {
   detectedAt: string;
   /** @nullable */
   reviewedAt: string | null;
+  /** @nullable */
+  reviewedByAdminId: string | null;
+  /** @nullable */
+  reviewedByAdminEmail: string | null;
 }
 
 export interface AdminWikidataIdentityConflictPage {
@@ -928,6 +932,10 @@ export interface AdminWikidataIdentityConflictPage {
 export interface AdminWikidataIdentityConflictReview {
   titleId: number;
   reviewedAt: string;
+  /** @nullable */
+  reviewedByAdminId: string | null;
+  /** @nullable */
+  reviewedByAdminEmail: string | null;
 }
 
 export type AdminContentRefreshBatchProvider = typeof AdminContentRefreshBatchProvider[keyof typeof AdminContentRefreshBatchProvider];

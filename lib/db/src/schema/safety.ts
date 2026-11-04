@@ -135,6 +135,7 @@ export const wikidataIdentityConflictsTable = pgTable("wikidata_identity_conflic
   error: text("error").notNull(),
   detectedAt: timestamp("detected_at").notNull().defaultNow(),
   reviewedAt: timestamp("reviewed_at"),
+  reviewedByAdminId: text("reviewed_by_admin_id"),
 }, (table) => [
   uniqueIndex("wikidata_identity_conflicts_title_unique_idx").on(table.titleId),
   index("wikidata_identity_conflicts_reviewed_detected_idx").on(table.reviewedAt, table.detectedAt),

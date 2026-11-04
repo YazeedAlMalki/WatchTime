@@ -1417,13 +1417,19 @@ describe("admin Content review timestamp filter", () => {
       conflictingEntityIds: ["Q42", "Q43"],
       verifiedWikidataId: "Q42",
       reviewedAt: null,
+      reviewedByAdminId: null,
+      reviewedByAdminEmail: null,
     }]);
     expect(pending.body.hasMore).toBe(false);
 
     const reviewed = await request(app)
       .post(`/api/admin/wikidata-identity-conflicts/${title.id}/review`)
       .expect(200);
-    expect(reviewed.body).toMatchObject({ titleId: title.id });
+    expect(reviewed.body).toMatchObject({
+      titleId: title.id,
+      reviewedByAdminId: "test-admin",
+      reviewedByAdminEmail: "admin-content-review@example.test",
+    });
 
     const [mappingAfter] = await db.select().from(providerMappingsTable)
       .where(eq(providerMappingsTable.id, mapping.id));
@@ -1442,6 +1448,8 @@ describe("admin Content review timestamp filter", () => {
     expect(allConflicts.body.items[0]).toMatchObject({
       titleId: title.id,
       verifiedWikidataId: "Q42",
+      reviewedByAdminId: "test-admin",
+      reviewedByAdminEmail: "admin-content-review@example.test",
     });
     expect(allConflicts.body.items[0].reviewedAt).toEqual(reviewed.body.reviewedAt);
 

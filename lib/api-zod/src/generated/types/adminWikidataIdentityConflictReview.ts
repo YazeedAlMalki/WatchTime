@@ -9,4 +9,8 @@
 export interface AdminWikidataIdentityConflictReview {
   titleId: number;
   reviewedAt: Date;
+  /** @nullable */
+  reviewedByAdminId: string | null;
+  /** @nullable */
+  reviewedByAdminEmail: string | null;
 }

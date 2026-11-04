@@ -20,4 +20,8 @@ export interface AdminWikidataIdentityConflict {
   detectedAt: Date;
   /** @nullable */
   reviewedAt: Date | null;
+  /** @nullable */
+  reviewedByAdminId: string | null;
+  /** @nullable */
+  reviewedByAdminEmail: string | null;
 }

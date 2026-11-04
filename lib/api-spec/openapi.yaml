@@ -2153,7 +2153,7 @@ components:
         error: { type: string }
     AdminWikidataIdentityConflict:
       type: object
-      required: [id, titleId, titleName, titleType, imdbId, conflictingEntityIds, verifiedWikidataId, error, detectedAt, reviewedAt]
+      required: [id, titleId, titleName, titleType, imdbId, conflictingEntityIds, verifiedWikidataId, error, detectedAt, reviewedAt, reviewedByAdminId, reviewedByAdminEmail]
       properties:
         id: { type: integer }
         titleId: { type: integer }
@@ -2167,6 +2167,8 @@ components:
         error: { type: string }
         detectedAt: { type: string, format: date-time }
         reviewedAt: { type: ["string", "null"], format: date-time }
+        reviewedByAdminId: { type: ["string", "null"] }
+        reviewedByAdminEmail: { type: ["string", "null"] }
     AdminWikidataIdentityConflictPage:
       type: object
       required: [items, hasMore]
@@ -2178,10 +2180,12 @@ components:
         hasMore: { type: boolean }
     AdminWikidataIdentityConflictReview:
       type: object
-      required: [titleId, reviewedAt]
+      required: [titleId, reviewedAt, reviewedByAdminId, reviewedByAdminEmail]
       properties:
         titleId: { type: integer }
         reviewedAt: { type: string, format: date-time }
+        reviewedByAdminId: { type: ["string", "null"] }
+        reviewedByAdminEmail: { type: ["string", "null"] }
     AdminContentRefreshBatch:
       type: object
       required: [id, provider, status, limit, offset, processed, mapped, superseded, missing, errors, nextOffset, catalogFingerprint, results, startedAt, completedAt]
