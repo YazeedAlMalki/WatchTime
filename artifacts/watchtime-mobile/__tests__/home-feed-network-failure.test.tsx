@@ -71,6 +71,18 @@ const unavailableResponse = () => new Response(JSON.stringify(unavailableBody), 
   statusText: 'Service Unavailable',
   headers: { 'Content-Type': 'application/json' },
 });
+const proxyOutages = [
+  {
+    name: 'HTML proxy error',
+    body: '<!doctype html><html><body><h1>503 Service Unavailable</h1></body></html>',
+    contentType: 'text/html; charset=utf-8',
+  },
+  {
+    name: 'plain-text proxy error',
+    body: 'Service temporarily unavailable. Please try again later.',
+    contentType: 'text/plain; charset=utf-8',
+  },
+];
 const feedCases = [
   {
     key: accountKey(getGetMyShowsQueryKey()),
@@ -257,9 +269,34 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
     },
   );
 
-  it.each(['cards', 'empty sections', 'empty sections recovering to cards'] as const)(
-    'keeps cached %s through a failed focused retry and clears only the successfully retried warning',
-    async (cachedContent) => {
+  it.each([
+    ...(['cards', 'empty sections', 'empty sections recovering to cards'] as const).map(
+      (cachedContent) => ({
+        cachedContent,
+        outage: 'JSON API error',
+        errorBody: unavailableBody as unknown,
+        contentType: 'application/json',
+        response: unavailableResponse,
+      }),
+    ),
+    ...proxyOutages.map(({ name, body, contentType }) => ({
+      cachedContent: 'cards' as const,
+      outage: name,
+      errorBody: body as unknown,
+      contentType,
+      response: () => new Response(body, {
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: { 'Content-Type': contentType },
+      }),
+    })),
+  ])(
+    'keeps cached $cachedContent through $outage retries and clears only the successfully retried warning',
+    async ({ cachedContent, errorBody, contentType, response }) => {
+    // Use fresh real Responses for both pull-to-refresh and focused retry.
+    // In particular, proxy HTML/text must be rejected as an ApiError, not
+    // treated as successful feed data or replaced with a fabricated JSON error.
+    fetchSpy.mockImplementation(async () => response());
     const empty = cachedContent !== 'cards';
     const recoversToCards = cachedContent !== 'empty sections';
     const feeds = feedCases.map((feed) => ({
@@ -317,8 +354,12 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
         expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
         expect(client.getQueryState(feed.key)?.error).toBeInstanceOf(ApiError);
         expect(client.getQueryState(feed.key)?.error).toMatchObject({
-          status: 503, data: unavailableBody, method: 'GET', url: feed.path,
+          status: 503, statusText: 'Service Unavailable',
+          data: errorBody, method: 'GET', url: feed.path,
         });
+        const error = client.getQueryState(feed.key)!.error as ApiError;
+        expect(error.response).toBeInstanceOf(Response);
+        expect(error.headers.get('content-type')).toBe(contentType);
       }
     });
     expect(fetchSpy).toHaveBeenCalledTimes(3);
@@ -378,14 +419,14 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
       expect(screen.queryByTestId(feed.fullError)).toBeNull();
       expectUnrelatedSectionsUnchanged();
 
-      const retryResponse = unavailableResponse();
+      const retryResponse = response();
       await act(async () => resolveFailedResponse(retryResponse));
       await waitFor(() => {
         expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
         expect(client.getQueryState(feed.key)?.status).toBe('error');
         expect(client.getQueryState(feed.key)?.error).toBeInstanceOf(ApiError);
         expect(client.getQueryState(feed.key)?.error).toMatchObject({
-          status: 503, data: unavailableBody, response: retryResponse,
+          status: 503, data: errorBody, response: retryResponse,
           method: 'GET', url: feed.path,
         });
         expect(within(screen.getByTestId(feed.warning)).getByText(
