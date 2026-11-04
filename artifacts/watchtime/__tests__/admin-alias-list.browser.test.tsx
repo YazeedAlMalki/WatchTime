@@ -849,6 +849,132 @@ it("continues forward from a restored filtered alias page", async () => {
   }
 });
 
+it("restores filtered alias pages with browser Back and Forward", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  const snapshotId = "123e4567-e89b-12d3-a456-426614174000";
+  const pageTwoCursor = `${snapshotId}:50:0`;
+  const pageThreeCursor = `${snapshotId}:100:50`;
+  window.history.replaceState(
+    {},
+    "",
+    `/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial`,
+  );
+  const requests: URL[] = [];
+  const originalFetch = window.fetch;
+  const makeAlias = (id: number, alias: string) => ({
+    id,
+    titleId: 101,
+    titleName: "The Lighthouse",
+    titleType: "movie" as const,
+    titleYear: 2019,
+    alias,
+    language: "fr",
+    sourceName: "Editorial",
+    sourceUrl: null,
+    providerCitations: [],
+    isEditorial: true,
+    collision: false,
+    collisionTitleCount: 1,
+    updatedAt: "2026-09-16T00:00:00.000Z",
+  });
+  const pageData = [
+    {
+      items: [makeAlias(101, "Lighthouse history page one alias")],
+      total: 151,
+      limit: 50,
+      offset: 0,
+      nextCursor: pageTwoCursor,
+      previousCursor: null,
+    },
+    {
+      items: [makeAlias(151, "Lighthouse history page two alias")],
+      total: 151,
+      limit: 50,
+      offset: 50,
+      nextCursor: pageThreeCursor,
+      previousCursor: `${snapshotId}:0`,
+    },
+    {
+      items: [makeAlias(201, "Lighthouse history page three alias")],
+      total: 151,
+      limit: 50,
+      offset: 100,
+      nextCursor: null,
+      previousCursor: pageTwoCursor,
+    },
+  ];
+  window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
+    if (url.pathname !== "/api/admin/content-aliases") {
+      throw new Error(`Unexpected browser test request: ${url}`);
+    }
+    requests.push(url);
+    const cursor = url.searchParams.get("cursor");
+    const pageIndex = cursor === pageTwoCursor ? 1 : cursor === pageThreeCursor ? 2 : 0;
+    return new Response(JSON.stringify(pageData[pageIndex]), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText("Page 1 · 151 matching aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page one alias")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await expect.element(page.getByText("Page 2 · 151 matching aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page two alias")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Next aliases" }));
+    await expect.element(page.getByText("Page 3 · 151 matching aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page three alias")).toBeVisible();
+
+    window.history.back();
+    await expect.element(page.getByText("Page 2 · 151 matching aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page two alias")).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page three alias")).not.toBeInTheDocument();
+    let params = new URLSearchParams(location.search);
+    expect(params.get("aliasPage")).toBe("2");
+    expect(params.get("aliasCursor")).toBe(pageTwoCursor);
+    expect(params.get("q")).toBe("Lighthouse");
+    expect(params.get("ownership")).toBe("editorial");
+
+    window.history.back();
+    await expect.element(page.getByText("Page 1 · 151 matching aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page one alias")).toBeVisible();
+    params = new URLSearchParams(location.search);
+    expect(params.get("aliasPage")).toBeNull();
+    expect(params.get("aliasCursor")).toBeNull();
+    expect(params.get("q")).toBe("Lighthouse");
+    expect(params.get("ownership")).toBe("editorial");
+
+    window.history.forward();
+    await expect.element(page.getByText("Page 2 · 151 matching aliases", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Lighthouse history page two alias")).toBeVisible();
+    params = new URLSearchParams(location.search);
+    expect(params.get("aliasPage")).toBe("2");
+    expect(params.get("aliasCursor")).toBe(pageTwoCursor);
+    expect(params.get("q")).toBe("Lighthouse");
+    expect(params.get("ownership")).toBe("editorial");
+    expect(new Set(requests.map((request) => request.searchParams.get("cursor")))).toEqual(
+      new Set([null, pageTwoCursor, pageThreeCursor]),
+    );
+    for (const request of requests) {
+      expect(request.searchParams.get("q")).toBe("Lighthouse");
+      expect(request.searchParams.get("ownership")).toBe("editorial");
+    }
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    window.fetch = originalFetch;
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
 it("starts a fresh filtered alias page after deleting the last alias on a later page", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const snapshotId = "123e4567-e89b-12d3-a456-426614174000";
