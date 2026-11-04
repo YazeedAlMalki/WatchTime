@@ -1524,14 +1524,14 @@ it.each([
   }
 });
 
-it("restarts an expired alias page with fresh results instead of mixing snapshots", async () => {
+it("recovers a deep-linked expired alias page with its filters intact", async () => {
   const previousUrl = `${location.pathname}${location.search}`;
   const oldSnapshotId = "123e4567-e89b-12d3-a456-426614174000";
   const oldSnapshotCursor = `${oldSnapshotId}:50:0`;
   window.history.replaceState(
     {},
     "",
-    "/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial",
+    `/admin?tab=content&region=GB&q=Lighthouse&ownership=editorial&aliasPage=4&aliasCursor=${encodeURIComponent(oldSnapshotCursor)}&reviewMode=focus`,
   );
   const requests: URL[] = [];
   const originalFetch = window.fetch;
@@ -1551,7 +1551,6 @@ it("restarts an expired alias page with fresh results instead of mixing snapshot
     collisionTitleCount: 1,
     updatedAt: "2026-09-16T00:00:00.000Z",
   });
-  let firstPageRequests = 0;
   window.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(typeof input === "string" ? input : input.toString(), location.origin);
     if (url.pathname !== "/api/admin/content-aliases") {
@@ -1564,16 +1563,12 @@ it("restarts an expired alias page with fresh results instead of mixing snapshot
         { status: 409, headers: { "Content-Type": "application/json" } },
       );
     }
-    firstPageRequests += 1;
-    const item = firstPageRequests === 1
-      ? makeAlias(150, "Old snapshot result")
-      : makeAlias(250, "Current snapshot result");
     return new Response(JSON.stringify({
-      items: [item],
-      total: firstPageRequests === 1 ? 51 : 1,
+      items: [makeAlias(250, "Current snapshot result")],
+      total: 1,
       limit: 50,
       offset: 0,
-      nextCursor: firstPageRequests === 1 ? oldSnapshotCursor : null,
+      nextCursor: null,
       previousCursor: null,
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -1584,11 +1579,6 @@ it("restarts an expired alias page with fresh results instead of mixing snapshot
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
-    await expect.element(page.getByText("Old snapshot result")).toBeVisible();
-    const nextAliasesButton = page.getByRole("button", { name: "Next aliases" });
-    nextAliasesButton.element().focus();
-    await userEvent.keyboard("{Enter}");
-
     const expiryAlert = page.getByRole("alert");
     await expect.element(expiryAlert).toHaveTextContent("The saved review's result snapshot changed or expired.");
     await expect.element(expiryAlert).toHaveAccessibleName("Could not load alternate titles.");
@@ -1596,8 +1586,10 @@ it("restarts an expired alias page with fresh results instead of mixing snapshot
       "The saved review's result snapshot changed or expired. Restart the review to load current results.",
     );
     await expect.element(expiryAlert).toHaveFocus();
-    await expect.element(page.getByText("Old snapshot result")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Current snapshot result")).not.toBeInTheDocument();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBe(oldSnapshotCursor);
+    expect(new URLSearchParams(location.search).get("aliasPage")).toBe("4");
+    expect(new URLSearchParams(location.search).get("aliasCursor")).toBe(oldSnapshotCursor);
 
     const restartButton = page.getByRole("button", { name: "Restart alternate-title review" });
     await expect.element(restartButton).toHaveAccessibleName("Restart alternate-title review");
@@ -1605,12 +1597,17 @@ it("restarts an expired alias page with fresh results instead of mixing snapshot
     await expect.element(restartButton).toHaveFocus();
     await userEvent.keyboard("{Enter}");
     await expect.element(page.getByText("Current snapshot result")).toBeVisible();
-    await expect.element(page.getByText("Old snapshot result")).not.toBeInTheDocument();
     expect(requests.at(-1)?.searchParams.get("cursor")).toBeNull();
     expect(requests.at(-1)?.searchParams.get("q")).toBe("Lighthouse");
     expect(requests.at(-1)?.searchParams.get("ownership")).toBe("editorial");
-    expect(new URLSearchParams(location.search).get("aliasCursor")).toBeNull();
-    expect(new URLSearchParams(location.search).get("aliasPage")).toBeNull();
+    const recoveredUrl = new URLSearchParams(location.search);
+    expect(recoveredUrl.get("tab")).toBe("content");
+    expect(recoveredUrl.get("region")).toBe("GB");
+    expect(recoveredUrl.get("q")).toBe("Lighthouse");
+    expect(recoveredUrl.get("ownership")).toBe("editorial");
+    expect(recoveredUrl.get("reviewMode")).toBe("focus");
+    expect(recoveredUrl.has("aliasCursor")).toBe(false);
+    expect(recoveredUrl.has("aliasPage")).toBe(false);
   } finally {
     root.unmount();
     container.remove();
