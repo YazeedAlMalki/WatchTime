@@ -350,6 +350,145 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
     },
   );
 
+  it.each(feedCases.flatMap((feed) =>
+    (['success', 'failure'] as const).map((latestResult) => ({ feed, latestResult })),
+  ))('keeps the latest $latestResult after repeated $feed.section retries',
+    async ({ feed, latestResult }) => {
+      for (const cached of feedCases) client.setQueryData(cached.key, cached.data);
+      const screen = await render(
+        <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const scrollView = screen.root!.queryAll(
+        (node) => node.props.refreshControl != null,
+        { includeSelf: true },
+      )[0];
+      await act(async () => scrollView.props.refreshControl.props.onRefresh());
+      await waitFor(() => {
+        for (const cached of feedCases) {
+          expect(screen.getByTestId(cached.warning)).toBeTruthy();
+          expect(client.getQueryState(cached.key)?.status).toBe('error');
+          expect(client.getQueryState(cached.key)?.fetchStatus).toBe('idle');
+        }
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+      const unrelated = feedCases.filter((other) => other !== feed);
+      const unrelatedStates = unrelated.map((other) => client.getQueryState(other.key));
+      const requestCount = (path: string) =>
+        fetchSpy.mock.calls.filter(([url]) => url === path).length;
+      const expectUnrelatedUnchanged = () => {
+        unrelated.forEach((other, index) => {
+          expect(requestCount(other.path)).toBe(1);
+          expect(client.getQueryState(other.key)).toBe(unrelatedStates[index]);
+          expect(client.getQueryData(other.key)).toEqual(other.data);
+          expect(screen.getByText(other.card)).toBeTruthy();
+          expect(screen.getByTestId(other.warning)).toBeTruthy();
+          expect(screen.queryByTestId(other.fullError)).toBeNull();
+          expect(screen.queryByText(other.empty)).toBeNull();
+        });
+      };
+
+      const deferredResponse = () => {
+        let resolve!: (response: Response) => void;
+        const promise = new Promise<Response>((settle) => { resolve = settle; });
+        return { promise, resolve };
+      };
+      const superseded = deferredResponse();
+      const latest = deferredResponse();
+      const signals: AbortSignal[] = [];
+      fetchSpy.mockImplementation((url, options?: RequestInit) => {
+        if (url !== feed.path || signals.length >= 2) {
+          throw new Error(`Unexpected repeated-retry request: ${url}`);
+        }
+        expect(options?.signal).toBeDefined();
+        signals.push(options!.signal!);
+        // Intentionally ignore abort at the transport boundary so an obsolete
+        // response can arrive after the current request has already settled.
+        return signals.length === 1 ? superseded.promise : latest.promise;
+      });
+
+      const pressRetry = async () => {
+        await fireEvent.press(within(screen.getByTestId(feed.warning)).getByRole('button', {
+          name: `Retry ${feed.section}`,
+        }));
+      };
+      await pressRetry();
+      await waitFor(() => expect(requestCount(feed.path)).toBe(2));
+      expect(signals[0].aborted).toBe(false);
+      expect(client.getQueryState(feed.key)?.fetchStatus).toBe('fetching');
+      expectUnrelatedUnchanged();
+
+      await pressRetry();
+      await waitFor(() => expect(requestCount(feed.path)).toBe(3));
+      // With cached data, refetch cancels/replaces rather than deduplicating.
+      expect(signals).toHaveLength(2);
+      expect(signals[0]).not.toBe(signals[1]);
+      expect(signals[0].aborted).toBe(true);
+      expect(signals[1].aborted).toBe(false);
+      expect(client.getQueryState(feed.key)?.fetchStatus).toBe('fetching');
+      expect(client.getQueryData(feed.key)).toEqual(feed.data);
+      expect(screen.getByText(feed.card)).toBeTruthy();
+      expect(screen.getByTestId(feed.warning)).toBeTruthy();
+      expectUnrelatedUnchanged();
+
+      const recoveredResponse = () => new Response(JSON.stringify(feed.recoveredData), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const latestResponse = latestResult === 'success'
+        ? recoveredResponse() : unavailableResponse();
+      await act(async () => latest.resolve(latestResponse));
+      const expectLatestResult = () => {
+        expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
+        expect(client.getQueryState(feed.key)?.status).toBe(
+          latestResult === 'success' ? 'success' : 'error',
+        );
+        expect(screen.queryByTestId(feed.fullError)).toBeNull();
+        expect(screen.queryByText(feed.empty)).toBeNull();
+        if (latestResult === 'success') {
+          expect(client.getQueryData(feed.key)).toEqual(feed.recoveredData);
+          expect(client.getQueryState(feed.key)?.error).toBeNull();
+          expect(screen.getByText(feed.recoveredCard)).toBeTruthy();
+          expect(screen.queryByText(feed.card)).toBeNull();
+          expect(screen.queryByTestId(feed.warning)).toBeNull();
+        } else {
+          expect(client.getQueryData(feed.key)).toEqual(feed.data);
+          expect(client.getQueryState(feed.key)?.error).toBeInstanceOf(ApiError);
+          expect(client.getQueryState(feed.key)?.error).toMatchObject({
+            status: 503, response: latestResponse, url: feed.path,
+          });
+          expect(screen.getByText(feed.card)).toBeTruthy();
+          expect(screen.queryByText(feed.recoveredCard)).toBeNull();
+          expect(within(screen.getByTestId(feed.warning)).getByText(
+            `Couldn't refresh ${feed.section}. Results may be out of date.`,
+          )).toBeTruthy();
+        }
+        expectUnrelatedUnchanged();
+        expect(fetchSpy).toHaveBeenCalledTimes(5);
+      };
+      await waitFor(expectLatestResult);
+      const settledState = client.getQueryState(feed.key);
+
+      // Use the opposite outcome so either a stale success clearing a warning,
+      // or a stale failure replacing recovered content, would fail this test.
+      const staleResponse = latestResult === 'success'
+        ? unavailableResponse() : recoveredResponse();
+      const consumed = jest.spyOn(staleResponse, 'text');
+      await act(async () => superseded.resolve(staleResponse));
+      await waitFor(() => expect(consumed).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await consumed.mock.results[0].value;
+        // Allow customFetch's parsing and Query's promise callbacks to finish;
+        // the cancelled query itself will never transition to success/error.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(client.getQueryState(feed.key)).toBe(settledState);
+      expectLatestResult();
+    },
+  );
+
   it.each(feedCases.flatMap((successful, index) =>
     (['success first', 'failure first'] as const).map((order) => ({
       successful,
