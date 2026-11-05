@@ -16,6 +16,7 @@ const mockSession = { token: 'session-account-a' };
 const mockTitleRequests: Array<{ id: number; token: string }> = [];
 const mockFetchTitle = jest.fn();
 const mockResolveTitleByToken: Record<string, (title: typeof mockTitle) => void> = {};
+const mockRejectTitleByToken: Record<string, (error: Error) => void> = {};
 const mockResolveTitleById: Record<number, (title: typeof mockTitle) => void> = {};
 const mockTitle = {
   id: 456,
@@ -133,7 +134,11 @@ jest.mock('@workspace/api-client-react', () => ({
 }));
 jest.mock('@/components/ui', () => ({
   SectionHeader: () => null,
-  ErrorState: () => null,
+  ErrorState: ({ message }: { message?: string }) => {
+    const React = require('react');
+    const { Text } = require('react-native');
+    return message ? React.createElement(Text, null, message) : null;
+  },
   Loading: () => null,
   PosterCard: () => null,
 }));
@@ -158,6 +163,7 @@ describe('title action sign-in return', () => {
     mockTitleRequests.length = 0;
     mockFetchTitle.mockReset();
     Object.keys(mockResolveTitleByToken).forEach((token) => delete mockResolveTitleByToken[token]);
+    Object.keys(mockRejectTitleByToken).forEach((token) => delete mockRejectTitleByToken[token]);
     Object.keys(mockResolveTitleById).forEach((id) => delete mockResolveTitleById[Number(id)]);
     mockRoute.current = { id: '456' };
     mockTitle.inWatchlist = false;
@@ -483,6 +489,73 @@ describe('title action sign-in return', () => {
       expect(screen.getByText('The selected movie')).toBeTruthy();
       expect(screen.getByText('Watchlist')).toBeTruthy();
       expect(screen.getByText('Mark watched')).toBeTruthy();
+      expect(screen.queryByText('In Watchlist')).toBeNull();
+      expect(screen.queryByText('Watched')).toBeNull();
+    });
+
+    await screen.unmount();
+    client.clear();
+  });
+
+  it('keeps the guest title view clear when an old authenticated request fails after sign-out', async () => {
+    mockUseQueryForTitle.current = true;
+    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockFetchTitle.mockImplementation((_id: number, token: string) => {
+      return new Promise((resolve, reject) => {
+        mockResolveTitleByToken[token] = resolve;
+        mockRejectTitleByToken[token] = reject;
+      });
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const screen = await render(
+      <QueryClientProvider client={client}>
+        <TitleDetailScreen />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(mockTitleRequests).toContainEqual({ id: 456, token: 'session-account-a' });
+      expect(mockRejectTitleByToken['session-account-a']).toEqual(expect.any(Function));
+    });
+
+    mockSession.token = 'guest';
+    mockAuth.current = { isSignedIn: false, isAuthAvailable: true, userId: null };
+    await act(async () => {
+      screen.rerender(
+        <QueryClientProvider client={client}>
+          <TitleDetailScreen />
+        </QueryClientProvider>,
+      );
+    });
+    await waitFor(() => {
+      expect(mockTitleRequests).toContainEqual({ id: 456, token: 'guest' });
+      expect(mockResolveTitleByToken.guest).toEqual(expect.any(Function));
+    });
+
+    await act(async () => {
+      mockRejectTitleByToken['session-account-a']?.(
+        new Error('Private account title request failed'),
+      );
+    });
+    expect(screen.queryByText("Couldn't load this title. Check your connection and try again.")).toBeNull();
+    expect(screen.queryByText('Private account title request failed')).toBeNull();
+    expect(screen.queryByText('In Watchlist')).toBeNull();
+    expect(screen.queryByText('Watched')).toBeNull();
+
+    await act(async () => {
+      mockResolveTitleByToken.guest?.({
+        ...mockTitle,
+        inWatchlist: false,
+        watched: false,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText('The selected movie')).toBeTruthy();
+      expect(screen.getByText('Watchlist')).toBeTruthy();
+      expect(screen.getByText('Mark watched')).toBeTruthy();
+      expect(screen.queryByText("Couldn't load this title. Check your connection and try again.")).toBeNull();
       expect(screen.queryByText('In Watchlist')).toBeNull();
       expect(screen.queryByText('Watched')).toBeNull();
     });
