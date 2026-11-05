@@ -33,6 +33,28 @@ const mockAdd = jest.fn();
 const mockRemove = jest.fn();
 const mockMark = jest.fn();
 const mockUnmark = jest.fn();
+let mockMutationSettled = 0;
+const mockMutationHook = (operation: jest.Mock) => (options?: { mutation?: any }) => ({
+  mutate: (variables: unknown) => {
+    const context = options?.mutation?.onMutate?.(variables);
+    let result: unknown;
+    try {
+      result = operation(variables);
+    } catch (error) {
+      result = Promise.reject(error);
+    }
+    Promise.resolve()
+      .then(() => result)
+      .then(
+        (data) => options?.mutation?.onSuccess?.(data, variables, context),
+        (error) => options?.mutation?.onError?.(error, variables, context),
+      )
+      .finally(() => {
+        mockMutationSettled += 1;
+      });
+  },
+  isPending: false,
+});
 const mockCreateReport = jest.fn();
 const mockCreateContribution = jest.fn();
 const mockTitleFetch = jest.fn();
@@ -74,6 +96,14 @@ jest.mock('@tanstack/react-query', () => ({
 }));
 jest.mock('@workspace/api-client-react', () => ({
   getGetTitleQueryKey: (id: number) => [`/api/titles/${id}`],
+  getGetMyWatchlistQueryKey: () => ['/api/me/watchlist'],
+  getGetMyShowsQueryKey: () => ['/api/me/shows'],
+  getGetMyInProgressShowsQueryKey: () => ['/api/me/shows/in-progress'],
+  getGetMyMoviesQueryKey: () => ['/api/me/movies'],
+  getGetMyRecentActivityQueryKey: () => ['/api/me/recent-activity'],
+  getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
+  getGetSeasonQueryKey: (titleId: number, seasonNumber: number) => [`/api/titles/${titleId}/seasons/${seasonNumber}`],
+  getGetTitleSafetyQueryKey: ({ titleId }: { titleId: number }) => [`/api/titles/${titleId}/safety`],
   useGetTitle: (id: number, options?: { query?: { queryKey?: unknown[] } }) => {
     mockTitleFetch(id);
     if (mockUseQueryForTitle.current) {
@@ -91,10 +121,10 @@ jest.mock('@workspace/api-client-react', () => ({
   },
   useGetSimilarTitles: () => ({ data: [] }),
   useGetTitleSafety: () => ({ data: mockSafetyInfo.current, isLoading: false }),
-  useAddToWatchlist: () => ({ mutate: mockAdd, isPending: false }),
-  useRemoveFromWatchlist: () => ({ mutate: mockRemove, isPending: false }),
-  useMarkTitleWatched: () => ({ mutate: mockMark, isPending: false }),
-  useUnmarkTitleWatched: () => ({ mutate: mockUnmark, isPending: false }),
+  useAddToWatchlist: (options: any) => mockMutationHook(mockAdd)(options),
+  useRemoveFromWatchlist: (options: any) => mockMutationHook(mockRemove)(options),
+  useMarkTitleWatched: (options: any) => mockMutationHook(mockMark)(options),
+  useUnmarkTitleWatched: (options: any) => mockMutationHook(mockUnmark)(options),
   useCreateSafetyReport: () => ({ mutate: mockCreateReport, isPending: false }),
   useCreateSafetyContribution: () => ({
     mutate: mockCreateContribution,
@@ -132,6 +162,7 @@ describe('title action sign-in return', () => {
     mockRoute.current = { id: '456' };
     mockTitle.inWatchlist = false;
     mockTitle.watched = false;
+    mockMutationSettled = 0;
     mockSafetyInfo.current = null;
     mockRouter.canGoBack.mockReturnValue(false);
   });
@@ -509,6 +540,55 @@ describe('title action sign-in return', () => {
 
     fireEvent.press(returned.getByTestId(action));
     expect(mutation).toHaveBeenCalledWith({ id: 456 });
+  });
+
+  it.each([
+    {
+      action: 'watchlist-toggle',
+      saved: false,
+      label: 'Watchlist',
+      mutation: mockAdd,
+    },
+    {
+      action: 'watchlist-toggle',
+      saved: true,
+      label: 'In Watchlist',
+      mutation: mockRemove,
+    },
+    {
+      action: 'watched-toggle',
+      saved: false,
+      label: 'Mark watched',
+      mutation: mockMark,
+    },
+    {
+      action: 'watched-toggle',
+      saved: true,
+      label: 'Watched',
+      mutation: mockUnmark,
+    },
+  ])('keeps the saved $label state and allows retry after a failed $action', async ({
+    action,
+    saved,
+    label,
+    mutation,
+  }) => {
+    mockAuth.current = { ...mockAuth.current, isSignedIn: true };
+    if (action === 'watchlist-toggle') mockTitle.inWatchlist = saved;
+    else mockTitle.watched = saved;
+    mutation.mockRejectedValueOnce(new Error('temporary network failure')).mockResolvedValueOnce(undefined);
+    const detail = await render(<TitleDetailScreen />);
+
+    fireEvent.press(detail.getByTestId(action));
+    await waitFor(() => expect(mockMutationSettled).toBe(1));
+    expect(detail.getByText(label)).toBeTruthy();
+    expect(mutation).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(detail.getByTestId(action));
+    await waitFor(() => expect(mockMutationSettled).toBe(2));
+    expect(mutation).toHaveBeenCalledTimes(2);
+    expect(mutation).toHaveBeenNthCalledWith(2, { id: 456 });
+    expect(detail.getByText(label)).toBeTruthy();
   });
 
   it('explains the outage for safety actions without sending protected mutations', async () => {
