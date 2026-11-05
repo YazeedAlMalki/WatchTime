@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => ({
   listFeedback: vi.fn(),
   updateReport: vi.fn(),
   updateFeedback: vi.fn(),
+  startCatalogRefresh: vi.fn(),
+  retryCatalogRefresh: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
@@ -56,6 +58,22 @@ vi.mock("@workspace/api-client-react", () => ({
       queryFn: () => mocks.listFeedback(params),
       retry: false,
     }),
+  useListCatalogRefreshes: () =>
+    useQuery({
+      queryKey: ["/api/admin/catalog-refreshes"],
+      queryFn: async () => [],
+      retry: false,
+    }),
+  useStartCatalogRefresh: () => ({
+    isPending: false,
+    mutate: mocks.startCatalogRefresh,
+  }),
+  useRetryCatalogRefresh: () => ({
+    isPending: false,
+    mutate: mocks.retryCatalogRefresh,
+  }),
+  useRefreshAdminContent: () => ({ isPending: false, mutate: vi.fn() }),
+  getListCatalogRefreshesQueryKey: () => ["/api/admin/catalog-refreshes"],
   useUpdateAdminReport: () => useMutation({ mutationFn: mocks.updateReport }),
   useUpdateAdminFeedback: () =>
     useMutation({ mutationFn: mocks.updateFeedback }),
@@ -68,7 +86,12 @@ vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: mocks.toast }),
 }));
 
-import { AliasReview, FeedbackTab, ReportsTab } from "@/pages/admin";
+import {
+  AliasReview,
+  FeedbackTab,
+  IntegrationsTab,
+  ReportsTab,
+} from "@/pages/admin";
 
 const initialAlias: AdminContentAlias = {
   id: 17,
@@ -292,6 +315,134 @@ describe("admin moderation queue page recovery", () => {
       );
     },
   );
+});
+
+describe("admin integration timestamp warnings", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let client: QueryClient;
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
+        mutations: { gcTime: Infinity },
+      },
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    client.clear();
+    container.remove();
+  });
+
+  it("places malformed timestamp warnings with their own labels and keeps missing values as Never", async () => {
+    const sharedIntegrationValues = {
+      status: "healthy" as const,
+      lastSyncAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      successRatePercent: 100,
+      refreshAttempts: 1,
+      successfulRefreshes: 1,
+      mappedTitles: 1,
+      missingMappings: 0,
+      malformedRefreshTimestampCount: 0,
+      malformedRefreshTimestampUnclassifiedCount: 0,
+      sustainedFailureAlert: false,
+      lowAccumulatedSuccessRateAlert: false,
+    };
+    const integrations = [
+      {
+        ...sharedIntegrationValues,
+        provider: "Malformed provider",
+        lastSyncAtMalformed: true,
+        lastSuccessAtMalformed: false,
+      },
+      {
+        ...sharedIntegrationValues,
+        provider: "Malformed success provider",
+        lastSyncAtMalformed: false,
+        lastSuccessAtMalformed: true,
+      },
+      {
+        ...sharedIntegrationValues,
+        provider: "Missing timestamps provider",
+        lastSyncAtMalformed: false,
+        lastSuccessAtMalformed: false,
+      },
+    ];
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <IntegrationsTab
+            integrations={integrations}
+            isLoading={false}
+            reviewMalformedTimestampsUrl={() => "/admin?tab=ratings"}
+          />
+        </QueryClientProvider>,
+      );
+    });
+
+    const getCard = (provider: string) =>
+      Array.from(container.querySelectorAll<HTMLElement>("h3"))
+        .find((heading) => heading.textContent === provider)
+        ?.closest("div.bg-card");
+    const getTimestampRows = (card: HTMLElement) =>
+      Array.from(
+        card.querySelectorAll<HTMLElement>(".flex.justify-between"),
+      ).filter(
+        (row) =>
+          row.textContent?.includes("Last Sync") ||
+          row.textContent?.includes("Last Success"),
+      );
+    const malformedSyncCard = getCard("Malformed provider");
+    expect(malformedSyncCard).not.toBeNull();
+    const malformedSyncRows = getTimestampRows(malformedSyncCard!);
+    const syncRow = malformedSyncRows.find((row) =>
+      row.textContent?.includes("Last Sync"),
+    );
+    const successRowWithoutWarning = malformedSyncRows.find((row) =>
+      row.textContent?.includes("Last Success"),
+    );
+    expect(syncRow?.textContent).toContain("Unavailable");
+    expect(syncRow?.querySelector('[role="alert"]')?.textContent).toContain(
+      "Stored timestamp was malformed and discarded.",
+    );
+    expect(successRowWithoutWarning?.textContent).toContain("Never");
+    expect(successRowWithoutWarning?.querySelector('[role="alert"]')).toBeNull();
+
+    const malformedSuccessCard = getCard("Malformed success provider");
+    expect(malformedSuccessCard).not.toBeNull();
+    const malformedSuccessRows = getTimestampRows(malformedSuccessCard!);
+    const syncRowWithoutWarning = malformedSuccessRows.find((row) =>
+      row.textContent?.includes("Last Sync"),
+    );
+    const successRow = malformedSuccessRows.find((row) =>
+      row.textContent?.includes("Last Success"),
+    );
+    expect(syncRowWithoutWarning?.textContent).toContain("Never");
+    expect(syncRowWithoutWarning?.querySelector('[role="alert"]')).toBeNull();
+    expect(successRow?.textContent).toContain("Unavailable");
+    expect(successRow?.querySelector('[role="alert"]')?.textContent).toContain(
+      "Stored timestamp was malformed and discarded.",
+    );
+
+    const missingCard = getCard("Missing timestamps provider");
+    expect(missingCard).not.toBeNull();
+    const missingRows = getTimestampRows(missingCard!);
+    expect(missingRows).toHaveLength(2);
+    for (const row of missingRows) {
+      expect(row.textContent).toContain("Never");
+      expect(row.querySelector('[role="alert"]')).toBeNull();
+    }
+  });
 });
 
 describe("admin alternate-title review", () => {

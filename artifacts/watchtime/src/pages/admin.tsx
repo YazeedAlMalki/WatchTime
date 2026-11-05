@@ -4809,7 +4809,7 @@ function AuditLogTab() {
 
 /* ─── Integrations ─── */
 
-function IntegrationsTab({
+export function IntegrationsTab({
   integrations,
   isLoading,
   reviewMalformedTimestampsUrl,
