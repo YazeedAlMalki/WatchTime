@@ -920,9 +920,14 @@ export default function TitleDetailScreen() {
   const titleId = Number(id);
   const { isLoaded, isSignedIn, isAuthAvailable, userId } = useAppAuth();
   const queryClient = useQueryClient();
+  const titleHistoryScope = !isLoaded
+    ? 'auth-pending'
+    : isSignedIn
+      ? userId ?? 'signed-in-unknown'
+      : null;
 
   const title = useGetTitle(titleId, {
-    query: { queryKey: [...getGetTitleQueryKey(titleId), 'account', userId] },
+    query: { queryKey: [...getGetTitleQueryKey(titleId), 'account', titleHistoryScope] },
   });
   const similar = useGetSimilarTitles(titleId);
   const titleRetryInFlight = useRef(false);
@@ -1029,6 +1034,9 @@ export default function TitleDetailScreen() {
   }
 
   const t = title.data;
+  const canShowTitleHistory = isLoaded && (!isSignedIn || userId !== null);
+  const inWatchlist = canShowTitleHistory && t.inWatchlist;
+  const watched = canShowTitleHistory && t.watched;
   const watchlistBusy = addWatchlist.isPending || removeWatchlist.isPending;
   const watchedBusy = markWatched.isPending || unmarkWatched.isPending;
 
@@ -1124,7 +1132,7 @@ export default function TitleDetailScreen() {
                 return;
               }
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              if (t.inWatchlist) removeWatchlist.mutate({ id: titleId });
+              if (inWatchlist) removeWatchlist.mutate({ id: titleId });
               else addWatchlist.mutate({ id: titleId });
             }}
             style={({ pressed }) => [
@@ -1132,8 +1140,8 @@ export default function TitleDetailScreen() {
               {
                 flexShrink: 1,
                 maxWidth: '100%',
-                backgroundColor: t.inWatchlist ? c.card : c.primary,
-                borderWidth: t.inWatchlist ? 1 : 0,
+                backgroundColor: inWatchlist ? c.card : c.primary,
+                borderWidth: inWatchlist ? 1 : 0,
                 borderColor: c.border,
                 opacity: watchlistBusy ? 0.5 : pressed ? 0.8 : isSignedIn ? 1 : 0.55,
               },
@@ -1142,18 +1150,18 @@ export default function TitleDetailScreen() {
             <Feather
               name="bookmark"
               size={16}
-              color={t.inWatchlist ? c.foreground : c.primaryForeground}
+              color={inWatchlist ? c.foreground : c.primaryForeground}
             />
             <EvidenceText
               evidenceId="title-watchlist"
               style={{
-                color: t.inWatchlist ? c.foreground : c.primaryForeground,
+                color: inWatchlist ? c.foreground : c.primaryForeground,
                 fontSize: 14,
                 fontFamily: 'Inter_600SemiBold',
                 flexShrink: 1,
               }}
             >
-              {t.inWatchlist ? 'In Watchlist' : 'Watchlist'}
+              {inWatchlist ? 'In Watchlist' : 'Watchlist'}
             </EvidenceText>
             {!isSignedIn ? (
               <Feather name="lock" size={12} color={c.primaryForeground} />
@@ -1174,7 +1182,7 @@ export default function TitleDetailScreen() {
                   return;
                 }
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                if (t.watched) unmarkWatched.mutate({ id: titleId });
+                if (watched) unmarkWatched.mutate({ id: titleId });
                 else markWatched.mutate({ id: titleId });
               }}
               style={({ pressed }) => [
@@ -1182,24 +1190,24 @@ export default function TitleDetailScreen() {
                 {
                   flexShrink: 1,
                   maxWidth: '100%',
-                  backgroundColor: t.watched ? c.card : c.secondary,
+                  backgroundColor: watched ? c.card : c.secondary,
                   borderWidth: 1,
-                  borderColor: t.watched ? c.primary : c.border,
+                  borderColor: watched ? c.primary : c.border,
                   opacity: watchedBusy ? 0.5 : pressed ? 0.8 : isSignedIn ? 1 : 0.55,
                 },
               ]}
             >
-              <Feather name="check-circle" size={16} color={t.watched ? c.primary : c.foreground} />
+              <Feather name="check-circle" size={16} color={watched ? c.primary : c.foreground} />
               <EvidenceText
                 evidenceId="title-watched"
                 style={{
-                  color: t.watched ? c.primary : c.foreground,
+                  color: watched ? c.primary : c.foreground,
                   fontSize: 14,
                   fontFamily: 'Inter_600SemiBold',
                   flexShrink: 1,
                 }}
               >
-                {t.watched ? 'Watched' : 'Mark watched'}
+                {watched ? 'Watched' : 'Mark watched'}
               </EvidenceText>
               {!isSignedIn ? (
                 <Feather name="lock" size={12} color={c.mutedForeground} />

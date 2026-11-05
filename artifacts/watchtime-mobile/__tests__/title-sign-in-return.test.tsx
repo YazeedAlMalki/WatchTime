@@ -9,7 +9,7 @@ const mockSetRoute = (route: { id: string }) => {
   mockRoute.listeners.forEach((listener) => listener());
 };
 const mockAuth = {
-  current: { isSignedIn: false, isAuthAvailable: true, userId: null as string | null },
+  current: { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null as string | null },
 };
 const mockUseQueryForTitle = { current: false };
 const mockSession = { token: 'session-account-a' };
@@ -157,7 +157,7 @@ describe('title action sign-in return', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockTitle.name = 'The selected movie';
-    mockAuth.current = { isSignedIn: false, isAuthAvailable: true, userId: null };
+    mockAuth.current = { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null };
     mockUseQueryForTitle.current = false;
     mockSession.token = 'session-account-a';
     mockTitleRequests.length = 0;
@@ -194,7 +194,7 @@ describe('title action sign-in return', () => {
 
   it('keeps title watch status scoped to the active account when rapid switches resolve out of order', async () => {
     mockUseQueryForTitle.current = true;
-    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
     mockFetchTitle.mockImplementation((_id: number, token: string) => {
       return new Promise((resolve) => {
         mockResolveTitleByToken[token] = resolve;
@@ -216,7 +216,7 @@ describe('title action sign-in return', () => {
 
     const switchAccount = async (userId: string, token: string) => {
       mockSession.token = token;
-      mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId };
+      mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId };
       await act(async () => {
         screen.rerender(
           <QueryClientProvider client={client}>
@@ -277,9 +277,186 @@ describe('title action sign-in return', () => {
     client.clear();
   });
 
+  it.each(['guest-first', 'account-first'] as const)(
+    'keeps guest title history private when the %s response resolves first',
+    async (firstResponse) => {
+      mockUseQueryForTitle.current = true;
+      mockSession.token = 'guest-during-auth-load';
+      mockAuth.current = {
+        isLoaded: false,
+        isSignedIn: false,
+        isAuthAvailable: true,
+        userId: null,
+      };
+      mockFetchTitle.mockImplementation((_id: number, token: string) => {
+        return new Promise((resolve) => {
+          mockResolveTitleByToken[token] = resolve;
+        });
+      });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      });
+      const screen = await render(
+        <QueryClientProvider client={client}>
+          <TitleDetailScreen />
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        expect(mockTitleRequests).toContainEqual({ id: 456, token: 'guest-during-auth-load' });
+        expect(mockResolveTitleByToken['guest-during-auth-load']).toEqual(expect.any(Function));
+      });
+      expect(screen.queryByText('In Watchlist')).toBeNull();
+      expect(screen.queryByText('Watched')).toBeNull();
+
+      mockSession.token = 'session-account-a';
+      mockAuth.current = {
+        isLoaded: true,
+        isSignedIn: true,
+        isAuthAvailable: true,
+        userId: 'account-a',
+      };
+      await act(async () => {
+        screen.rerender(
+          <QueryClientProvider client={client}>
+            <TitleDetailScreen />
+          </QueryClientProvider>,
+        );
+      });
+      await waitFor(() => {
+        expect(mockTitleRequests).toContainEqual({ id: 456, token: 'session-account-a' });
+        expect(mockResolveTitleByToken['session-account-a']).toEqual(expect.any(Function));
+      });
+      expect(screen.queryByText('In Watchlist')).toBeNull();
+      expect(screen.queryByText('Watched')).toBeNull();
+
+      const resolveGuest = async () => {
+        await act(async () => {
+          mockResolveTitleByToken['guest-during-auth-load']?.({
+            ...mockTitle,
+            inWatchlist: true,
+            watched: false,
+          });
+        });
+      };
+      const resolveAccount = async () => {
+        await act(async () => {
+          mockResolveTitleByToken['session-account-a']?.({
+            ...mockTitle,
+            inWatchlist: false,
+            watched: true,
+          });
+        });
+      };
+
+      if (firstResponse === 'guest-first') {
+        await resolveGuest();
+        expect(screen.queryByText('In Watchlist')).toBeNull();
+        expect(screen.queryByText('Watched')).toBeNull();
+        await resolveAccount();
+      } else {
+        await resolveAccount();
+        await waitFor(() => {
+          expect(screen.getByText('Watchlist')).toBeTruthy();
+          expect(screen.getByText('Watched')).toBeTruthy();
+        });
+        await resolveGuest();
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('The selected movie')).toBeTruthy();
+        expect(screen.getByText('Watchlist')).toBeTruthy();
+        expect(screen.getByText('Watched')).toBeTruthy();
+      });
+      expect(screen.queryByText('In Watchlist')).toBeNull();
+      expect(screen.queryByText('Mark watched')).toBeNull();
+
+      await screen.unmount();
+      client.clear();
+    },
+  );
+
+  it('does not show a completed guest title status while auth is still loading', async () => {
+    mockUseQueryForTitle.current = true;
+    mockSession.token = 'guest-during-auth-load';
+    mockAuth.current = {
+      isLoaded: false,
+      isSignedIn: false,
+      isAuthAvailable: true,
+      userId: null,
+    };
+    mockFetchTitle.mockImplementation((_id: number, token: string) => {
+      return new Promise((resolve) => {
+        mockResolveTitleByToken[token] = resolve;
+      });
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const screen = await render(
+      <QueryClientProvider client={client}>
+        <TitleDetailScreen />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(mockResolveTitleByToken['guest-during-auth-load']).toEqual(expect.any(Function));
+    });
+    await act(async () => {
+      mockResolveTitleByToken['guest-during-auth-load']?.({
+        ...mockTitle,
+        inWatchlist: true,
+        watched: true,
+      });
+    });
+    await waitFor(() => expect(screen.getByText('The selected movie')).toBeTruthy());
+    expect(screen.getByText('Watchlist')).toBeTruthy();
+    expect(screen.getByText('Mark watched')).toBeTruthy();
+    expect(screen.queryByText('In Watchlist')).toBeNull();
+    expect(screen.queryByText('Watched')).toBeNull();
+
+    mockSession.token = 'session-account-a';
+    mockAuth.current = {
+      isLoaded: true,
+      isSignedIn: true,
+      isAuthAvailable: true,
+      userId: 'account-a',
+    };
+    await act(async () => {
+      screen.rerender(
+        <QueryClientProvider client={client}>
+          <TitleDetailScreen />
+        </QueryClientProvider>,
+      );
+    });
+    await waitFor(() => {
+      expect(mockTitleRequests).toContainEqual({ id: 456, token: 'session-account-a' });
+      expect(mockResolveTitleByToken['session-account-a']).toEqual(expect.any(Function));
+    });
+    expect(screen.queryByText('In Watchlist')).toBeNull();
+    expect(screen.queryByText('Watched')).toBeNull();
+
+    await act(async () => {
+      mockResolveTitleByToken['session-account-a']?.({
+        ...mockTitle,
+        inWatchlist: false,
+        watched: true,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Watchlist')).toBeTruthy();
+      expect(screen.getByText('Watched')).toBeTruthy();
+    });
+    expect(screen.queryByText('In Watchlist')).toBeNull();
+    expect(screen.queryByText('Mark watched')).toBeNull();
+
+    await screen.unmount();
+    client.clear();
+  });
+
   it('clears account watch status immediately on sign-out while guest title data loads', async () => {
     mockUseQueryForTitle.current = true;
-    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
     mockFetchTitle.mockImplementation((_id: number, token: string) => {
       return new Promise((resolve) => {
         mockResolveTitleByToken[token] = resolve;
@@ -310,7 +487,7 @@ describe('title action sign-in return', () => {
     });
 
     mockSession.token = 'guest';
-    mockAuth.current = { isSignedIn: false, isAuthAvailable: true, userId: null };
+    mockAuth.current = { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null };
     await act(async () => {
       screen.rerender(
         <QueryClientProvider client={client}>
@@ -345,7 +522,7 @@ describe('title action sign-in return', () => {
 
   it('keeps the signed-in title status when sign-in returns before guest loading finishes', async () => {
     mockUseQueryForTitle.current = true;
-    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
     mockFetchTitle.mockImplementation((_id: number, token: string) => {
       return new Promise((resolve) => {
         mockResolveTitleByToken[token] = resolve;
@@ -376,7 +553,7 @@ describe('title action sign-in return', () => {
     });
 
     mockSession.token = 'guest';
-    mockAuth.current = { isSignedIn: false, isAuthAvailable: true, userId: null };
+    mockAuth.current = { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null };
     await act(async () => {
       screen.rerender(
         <QueryClientProvider client={client}>
@@ -391,7 +568,7 @@ describe('title action sign-in return', () => {
     expect(screen.queryByText('Watched')).toBeNull();
 
     mockSession.token = 'session-account-a';
-    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
     await act(async () => {
       screen.rerender(
         <QueryClientProvider client={client}>
@@ -432,7 +609,7 @@ describe('title action sign-in return', () => {
 
   it('does not restore private title status when an authenticated response finishes after sign-out', async () => {
     mockUseQueryForTitle.current = true;
-    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
     mockFetchTitle.mockImplementation((_id: number, token: string) => {
       return new Promise((resolve) => {
         mockResolveTitleByToken[token] = resolve;
@@ -453,7 +630,7 @@ describe('title action sign-in return', () => {
     });
 
     mockSession.token = 'guest';
-    mockAuth.current = { isSignedIn: false, isAuthAvailable: true, userId: null };
+    mockAuth.current = { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null };
     await act(async () => {
       screen.rerender(
         <QueryClientProvider client={client}>
@@ -684,7 +861,7 @@ describe('title action sign-in return', () => {
 
   it('keeps the newly selected title and its watch controls when an older request resolves later', async () => {
     mockUseQueryForTitle.current = true;
-    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
     mockFetchTitle.mockImplementation((id: number) => new Promise((resolve) => {
       mockResolveTitleById[id] = resolve;
     }));
