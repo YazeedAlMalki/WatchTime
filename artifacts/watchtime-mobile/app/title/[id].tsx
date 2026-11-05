@@ -747,7 +747,14 @@ function SeasonAccordion({
   const [saveErrors, setSaveErrors] = useState<Record<number, boolean>>({});
   const queryClient = useQueryClient();
   const detail = useGetSeason(titleId, season.seasonNumber, {
-    query: { enabled: expanded } as any,
+    query: {
+      enabled: expanded,
+      queryKey: [
+        ...getGetSeasonQueryKey(titleId, season.seasonNumber),
+        'account',
+        userId ?? null,
+      ],
+    } as any,
   });
 
   const invalidate = (accountId: string) => {
@@ -817,7 +824,7 @@ function SeasonAccordion({
             {season.name}
           </Text>
           <Text style={{ color: c.mutedForeground, fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
-            {season.watchedCount != null
+            {isSignedIn && season.watchedCount != null
               ? `${season.watchedCount}/${season.episodeCount} watched`
               : `${season.episodeCount} episodes`}
           </Text>

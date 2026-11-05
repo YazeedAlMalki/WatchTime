@@ -18,6 +18,8 @@ const mockFetchTitle = jest.fn();
 const mockResolveTitleByToken: Record<string, (title: typeof mockTitle) => void> = {};
 const mockRejectTitleByToken: Record<string, (error: Error) => void> = {};
 const mockResolveTitleById: Record<number, (title: typeof mockTitle) => void> = {};
+const mockSeasonRequests: Array<{ titleId: number; seasonNumber: number; token: string }> = [];
+const mockResolveSeasonByToken: Record<string, (season: { episodes: any[] }) => void> = {};
 const mockTitle = {
   id: 456,
   name: 'The selected movie',
@@ -26,7 +28,12 @@ const mockTitle = {
   genres: [],
   altTitles: [],
   providers: [],
-  seasons: [],
+  seasons: [] as Array<{
+    seasonNumber: number;
+    name: string;
+    episodeCount: number;
+    watchedCount: number | null;
+  }>,
   inWatchlist: false,
   watched: false,
 };
@@ -103,7 +110,6 @@ jest.mock('@workspace/api-client-react', () => ({
   getGetMyMoviesQueryKey: () => ['/api/me/movies'],
   getGetMyRecentActivityQueryKey: () => ['/api/me/recent-activity'],
   getGetMyRecommendationsQueryKey: () => ['/api/me/recommendations'],
-  getGetSeasonQueryKey: (titleId: number, seasonNumber: number) => [`/api/titles/${titleId}/seasons/${seasonNumber}`],
   getGetTitleSafetyQueryKey: ({ titleId }: { titleId: number }) => [`/api/titles/${titleId}/safety`],
   useGetTitle: (id: number, options?: { query?: { queryKey?: unknown[] } }) => {
     mockTitleFetch(id);
@@ -120,12 +126,38 @@ jest.mock('@workspace/api-client-react', () => ({
     }
     return { data: { ...mockTitle }, isLoading: false, isError: false };
   },
+  getGetSeasonQueryKey: (titleId: number, seasonNumber: number) => [
+    `/api/titles/${titleId}/seasons/${seasonNumber}`,
+  ],
+  useGetSeason: (
+    titleId: number,
+    seasonNumber: number,
+    options?: { query?: { queryKey?: unknown[]; enabled?: boolean } },
+  ) => {
+    if (mockUseQueryForTitle.current) {
+      const { useQuery } = require('@tanstack/react-query');
+      return useQuery({
+        queryKey: options?.query?.queryKey ?? [`/api/titles/${titleId}/seasons/${seasonNumber}`],
+        enabled: options?.query?.enabled,
+        queryFn: async () => {
+          const token = mockSession.token;
+          mockSeasonRequests.push({ titleId, seasonNumber, token });
+          return new Promise((resolve) => {
+            mockResolveSeasonByToken[token] = resolve;
+          });
+        },
+      });
+    }
+    return { data: { episodes: [] }, isLoading: false, isError: false };
+  },
   useGetSimilarTitles: () => ({ data: [] }),
   useGetTitleSafety: () => ({ data: mockSafetyInfo.current, isLoading: false }),
   useAddToWatchlist: (options: any) => mockMutationHook(mockAdd)(options),
   useRemoveFromWatchlist: (options: any) => mockMutationHook(mockRemove)(options),
   useMarkTitleWatched: (options: any) => mockMutationHook(mockMark)(options),
   useUnmarkTitleWatched: (options: any) => mockMutationHook(mockUnmark)(options),
+  useMarkEpisodeWatched: (options: any) => mockMutationHook(mockMark)(options),
+  useUnmarkEpisodeWatched: (options: any) => mockMutationHook(mockUnmark)(options),
   useCreateSafetyReport: () => ({ mutate: mockCreateReport, isPending: false }),
   useCreateSafetyContribution: () => ({
     mutate: mockCreateContribution,
@@ -160,11 +192,15 @@ describe('title action sign-in return', () => {
     mockAuth.current = { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null };
     mockUseQueryForTitle.current = false;
     mockSession.token = 'session-account-a';
+    mockTitle.type = 'movie';
+    mockTitle.seasons = [];
     mockTitleRequests.length = 0;
+    mockSeasonRequests.length = 0;
     mockFetchTitle.mockReset();
     Object.keys(mockResolveTitleByToken).forEach((token) => delete mockResolveTitleByToken[token]);
     Object.keys(mockRejectTitleByToken).forEach((token) => delete mockRejectTitleByToken[token]);
     Object.keys(mockResolveTitleById).forEach((id) => delete mockResolveTitleById[Number(id)]);
+    Object.keys(mockResolveSeasonByToken).forEach((token) => delete mockResolveSeasonByToken[token]);
     mockRoute.current = { id: '456' };
     mockTitle.inWatchlist = false;
     mockTitle.watched = false;
@@ -676,7 +712,7 @@ describe('title action sign-in return', () => {
 
   it('keeps the guest title view clear when an old authenticated request fails after sign-out', async () => {
     mockUseQueryForTitle.current = true;
-    mockAuth.current = { isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
     mockFetchTitle.mockImplementation((_id: number, token: string) => {
       return new Promise((resolve, reject) => {
         mockResolveTitleByToken[token] = resolve;
@@ -698,7 +734,7 @@ describe('title action sign-in return', () => {
     });
 
     mockSession.token = 'guest';
-    mockAuth.current = { isSignedIn: false, isAuthAvailable: true, userId: null };
+    mockAuth.current = { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null };
     await act(async () => {
       screen.rerender(
         <QueryClientProvider client={client}>
@@ -736,6 +772,105 @@ describe('title action sign-in return', () => {
       expect(screen.queryByText('In Watchlist')).toBeNull();
       expect(screen.queryByText('Watched')).toBeNull();
     });
+    await screen.unmount();
+    client.clear();
+  });
+
+  it('keeps watched episode progress private while guest title and season data reload after sign-out', async () => {
+    mockUseQueryForTitle.current = true;
+    mockTitle.type = 'show';
+    mockTitle.seasons = [{ seasonNumber: 1, name: 'Season 1', episodeCount: 2, watchedCount: 1 }];
+    mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
+    mockFetchTitle.mockImplementation((_id: number, token: string) => (
+      new Promise((resolve) => { mockResolveTitleByToken[token] = resolve; })
+    ));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const screen = await render(
+      <QueryClientProvider client={client}>
+        <TitleDetailScreen />
+      </QueryClientProvider>,
+    );
+    const accountTitle = {
+      ...mockTitle,
+      seasons: [{ seasonNumber: 1, name: 'Season 1', episodeCount: 2, watchedCount: 1 }],
+    };
+    const accountEpisode = {
+      id: 9001,
+      seasonNumber: 1,
+      episodeNumber: 1,
+      name: 'Private episode',
+      watched: true,
+      airDate: null,
+      runtimeMinutes: null,
+    };
+
+    await waitFor(() => {
+      expect(mockResolveTitleByToken['session-account-a']).toEqual(expect.any(Function));
+    });
+    await act(async () => {
+      mockResolveTitleByToken['session-account-a']?.(accountTitle);
+    });
+    await waitFor(() => expect(screen.getByTestId('season-1')).toBeTruthy());
+    expect(screen.getByText('1/2 watched')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('season-1'));
+    await waitFor(() => {
+      expect(mockSeasonRequests).toContainEqual({
+        titleId: 456,
+        seasonNumber: 1,
+        token: 'session-account-a',
+      });
+    });
+    await act(async () => {
+      mockResolveSeasonByToken['session-account-a']?.({ episodes: [accountEpisode] });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('episode-check-9001').props.accessibilityState.checked).toBe(true);
+    });
+
+    mockSession.token = 'guest';
+    mockAuth.current = { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null };
+    await act(async () => {
+      screen.rerender(
+        <QueryClientProvider client={client}>
+          <TitleDetailScreen />
+        </QueryClientProvider>,
+      );
+    });
+    await waitFor(() => {
+      expect(mockResolveTitleByToken.guest).toEqual(expect.any(Function));
+    });
+    expect(screen.queryByTestId('episode-check-9001')).toBeNull();
+    expect(screen.queryByText('1/2 watched')).toBeNull();
+
+    await act(async () => {
+      mockResolveTitleByToken.guest?.({
+        ...mockTitle,
+        inWatchlist: false,
+        watched: false,
+        seasons: [{ seasonNumber: 1, name: 'Season 1', episodeCount: 2, watchedCount: null }],
+      });
+    });
+    await waitFor(() => expect(screen.getByText('2 episodes')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('season-1'));
+    await waitFor(() => {
+      expect(mockSeasonRequests).toContainEqual({
+        titleId: 456,
+        seasonNumber: 1,
+        token: 'guest',
+      });
+    });
+    expect(screen.queryByTestId('episode-check-9001')).toBeNull();
+
+    await act(async () => {
+      mockResolveSeasonByToken.guest?.({
+        episodes: [{ ...accountEpisode, id: 9002, name: 'Guest episode', watched: false }],
+      });
+    });
+    await waitFor(() => expect(screen.getByText('1. Guest episode')).toBeTruthy());
+    expect(screen.queryByText('1/2 watched')).toBeNull();
+    expect(screen.queryByTestId('episode-check-9002')).toBeNull();
 
     await screen.unmount();
     client.clear();
@@ -780,7 +915,7 @@ describe('title action sign-in return', () => {
     ['watchlist-toggle', 'Watchlist', mockAdd],
     ['watched-toggle', 'Mark watched', mockMark],
   ])('shows the unchanged %s state after returning authenticated, until the user taps it', async (action, initialLabel, mutation) => {
-    mockAuth.current = { ...mockAuth.current, isSignedIn: true };
+    mockAuth.current = { ...mockAuth.current, isLoaded: true, isSignedIn: true, userId: 'account-a' };
     const returned = await render(<TitleDetailScreen />);
     expect(mockTitleFetch).toHaveBeenLastCalledWith(456);
     expect(returned.getByText('The selected movie')).toBeTruthy();
@@ -823,7 +958,7 @@ describe('title action sign-in return', () => {
     label,
     mutation,
   }) => {
-    mockAuth.current = { ...mockAuth.current, isSignedIn: true };
+    mockAuth.current = { ...mockAuth.current, isLoaded: true, isSignedIn: true, userId: 'account-a' };
     if (action === 'watchlist-toggle') mockTitle.inWatchlist = saved;
     else mockTitle.watched = saved;
     mutation.mockRejectedValueOnce(new Error('temporary network failure')).mockResolvedValueOnce(undefined);
