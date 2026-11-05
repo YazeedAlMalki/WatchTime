@@ -603,6 +603,11 @@ router.get("/catalog-refreshes", async (_req, res) => {
         and abs(extract(epoch from ${catalogSyncRunsTable.finishedAt}) * 1000)
           <= ${JS_DATE_LIMIT_MS}
       `,
+      createdAtIsSupported: sql<boolean>`
+        isfinite(${catalogSyncRunsTable.createdAt})
+        and abs(extract(epoch from ${catalogSyncRunsTable.createdAt}) * 1000)
+          <= ${JS_DATE_LIMIT_MS}
+      `,
     })
     .from(catalogSyncRunsTable)
     .orderBy(desc(catalogSyncRunsTable.createdAt), desc(catalogSyncRunsTable.id))
@@ -613,12 +618,18 @@ router.get("/catalog-refreshes", async (_req, res) => {
         .where(and(inArray(catalogSyncItemsTable.runId, runIds), eq(catalogSyncItemsTable.status, "failed")))
         .orderBy(asc(catalogSyncItemsTable.id))
     : [];
-  return res.json(runs.map(({ run, queuedWorkerState, startedAtIsSupported, finishedAtIsSupported }) => ({
+  return res.json(runs.map(({
+    run,
+    queuedWorkerState,
+    startedAtIsSupported,
+    finishedAtIsSupported,
+    createdAtIsSupported,
+  }) => ({
     ...run,
     queuedWorkerState,
     startedAt: serializeCatalogRunTimestamp(run.startedAt, startedAtIsSupported),
     finishedAt: serializeCatalogRunTimestamp(run.finishedAt, finishedAtIsSupported),
-    createdAt: run.createdAt.toISOString(),
+    createdAt: serializeCatalogRunTimestamp(run.createdAt, createdAtIsSupported),
     failures: items.filter((item) => item.runId === run.id).map((item) => ({
       itemKey: item.itemKey,
       title: item.title,

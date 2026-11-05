@@ -120,12 +120,14 @@ describe("GET /api/admin/catalog-refreshes", () => {
   });
 
   it("keeps history visible and safely serializes unusable run timestamps", async () => {
+    const createdAt = new Date("2099-03-04T05:04:05.000Z");
     const startedAt = new Date("2024-03-04T05:06:07.000Z");
     const finishedAt = new Date("2024-03-04T05:08:09.000Z");
     const storedRuns = await db.insert(catalogSyncRunsTable).values([
       {
         trigger: "manual",
         status: "succeeded",
+        createdAt,
         startedAt,
         finishedAt,
       },
@@ -138,6 +140,13 @@ describe("GET /api/admin/catalog-refreshes", () => {
       {
         trigger: "manual",
         status: "failed",
+        startedAt,
+        finishedAt,
+      },
+      {
+        trigger: "manual",
+        status: "failed",
+        createdAt,
         startedAt,
         finishedAt,
       },
@@ -154,6 +163,11 @@ describe("GET /api/admin/catalog-refreshes", () => {
       set finished_at = '275760-09-13 00:00:00.001+00'::timestamptz
       where id = ${storedRuns[2].id}
     `);
+    await db.execute(sql`
+      update catalog_sync_runs
+      set created_at = 'infinity'::timestamptz
+      where id = ${storedRuns[3].id}
+    `);
 
     const response = await request(app)
       .get("/api/admin/catalog-refreshes")
@@ -163,6 +177,7 @@ describe("GET /api/admin/catalog-refreshes", () => {
     );
 
     expect(runsById.get(storedRuns[0].id)).toMatchObject({
+      createdAt: createdAt.toISOString(),
       startedAt: startedAt.toISOString(),
       finishedAt: finishedAt.toISOString(),
     });
@@ -173,6 +188,9 @@ describe("GET /api/admin/catalog-refreshes", () => {
     expect(runsById.get(storedRuns[2].id)).toMatchObject({
       startedAt: startedAt.toISOString(),
       finishedAt: null,
+    });
+    expect(runsById.get(storedRuns[3].id)).toMatchObject({
+      createdAt: null,
     });
   });
 });
