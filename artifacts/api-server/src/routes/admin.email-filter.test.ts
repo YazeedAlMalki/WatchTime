@@ -491,6 +491,103 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
     expect(exportedIds).toEqual([...streamExportRowIds].sort((a, b) => b - a));
   });
 
+  it("keeps email filtering and displayed admin values on one snapshot during a download", async () => {
+    const initialIds = [...streamExportRowIds].sort((a, b) => b - a);
+    const firstBatchLastId = initialIds[499];
+    let releaseFirstBatch!: () => void;
+    const firstBatchReached = new Promise<void>((resolve) => {
+      releaseFirstBatch = resolve;
+    });
+    const originalWrite = ServerResponse.prototype.write;
+    let heldWrite: { response: ServerResponse; args: any[] } | undefined;
+    const writeSpy = vi.spyOn(ServerResponse.prototype, "write").mockImplementation(function (
+      this: ServerResponse,
+      ...args: any[]
+    ) {
+      const chunk = args[0];
+      if (
+        !heldWrite
+        && typeof chunk === "string"
+        && chunk.startsWith(`"${firstBatchLastId}",`)
+      ) {
+        heldWrite = { response: this, args };
+        releaseFirstBatch();
+        return false;
+      }
+      return originalWrite.apply(this, args as any);
+    } as any);
+    const server = app.listen(0, "127.0.0.1");
+    let exportRequest: ReturnType<typeof httpGet> | undefined;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("listening", resolve);
+        server.once("error", reject);
+      });
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not bind to a TCP port");
+      }
+
+      const filters = new URLSearchParams({
+        action: STREAM_EXPORT_ACTION,
+        adminEmail: STREAM_ADMIN_EMAIL,
+        entityType: "content",
+        dateFrom: EXPORT_DAY_START.toISOString(),
+        dateTo: EXPORT_DAY_END.toISOString(),
+      });
+      const download = new Promise<{ status: number | undefined; text: string }>((resolve, reject) => {
+        const currentRequest = httpGet({
+          hostname: "127.0.0.1",
+          port: address.port,
+          path: `/api/admin/audit-log/export?${filters.toString()}`,
+        }, (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer) => chunks.push(chunk));
+          response.on("end", () => resolve({
+            status: response.statusCode,
+            text: Buffer.concat(chunks).toString("utf8"),
+          }));
+          response.on("error", reject);
+        });
+        exportRequest = currentRequest;
+        currentRequest.on("error", reject);
+        currentRequest.end();
+      });
+
+      await firstBatchReached;
+      const renamedEmail = "renamed-during-export@audit-test.invalid";
+      await db.update(usersTable)
+        .set({ email: renamedEmail })
+        .where(eq(usersTable.id, STREAM_ADMIN_ID));
+
+      expect(heldWrite).toBeDefined();
+      originalWrite.apply(heldWrite!.response, heldWrite!.args as any);
+      // Resume only after the email update commits, so later batches would
+      // lose the row under READ COMMITTED and display the new email.
+      heldWrite!.response.emit("drain");
+
+      const result = await download;
+      const records = parseCsvRecords(result.text);
+      const dataRows = records.slice(1);
+      const exportedIds = dataRows.map((row) => Number(row[0]));
+
+      expect(result.status).toBe(200);
+      expect(dataRows).toHaveLength(STREAM_EXPORT_COUNT);
+      expect(exportedIds).toEqual(initialIds);
+      expect(dataRows.every((row) => row[2] === STREAM_ADMIN_EMAIL)).toBe(true);
+    } finally {
+      writeSpy.mockRestore();
+      exportRequest?.destroy();
+      await db.update(usersTable)
+        .set({ email: STREAM_ADMIN_EMAIL })
+        .where(eq(usersTable.id, STREAM_ADMIN_ID));
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
   it("keeps a multi-batch download on its starting snapshot when a matching row arrives", async () => {
     const initialIds = [...streamExportRowIds].sort((a, b) => b - a);
     const firstBatchLastId = initialIds[499];
