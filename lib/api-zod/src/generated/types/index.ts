@@ -57,6 +57,7 @@ export * from './catalogRefreshFailure';
 export * from './catalogRefreshFailureProvider';
 export * from './catalogRefreshRetrySelection';
 export * from './catalogRefreshRun';
+export * from './catalogRefreshRunDiscardedTimestampsItem';
 export * from './catalogRefreshRunQueuedWorkerState';
 export * from './catalogRefreshRunStatus';
 export * from './catalogRefreshRunTrigger';

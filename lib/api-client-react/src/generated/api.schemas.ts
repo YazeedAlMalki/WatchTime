@@ -1117,6 +1117,14 @@ export const CatalogRefreshRunQueuedWorkerState = {
   abandoned: 'abandoned',
 } as const;
 
+export type CatalogRefreshRunDiscardedTimestampsItem = typeof CatalogRefreshRunDiscardedTimestampsItem[keyof typeof CatalogRefreshRunDiscardedTimestampsItem];
+
+
+export const CatalogRefreshRunDiscardedTimestampsItem = {
+  startedAt: 'startedAt',
+  finishedAt: 'finishedAt',
+} as const;
+
 export interface CatalogRefreshRun {
   id: number;
   trigger: CatalogRefreshRunTrigger;
@@ -1138,6 +1146,8 @@ export interface CatalogRefreshRun {
      * @nullable
      */
   queuedWorkerState: CatalogRefreshRunQueuedWorkerState;
+  /** Run timestamp fields rejected as unusable during serialization; absent timestamps are not included. */
+  discardedTimestamps: CatalogRefreshRunDiscardedTimestampsItem[];
   failures: CatalogRefreshFailure[];
 }
 

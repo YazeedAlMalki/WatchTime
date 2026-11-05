@@ -150,6 +150,12 @@ describe("GET /api/admin/catalog-refreshes", () => {
         startedAt,
         finishedAt,
       },
+      {
+        trigger: "manual",
+        status: "queued",
+        startedAt: null,
+        finishedAt: null,
+      },
     ]).returning({ id: catalogSyncRunsTable.id });
     createdRunIds.push(...storedRuns.map((run) => run.id));
 
@@ -180,17 +186,28 @@ describe("GET /api/admin/catalog-refreshes", () => {
       createdAt: createdAt.toISOString(),
       startedAt: startedAt.toISOString(),
       finishedAt: finishedAt.toISOString(),
+      discardedTimestamps: [],
     });
     expect(runsById.get(storedRuns[1].id)).toMatchObject({
       startedAt: null,
       finishedAt: finishedAt.toISOString(),
+      discardedTimestamps: ["startedAt"],
     });
     expect(runsById.get(storedRuns[2].id)).toMatchObject({
       startedAt: startedAt.toISOString(),
       finishedAt: null,
+      discardedTimestamps: ["finishedAt"],
     });
     expect(runsById.get(storedRuns[3].id)).toMatchObject({
+      startedAt: startedAt.toISOString(),
+      finishedAt: finishedAt.toISOString(),
+      discardedTimestamps: [],
       createdAt: null,
+    });
+    expect(runsById.get(storedRuns[4].id)).toMatchObject({
+      startedAt: null,
+      finishedAt: null,
+      discardedTimestamps: [],
     });
   });
 });

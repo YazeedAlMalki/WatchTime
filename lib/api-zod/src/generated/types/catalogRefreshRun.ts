@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CatalogRefreshFailure } from './catalogRefreshFailure';
+import type { CatalogRefreshRunDiscardedTimestampsItem } from './catalogRefreshRunDiscardedTimestampsItem';
 import type { CatalogRefreshRunQueuedWorkerState } from './catalogRefreshRunQueuedWorkerState';
 import type { CatalogRefreshRunStatus } from './catalogRefreshRunStatus';
 import type { CatalogRefreshRunTrigger } from './catalogRefreshRunTrigger';
@@ -31,5 +32,7 @@ export interface CatalogRefreshRun {
      * @nullable
      */
   queuedWorkerState: CatalogRefreshRunQueuedWorkerState;
+  /** Run timestamp fields rejected as unusable during serialization; absent timestamps are not included. */
+  discardedTimestamps: CatalogRefreshRunDiscardedTimestampsItem[];
   failures: CatalogRefreshFailure[];
 }

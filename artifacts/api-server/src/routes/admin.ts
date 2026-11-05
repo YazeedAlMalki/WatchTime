@@ -631,6 +631,14 @@ router.get("/catalog-refreshes", async (_req, res) => {
     queuedWorkerState,
     startedAt: serializeCatalogRunTimestamp(run.startedAt, startedAtIsSupported),
     finishedAt: serializeCatalogRunTimestamp(run.finishedAt, finishedAtIsSupported),
+    discardedTimestamps: [
+      ...(isCatalogRunTimestampDiscarded(run.startedAt, startedAtIsSupported)
+        ? ["startedAt" as const]
+        : []),
+      ...(isCatalogRunTimestampDiscarded(run.finishedAt, finishedAtIsSupported)
+        ? ["finishedAt" as const]
+        : []),
+    ],
     createdAt: serializeCatalogRunTimestamp(run.createdAt, createdAtIsSupported),
     failures: items.filter((item) => item.runId === run.id).map((item) => ({
       itemKey: item.itemKey,
@@ -645,15 +653,21 @@ function serializeCatalogRunTimestamp(
   value: Date | null,
   isSupported: boolean | null,
 ): string | null {
-  if (
-    !value ||
-    !isSupported ||
-    !Number.isFinite(value.getTime()) ||
-    Math.abs(value.getTime()) > JS_DATE_LIMIT_MS
-  ) {
+  if (value === null || isCatalogRunTimestampDiscarded(value, isSupported)) {
     return null;
   }
   return value.toISOString();
+}
+
+function isCatalogRunTimestampDiscarded(
+  value: Date | null,
+  isSupported: boolean | null,
+): boolean {
+  return value !== null && (
+    !isSupported ||
+    !Number.isFinite(value.getTime()) ||
+    Math.abs(value.getTime()) > JS_DATE_LIMIT_MS
+  );
 }
 
 router.post("/catalog-refreshes", async (req, res) => {

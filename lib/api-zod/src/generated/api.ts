@@ -1315,6 +1315,7 @@ export const ListCatalogRefreshesResponseItem = zod.object({
   "error": zod.string().nullish(),
   "createdAt": zod.string(),
   "queuedWorkerState": zod.union([zod.literal('protected'),zod.literal('abandoned'),zod.literal(null)]).nullable().describe('Whether stale queued work still has a live worker lock; null for other runs.'),
+  "discardedTimestamps": zod.array(zod.enum(['startedAt', 'finishedAt'])).describe('Run timestamp fields rejected as unusable during serialization; absent timestamps are not included.'),
   "failures": zod.array(zod.object({
   "itemKey": zod.string(),
   "title": zod.string(),

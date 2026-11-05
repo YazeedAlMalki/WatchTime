@@ -87,6 +87,11 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
       isLoading: false,
       isError: false,
     }),
+    useGetAdminContentMappingCounts: () => ({
+      data: [],
+      isLoading: false,
+      isError: false,
+    }),
     useRefreshAdminContent: () => ({ isPending: false, mutate: vi.fn() }),
     useRefreshAdminContentBatch: () => ({
       isPending: false,
@@ -294,6 +299,86 @@ it("lets admins expand and collapse the complete failed-title list", async () =>
       name: "Show fewer failed titles",
     }));
     await expect.element(page.getByText("Failed title 6 (Wikipedia)")).not.toBeInTheDocument();
+  } finally {
+    root.unmount();
+    container.remove();
+    client.clear();
+    mocks.catalogRefreshes = [];
+    window.history.replaceState({}, "", previousUrl);
+  }
+});
+
+it("identifies discarded catalog timestamps without warning on missing timestamps", async () => {
+  const previousUrl = `${location.pathname}${location.search}`;
+  window.history.replaceState({}, "", "/admin?tab=integrations");
+  mocks.catalogRefreshes = [
+    {
+      id: 654,
+      trigger: "manual",
+      status: "failed",
+      totalItems: 1,
+      processedItems: 1,
+      succeededItems: 0,
+      failedItems: 1,
+      episodesUpdated: 0,
+      startedAt: null,
+      finishedAt: null,
+      createdAt: "2026-10-01T12:00:00.000Z",
+      queuedWorkerState: null,
+      discardedTimestamps: ["startedAt", "finishedAt"],
+      failures: [],
+    },
+    {
+      id: 655,
+      trigger: "manual",
+      status: "queued",
+      totalItems: 0,
+      processedItems: 0,
+      succeededItems: 0,
+      failedItems: 0,
+      episodesUpdated: 0,
+      startedAt: null,
+      finishedAt: null,
+      createdAt: "2026-10-01T11:00:00.000Z",
+      queuedWorkerState: null,
+      discardedTimestamps: [],
+      failures: [],
+    },
+    {
+      id: 656,
+      trigger: "manual",
+      status: "failed",
+      totalItems: 1,
+      processedItems: 1,
+      succeededItems: 0,
+      failedItems: 1,
+      episodesUpdated: 0,
+      startedAt: null,
+      finishedAt: null,
+      createdAt: "2026-10-01T10:00:00.000Z",
+      queuedWorkerState: null,
+      discardedTimestamps: ["startedAt"],
+      failures: [],
+    },
+  ];
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    root.render(<QueryClientProvider client={client}><AdminPage /></QueryClientProvider>);
+    await expect.element(page.getByText(
+      "Discarded unusable run timestamps: start time and finish time.",
+    )).toBeVisible();
+    await expect.element(
+      page.getByTestId("catalog-refresh-run-655").getByRole("status"),
+    ).not.toBeInTheDocument();
+    await expect.element(
+      page.getByTestId("catalog-refresh-run-656").getByText(
+        "Discarded unusable run timestamps: start time.",
+      ),
+    ).toBeVisible();
   } finally {
     root.unmount();
     container.remove();

@@ -4938,6 +4938,7 @@ export function IntegrationsTab({
             return (
               <div
                 key={run.id}
+                data-testid={`catalog-refresh-run-${run.id}`}
                 className="bg-card border border-border rounded-2xl p-4"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4964,6 +4965,19 @@ export function IntegrationsTab({
                   {run.succeededItems} succeeded · {run.failedItems} failed ·{" "}
                   {run.episodesUpdated} episodes
                 </div>
+                {(run.discardedTimestamps?.length ?? 0) > 0 && (
+                  <p
+                    role="status"
+                    className="mt-2 text-sm font-medium text-orange-700 dark:text-orange-300"
+                  >
+                    Discarded unusable run timestamps:{" "}
+                    {run.discardedTimestamps!
+                      .map((timestamp) =>
+                        timestamp === "startedAt" ? "start time" : "finish time",
+                      )
+                      .join(" and ")}.
+                  </p>
+                )}
                 {run.queuedWorkerState === "protected" && (
                   <p className="mt-2 text-sm font-medium text-blue-700 dark:text-blue-300">
                     A live worker is protecting this stale queued refresh.
