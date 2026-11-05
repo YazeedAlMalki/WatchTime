@@ -73,6 +73,13 @@ beforeAll(async () => {
   await db.insert(titleAliasesTable).values([
     {
       titleId: titleIds[1],
+      alias: "Another Shared Regional Name",
+      normalizedAlias: "anothersharedregionalname",
+      sourceName: "Editorial test",
+      isEditorial: true,
+    },
+    {
+      titleId: titleIds[1],
       alias: "Shared Local Title",
       normalizedAlias: "sharedlocaltitle",
       sourceName: "Editorial test",
@@ -82,13 +89,6 @@ beforeAll(async () => {
       titleId: titleIds[0],
       alias: "Canonical Alternate Name",
       normalizedAlias: "canonicalalternatename",
-      sourceName: "Editorial test",
-      isEditorial: true,
-    },
-    {
-      titleId: titleIds[1],
-      alias: "Another Shared Regional Name",
-      normalizedAlias: "anothersharedregionalname",
       sourceName: "Editorial test",
       isEditorial: true,
     },
@@ -106,6 +106,7 @@ afterAll(async () => {
   await db.delete(watchedEpisodesTable).where(eq(watchedEpisodesTable.userId, USER_ID));
   await db.delete(watchedTitlesTable).where(eq(watchedTitlesTable.userId, USER_ID));
   if (titleIds.length) {
+    await db.delete(titleAliasesTable).where(inArray(titleAliasesTable.titleId, titleIds));
     await db.delete(episodesTable).where(inArray(episodesTable.titleId, titleIds));
     await db.delete(titlesTable).where(inArray(titlesTable.id, titleIds));
   }
@@ -116,6 +117,30 @@ const getShowIds = (response: { body: Array<{ title: { id: number } }> }) =>
   response.body.map((show) => show.title.id);
 
 describe("tracked show search by canonical and alternate titles", () => {
+  it("prefers the shortest matching alias and ignores unrelated aliases", async () => {
+    const initial = await supertest(app)
+      .get("/api/me/shows")
+      .query({ q: "shared", beforeId: titleIds[2], limit: 1 });
+    expect(initial.status).toBe(200);
+    expect(getShowIds(initial)).toEqual([titleIds[1]]);
+    expect(initial.body[0].matchedAlternateTitle).toBe("Shared Local Title");
+
+    await db.insert(titleAliasesTable).values({
+      titleId: titleIds[1],
+      alias: "Completely Unrelated Editorial Name",
+      normalizedAlias: "completelyunrelatededitorialname",
+      sourceName: "Editorial test",
+      isEditorial: true,
+    });
+
+    const afterUnrelatedAlias = await supertest(app)
+      .get("/api/me/shows")
+      .query({ q: "shared", beforeId: titleIds[2], limit: 1 });
+    expect(afterUnrelatedAlias.status).toBe(200);
+    expect(getShowIds(afterUnrelatedAlias)).toEqual([titleIds[1]]);
+    expect(afterUnrelatedAlias.body[0].matchedAlternateTitle).toBe("Shared Local Title");
+  });
+
   it("matches canonical and alternate names once each across status-filtered pages", async () => {
     const firstPage = await supertest(app)
       .get("/api/me/shows")
