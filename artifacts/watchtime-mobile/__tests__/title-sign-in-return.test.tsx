@@ -12,12 +12,15 @@ const mockAuth = {
   current: { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null as string | null },
 };
 const mockUseQueryForTitle = { current: false };
+const mockUseQueryForSafety = { current: false };
 const mockSession = { token: 'session-account-a' };
 const mockTitleRequests: Array<{ id: number; token: string }> = [];
+const mockSafetyRequests: number[] = [];
 const mockFetchTitle = jest.fn();
 const mockResolveTitleByToken: Record<string, (title: typeof mockTitle) => void> = {};
 const mockRejectTitleByToken: Record<string, (error: Error) => void> = {};
 const mockResolveTitleById: Record<number, (title: typeof mockTitle) => void> = {};
+const mockResolveSafetyById: Record<number, (info: any) => void> = {};
 const mockSeasonRequests: Array<{ titleId: number; seasonNumber: number; token: string }> = [];
 const mockResolveSeasonByToken: Record<string, (season: { episodes: any[] }) => void> = {};
 const mockTitle = {
@@ -151,7 +154,21 @@ jest.mock('@workspace/api-client-react', () => ({
     return { data: { episodes: [] }, isLoading: false, isError: false };
   },
   useGetSimilarTitles: () => ({ data: [] }),
-  useGetTitleSafety: () => ({ data: mockSafetyInfo.current, isLoading: false }),
+  useGetTitleSafety: ({ titleId }: { titleId: number }) => {
+    if (!mockUseQueryForSafety.current) {
+      return { data: mockSafetyInfo.current, isLoading: false };
+    }
+    const { useQuery } = require('@tanstack/react-query');
+    return useQuery({
+      queryKey: [`/api/titles/${titleId}/safety`],
+      queryFn: async () => {
+        mockSafetyRequests.push(titleId);
+        return new Promise((resolve) => {
+          mockResolveSafetyById[titleId] = resolve;
+        });
+      },
+    });
+  },
   useAddToWatchlist: (options: any) => mockMutationHook(mockAdd)(options),
   useRemoveFromWatchlist: (options: any) => mockMutationHook(mockRemove)(options),
   useMarkTitleWatched: (options: any) => mockMutationHook(mockMark)(options),
@@ -191,15 +208,18 @@ describe('title action sign-in return', () => {
     mockTitle.name = 'The selected movie';
     mockAuth.current = { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null };
     mockUseQueryForTitle.current = false;
+    mockUseQueryForSafety.current = false;
     mockSession.token = 'session-account-a';
     mockTitle.type = 'movie';
     mockTitle.seasons = [];
     mockTitleRequests.length = 0;
+    mockSafetyRequests.length = 0;
     mockSeasonRequests.length = 0;
     mockFetchTitle.mockReset();
     Object.keys(mockResolveTitleByToken).forEach((token) => delete mockResolveTitleByToken[token]);
     Object.keys(mockRejectTitleByToken).forEach((token) => delete mockRejectTitleByToken[token]);
     Object.keys(mockResolveTitleById).forEach((id) => delete mockResolveTitleById[Number(id)]);
+    Object.keys(mockResolveSafetyById).forEach((id) => delete mockResolveSafetyById[Number(id)]);
     Object.keys(mockResolveSeasonByToken).forEach((token) => delete mockResolveSeasonByToken[token]);
     mockRoute.current = { id: '456' };
     mockTitle.inWatchlist = false;
@@ -994,8 +1014,9 @@ describe('title action sign-in return', () => {
     expect(mockCreateContribution).not.toHaveBeenCalled();
   });
 
-  it('keeps the newly selected title and its watch controls when an older request resolves later', async () => {
+  it('keeps title status and safety info matched when older requests resolve later', async () => {
     mockUseQueryForTitle.current = true;
+    mockUseQueryForSafety.current = true;
     mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
     mockFetchTitle.mockImplementation((id: number) => new Promise((resolve) => {
       mockResolveTitleById[id] = resolve;
@@ -1037,6 +1058,8 @@ describe('title action sign-in return', () => {
       expect(screen.getByText('The newly selected title')).toBeTruthy();
       expect(screen.getByText('In Watchlist')).toBeTruthy();
       expect(screen.getByText('Mark watched')).toBeTruthy();
+      expect(mockSafetyRequests).toContain(789);
+      expect(mockResolveSafetyById[789]).toEqual(expect.any(Function));
     });
 
     await act(async () => {
@@ -1056,6 +1079,36 @@ describe('title action sign-in return', () => {
     fireEvent.press(screen.getByTestId('watchlist-toggle'));
     expect(mockRemove).toHaveBeenCalledWith({ id: 789 });
     expect(mockUnmark).not.toHaveBeenCalled();
+
+    await act(async () => {
+      mockSetRoute({ id: '456' });
+    });
+    await waitFor(() => {
+      expect(mockSafetyRequests).toContain(456);
+      expect(mockResolveSafetyById[456]).toEqual(expect.any(Function));
+    });
+
+    await act(async () => {
+      mockResolveSafetyById[456]?.({
+        preferredRating: null,
+        summary: [{ category: 'Selected title caution', severity: 'moderate' }],
+        sources: [],
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Selected title caution')).toBeTruthy();
+    });
+
+    await act(async () => {
+      mockResolveSafetyById[789]?.({
+        preferredRating: null,
+        summary: [{ category: 'Previous title caution', severity: 'severe' }],
+        sources: [],
+      });
+    });
+
+    expect(screen.getByText('Selected title caution')).toBeTruthy();
+    expect(screen.queryByText('Previous title caution')).toBeNull();
 
     await screen.unmount();
     client.clear();
