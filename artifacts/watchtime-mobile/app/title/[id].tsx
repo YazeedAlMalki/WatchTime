@@ -748,18 +748,23 @@ function SeasonAccordion({
   const queryClient = useQueryClient();
   const detail = useGetSeason(titleId, season.seasonNumber, {
     query: {
-      enabled: expanded,
       queryKey: [
         ...getGetSeasonQueryKey(titleId, season.seasonNumber),
         'account',
         userId ?? null,
       ],
+      enabled: expanded,
     } as any,
   });
 
   const invalidate = (accountId: string) => {
     queryClient.invalidateQueries({
-      queryKey: getGetSeasonQueryKey(titleId, season.seasonNumber),
+      queryKey: [
+        ...getGetSeasonQueryKey(titleId, season.seasonNumber),
+        'account',
+        accountId,
+      ],
+      exact: true,
     });
     queryClient.invalidateQueries({
       queryKey: [...getGetTitleQueryKey(titleId), 'account', accountId],
