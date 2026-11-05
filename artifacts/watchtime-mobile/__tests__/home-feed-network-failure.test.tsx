@@ -143,6 +143,213 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
     fetchSpy.mockRestore();
   });
 
+  it.each(feedCases.flatMap((focused, index) =>
+    (['older first', 'older last'] as const).flatMap((order) =>
+      [true, false].map((refreshSucceeds) => ({
+        focused,
+        otherSuccess: feedCases[(index + 1) % feedCases.length],
+        otherFailure: feedCases[(index + 2) % feedCases.length],
+        order,
+        refreshSucceeds,
+      })),
+    ),
+  ))(
+    'keeps pull-to-refresh authoritative over a pending $focused.section retry ($order, refresh success: $refreshSucceeds)',
+    async ({ focused, otherSuccess, otherFailure, order, refreshSucceeds }) => {
+      for (const feed of feedCases) client.setQueryData(feed.key, feed.data);
+      const screen = await render(
+        <QueryClientProvider client={client}><HomeScreen /></QueryClientProvider>,
+      );
+      const refreshControl = () => screen.root!.queryAll(
+        (node) => node.props.refreshControl != null,
+        { includeSelf: true },
+      )[0].props.refreshControl.props;
+      const requestCount = (path: string) =>
+        fetchSpy.mock.calls.filter(([url]) => url === path).length;
+      const expectCachedWarning = (feed: typeof feedCases[number]) => {
+        expect(client.getQueryData(feed.key)).toEqual(feed.data);
+        expect(screen.getByText(feed.card)).toBeTruthy();
+        expect(screen.queryByText(feed.recoveredCard)).toBeNull();
+        expect(within(screen.getByTestId(feed.warning)).getByText(
+          `Couldn't refresh ${feed.section}. Results may be out of date.`,
+        )).toBeTruthy();
+        expect(screen.queryByTestId(feed.fullError)).toBeNull();
+        expect(screen.queryByText(feed.empty)).toBeNull();
+      };
+      expect(fetchSpy).not.toHaveBeenCalled();
+      await act(async () => refreshControl().onRefresh());
+      await waitFor(() => {
+        for (const feed of feedCases) {
+          expect(client.getQueryState(feed.key)?.status).toBe('error');
+          expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
+          expectCachedWarning(feed);
+          expect(requestCount(feed.path)).toBe(1);
+        }
+        expect(refreshControl().refreshing).toBe(false);
+      });
+
+      const deferred = () => {
+        let resolve!: (response: Response) => void;
+        const promise = new Promise<Response>((settle) => { resolve = settle; });
+        return { promise, resolve };
+      };
+      const older = deferred();
+      const refreshed = feedCases.map(() => deferred());
+      let olderSignal: AbortSignal | undefined;
+      fetchSpy.mockImplementationOnce((_url, init) => {
+        olderSignal = init.signal;
+        // Intentionally ignore abort: a transport may finish after cancellation.
+        // The real query lifecycle must still discard this response.
+        return older.promise;
+      });
+      await fireEvent.press(within(screen.getByTestId(focused.warning)).getByRole('button', {
+        name: `Retry ${focused.section}`,
+      }));
+      await waitFor(() => {
+        expect(requestCount(focused.path)).toBe(2);
+        expect(client.getQueryState(focused.key)?.fetchStatus).toBe('fetching');
+        expect(refreshControl().refreshing).toBe(true);
+      });
+      expect(olderSignal).toBeDefined();
+      expect(olderSignal!.aborted).toBe(false);
+      for (const feed of feedCases) {
+        expectCachedWarning(feed);
+        if (feed !== focused) {
+          expect(requestCount(feed.path)).toBe(1);
+          expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
+        }
+      }
+
+      const refreshSignals: AbortSignal[] = [];
+      fetchSpy.mockImplementation((url, init) => {
+        const index = feedCases.findIndex((feed) => feed.path === url);
+        if (index === -1) return Promise.reject(new Error(`Unexpected request: ${url}`));
+        refreshSignals.push(init.signal);
+        return refreshed[index].promise;
+      });
+      await act(async () => refreshControl().onRefresh());
+      await waitFor(() => {
+        // refetch's default cancelRefetch cancels/replaces the focused retry
+        // rather than allowing two live requests to write the same query.
+        expect(olderSignal!.aborted).toBe(true);
+        expect(fetchSpy).toHaveBeenCalledTimes(7);
+        expect(refreshSignals).toHaveLength(3);
+        for (const feed of feedCases) {
+          expect(requestCount(feed.path)).toBe(feed === focused ? 3 : 2);
+          expect(client.getQueryState(feed.key)?.fetchStatus).toBe('fetching');
+          expectCachedWarning(feed);
+        }
+      });
+      for (const signal of refreshSignals) {
+        expect(signal).not.toBe(olderSignal);
+        expect(signal.aborted).toBe(false);
+      }
+      const latestCard = `Latest ${focused.recoveredCard}`;
+      const latestData = JSON.parse(
+        JSON.stringify(focused.recoveredData).replace(focused.recoveredCard, latestCard),
+      );
+      const successResponse = (data: unknown) => new Response(JSON.stringify(data), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+      const latestFailure = unavailableResponse();
+      const settleOlder = async () => {
+        // Use the opposite outcome so stale successes cannot clear a current
+        // warning, and stale failures cannot replace a successful refresh.
+        const response = refreshSucceeds
+          ? unavailableResponse()
+          : successResponse(focused.recoveredData);
+        const readText = response.text.bind(response);
+        let bodyRead!: () => void;
+        const consumed = new Promise<void>((resolve) => { bodyRead = resolve; });
+        jest.spyOn(response, 'text').mockImplementation(async () => {
+          const text = await readText();
+          bodyRead();
+          return text;
+        });
+        await act(async () => {
+          older.resolve(response);
+          // Do not infer completion from the cancelled query's status.
+          await consumed;
+        });
+      };
+      if (order === 'older first') {
+        await settleOlder();
+        for (const feed of feedCases) {
+          expectCachedWarning(feed);
+          expect(client.getQueryState(feed.key)?.fetchStatus).toBe('fetching');
+        }
+        expect(refreshControl().refreshing).toBe(true);
+      }
+
+      await act(async () => {
+        refreshed[feedCases.indexOf(otherSuccess)].resolve(successResponse(otherSuccess.recoveredData));
+        refreshed[feedCases.indexOf(otherFailure)].resolve(unavailableResponse());
+      });
+      await waitFor(() => {
+        expect(screen.getByText(otherSuccess.recoveredCard)).toBeTruthy();
+        expect(screen.queryByTestId(otherSuccess.warning)).toBeNull();
+        expect(client.getQueryState(otherSuccess.key)?.status).toBe('success');
+        expect(client.getQueryState(otherSuccess.key)?.fetchStatus).toBe('idle');
+        expectCachedWarning(otherFailure);
+        expect(client.getQueryState(otherFailure.key)?.status).toBe('error');
+        expect(client.getQueryState(otherFailure.key)?.fetchStatus).toBe('idle');
+      });
+      expectCachedWarning(focused);
+      expect(client.getQueryState(focused.key)?.fetchStatus).toBe('fetching');
+      expect(refreshControl().refreshing).toBe(true);
+
+      await act(async () => {
+        refreshed[feedCases.indexOf(focused)].resolve(
+          refreshSucceeds ? successResponse(latestData) : latestFailure,
+        );
+      });
+      await waitFor(() => {
+        expect(client.getQueryState(focused.key)?.fetchStatus).toBe('idle');
+        expect(refreshControl().refreshing).toBe(false);
+        if (refreshSucceeds) {
+          expect(screen.getByText(latestCard)).toBeTruthy();
+          expect(screen.queryByTestId(focused.warning)).toBeNull();
+        } else {
+          expectCachedWarning(focused);
+          expect(client.getQueryState(focused.key)?.error).toMatchObject({
+            response: latestFailure,
+          });
+        }
+      });
+      const finalStates = feedCases.map((feed) => client.getQueryState(feed.key));
+      if (order === 'older last') await settleOlder();
+      for (const [index, feed] of feedCases.entries()) {
+        expect(client.getQueryState(feed.key)).toBe(finalStates[index]);
+        expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
+        expect(screen.queryByTestId(feed.fullError)).toBeNull();
+        expect(screen.queryByText(feed.empty)).toBeNull();
+      }
+      expect(client.getQueryData(otherSuccess.key)).toEqual(otherSuccess.recoveredData);
+      expect(screen.getByText(otherSuccess.recoveredCard)).toBeTruthy();
+      expect(screen.queryByText(otherSuccess.card)).toBeNull();
+      expect(screen.queryByTestId(otherSuccess.warning)).toBeNull();
+      expectCachedWarning(otherFailure);
+      expect(client.getQueryState(otherFailure.key)?.error).toBeInstanceOf(ApiError);
+      if (refreshSucceeds) {
+        expect(client.getQueryData(focused.key)).toEqual(latestData);
+        expect(client.getQueryState(focused.key)?.status).toBe('success');
+        expect(client.getQueryState(focused.key)?.error).toBeNull();
+        expect(screen.getByText(latestCard)).toBeTruthy();
+        expect(screen.queryByText(focused.card)).toBeNull();
+        expect(screen.queryByTestId(focused.warning)).toBeNull();
+      } else {
+        expectCachedWarning(focused);
+        expect(client.getQueryState(focused.key)?.status).toBe('error');
+        expect(client.getQueryState(focused.key)?.error).toBeInstanceOf(ApiError);
+        expect(client.getQueryState(focused.key)?.error).toMatchObject({ response: latestFailure });
+        expect(screen.queryByText(latestCard)).toBeNull();
+      }
+      expect(screen.queryByText(focused.recoveredCard)).toBeNull();
+      expect(refreshControl().refreshing).toBe(false);
+      expect(fetchSpy).toHaveBeenCalledTimes(7);
+    },
+  );
+
   it.each(feedCases.flatMap((successful, index) =>
     (['success first', 'failure first'] as const).map((order) => ({
       successful,
