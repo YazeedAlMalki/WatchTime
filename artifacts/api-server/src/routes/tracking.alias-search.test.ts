@@ -49,6 +49,12 @@ beforeAll(async () => {
     { name: "__shared_canonical_show__", type: "tv" },
     { name: "__localized_series_one__", type: "tv" },
     { name: "__localized_series_two__", type: "tv" },
+    { name: "Percent 100% Literal Show", type: "tv" },
+    { name: "Percent 100X Literal Show", type: "tv" },
+    { name: "Underscore target", type: "tv" },
+    { name: "Underscore decoy", type: "tv" },
+    { name: "Backslash target", type: "tv" },
+    { name: "Backslash decoy", type: "tv" },
   ]).returning({ id: titlesTable.id })).map(({ id }) => id);
 
   episodeIds = (await db.insert(episodesTable).values(
@@ -96,6 +102,34 @@ beforeAll(async () => {
       titleId: titleIds[2],
       alias: "Shared Local Title",
       normalizedAlias: "sharedlocaltitle",
+      sourceName: "Editorial test",
+      isEditorial: true,
+    },
+    {
+      titleId: titleIds[5],
+      alias: "Underscore A_B Literal Alias",
+      normalizedAlias: "underscoreabliteralalias",
+      sourceName: "Editorial test",
+      isEditorial: true,
+    },
+    {
+      titleId: titleIds[6],
+      alias: "Underscore A-B Literal Alias",
+      normalizedAlias: "underscoreabliteralalias",
+      sourceName: "Editorial test",
+      isEditorial: true,
+    },
+    {
+      titleId: titleIds[7],
+      alias: "Backslash A\\B Literal Alias",
+      normalizedAlias: "backslashabliteralalias",
+      sourceName: "Editorial test",
+      isEditorial: true,
+    },
+    {
+      titleId: titleIds[8],
+      alias: "Backslash AB Literal Alias",
+      normalizedAlias: "backslashabliteralalias",
       sourceName: "Editorial test",
       isEditorial: true,
     },
@@ -195,5 +229,24 @@ describe("tracked show search by canonical and alternate titles", () => {
       .get("/api/me/shows")
       .query({ q: "shared", status: "caught-up" });
     expect(getShowIds(caughtUp)).toEqual([titleIds[2]]);
+  });
+
+  it("treats percent signs, underscores, and backslashes literally", async () => {
+    const percentMatch = await supertest(app)
+      .get("/api/me/shows")
+      .query({ q: "Percent 100% Literal" });
+    expect(getShowIds(percentMatch)).toEqual([titleIds[3]]);
+
+    const underscoreMatch = await supertest(app)
+      .get("/api/me/shows")
+      .query({ q: "Underscore A_B Literal" });
+    expect(getShowIds(underscoreMatch)).toEqual([titleIds[5]]);
+    expect(underscoreMatch.body[0].matchedAlternateTitle).toBe("Underscore A_B Literal Alias");
+
+    const backslashMatch = await supertest(app)
+      .get("/api/me/shows")
+      .query({ q: "Backslash A\\B Literal" });
+    expect(getShowIds(backslashMatch)).toEqual([titleIds[7]]);
+    expect(backslashMatch.body[0].matchedAlternateTitle).toBe("Backslash A\\B Literal Alias");
   });
 });
