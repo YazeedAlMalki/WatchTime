@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ApiError } from '../../../lib/api-client-react/src/custom-fetch';
+import { ApiError, ResponseParseError } from '../../../lib/api-client-react/src/custom-fetch';
 import {
   getGetMyRecommendationsQueryKey,
   getGetMyShowsQueryKey,
@@ -66,6 +66,7 @@ const trackedShow = {
 };
 const accountKey = (key: readonly unknown[]) => [...key, 'account', 'home-network-user'];
 const unavailableBody = { error: 'Feed temporarily unavailable' };
+const malformedJson = '[{"id":7,"name":"Truncated response"';
 const unavailableResponse = () => new Response(JSON.stringify(unavailableBody), {
   status: 503,
   statusText: 'Service Unavailable',
@@ -122,7 +123,7 @@ const feedCases = [
   },
 ];
 
-describe('Home HTTP 503 refetch failures with a real query client', () => {
+describe('Home HTTP refetch failures with a real query client', () => {
   let client: QueryClient;
   let fetchSpy: jest.SpyInstance;
 
@@ -623,6 +624,7 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
         errorBody: unavailableBody as unknown,
         contentType: 'application/json',
         response: unavailableResponse,
+        malformed: false,
       }),
     ),
     ...proxyOutages.map(({ name, body, contentType }) => ({
@@ -630,15 +632,28 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
       outage: name,
       errorBody: body as unknown,
       contentType,
+      malformed: false,
       response: () => new Response(body, {
         status: 503,
         statusText: 'Service Unavailable',
         headers: { 'Content-Type': contentType },
       }),
     })),
+    {
+      cachedContent: 'cards' as const,
+      outage: 'HTTP 200 malformed JSON',
+      errorBody: malformedJson as unknown,
+      contentType: 'application/json',
+      malformed: true,
+      response: () => new Response(malformedJson, {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    },
   ])(
     'keeps cached $cachedContent through $outage retries and clears only the successfully retried warning',
-    async ({ cachedContent, errorBody, contentType, response }) => {
+    async ({ cachedContent, errorBody, contentType, response, malformed }) => {
     // Use fresh real Responses for both pull-to-refresh and focused retry.
     // In particular, proxy HTML/text must be rejected as an ApiError, not
     // treated as successful feed data or replaced with a fabricated JSON error.
@@ -652,6 +667,26 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
       card: empty ? feed.empty : feed.card,
       recoveredCard: recoversToCards ? feed.recoveredCard : feed.empty,
     }));
+    const expectResponseFailure = (feed: typeof feeds[number], expectedResponse?: Response) => {
+      const error = client.getQueryState(feed.key)!.error as ApiError | ResponseParseError;
+      expect(error).toBeInstanceOf(malformed ? ResponseParseError : ApiError);
+      expect(error).toMatchObject({
+        status: malformed ? 200 : 503,
+        statusText: malformed ? 'OK' : 'Service Unavailable',
+        method: 'GET',
+        url: feed.path,
+      });
+      expect(error.response).toBeInstanceOf(Response);
+      expect(error.response.bodyUsed).toBe(true);
+      expect(error.headers.get('content-type')).toBe(contentType);
+      if (expectedResponse) expect(error.response).toBe(expectedResponse);
+      if (error instanceof ResponseParseError) {
+        expect(error.rawBody).toBe(malformedJson);
+        expect(error.cause).toBeInstanceOf(SyntaxError);
+      } else {
+        expect(error.data).toEqual(errorBody);
+      }
+    };
     for (const feed of feeds) {
       client.setQueryData(feed.key, feed.data);
       expect(client.getQueryState(feed.key)?.status).toBe('success');
@@ -698,14 +733,7 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
         expect(screen.getByTestId(feed.warning)).toBeTruthy();
         expect(client.getQueryState(feed.key)?.status).toBe('error');
         expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
-        expect(client.getQueryState(feed.key)?.error).toBeInstanceOf(ApiError);
-        expect(client.getQueryState(feed.key)?.error).toMatchObject({
-          status: 503, statusText: 'Service Unavailable',
-          data: errorBody, method: 'GET', url: feed.path,
-        });
-        const error = client.getQueryState(feed.key)!.error as ApiError;
-        expect(error.response).toBeInstanceOf(Response);
-        expect(error.headers.get('content-type')).toBe(contentType);
+        expectResponseFailure(feed);
       }
     });
     expect(fetchSpy).toHaveBeenCalledTimes(3);
@@ -770,11 +798,7 @@ describe('Home HTTP 503 refetch failures with a real query client', () => {
       await waitFor(() => {
         expect(client.getQueryState(feed.key)?.fetchStatus).toBe('idle');
         expect(client.getQueryState(feed.key)?.status).toBe('error');
-        expect(client.getQueryState(feed.key)?.error).toBeInstanceOf(ApiError);
-        expect(client.getQueryState(feed.key)?.error).toMatchObject({
-          status: 503, data: errorBody, response: retryResponse,
-          method: 'GET', url: feed.path,
-        });
+        expectResponseFailure(feed, retryResponse);
         expect(within(screen.getByTestId(feed.warning)).getByText(
           `Couldn't refresh ${feed.section}. Results may be out of date.`,
         )).toBeTruthy();
