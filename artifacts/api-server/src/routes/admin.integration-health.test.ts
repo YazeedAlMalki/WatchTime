@@ -183,6 +183,75 @@ describe("GET /api/admin/integrations", () => {
     });
   });
 
+  it("formats timestamps at the JavaScript upper limit and flags later finite values", async () => {
+    const insideProvider = "Boundary timestamps inside range regression";
+    const outsideProvider = "Boundary timestamps outside range regression";
+    const healthRows = await db
+      .insert(integrationHealthTable)
+      .values([
+        {
+          provider: insideProvider,
+          status: "healthy",
+          successRatePercent: 93,
+        },
+        {
+          provider: outsideProvider,
+          status: "degraded",
+          successRatePercent: 74,
+        },
+      ])
+      .returning({ id: integrationHealthTable.id });
+    insertedIds.push(...healthRows.map((row) => row.id));
+
+    const insideRow = healthRows[0];
+    const outsideRow = healthRows[1];
+    await db.execute(sql`
+      update integration_health
+      set last_sync_at =
+            timestamp '275760-09-13 00:00:00' - interval '1 millisecond',
+          last_success_at =
+            timestamp '275760-09-13 00:00:00' - interval '1 millisecond'
+      where id = ${insideRow.id}
+    `);
+    await db.execute(sql`
+      update integration_health
+      set last_sync_at =
+            timestamp '275760-09-13 00:00:00' + interval '1 millisecond',
+          last_success_at =
+            timestamp '275760-09-13 00:00:00' + interval '1 millisecond'
+      where id = ${outsideRow.id}
+    `);
+
+    const response = await request(app)
+      .get("/api/admin/integrations")
+      .expect(200);
+    const insideHealth = response.body.find(
+      (row: { provider: string }) => row.provider === insideProvider,
+    );
+    const outsideHealth = response.body.find(
+      (row: { provider: string }) => row.provider === outsideProvider,
+    );
+
+    expect(insideHealth).toMatchObject({
+      provider: insideProvider,
+      status: "healthy",
+      successRatePercent: 93,
+      lastSyncAt: "+275760-09-12T23:59:59.999Z",
+      lastSyncAtMalformed: false,
+      lastSuccessAt: "+275760-09-12T23:59:59.999Z",
+      lastSuccessAtMalformed: false,
+    });
+    expect(outsideHealth).toMatchObject({
+      provider: outsideProvider,
+      status: "degraded",
+      successRatePercent: 74,
+      lastSyncAt: null,
+      lastSyncAtMalformed: true,
+      lastSuccessAt: null,
+      lastSuccessAtMalformed: true,
+    });
+  });
+
   it("preserves each missing refresh count as null for partially populated rows", async () => {
     const attemptsOnlyProvider = "Admin history attempts-only regression";
     const successesOnlyProvider = "Admin history successes-only regression";

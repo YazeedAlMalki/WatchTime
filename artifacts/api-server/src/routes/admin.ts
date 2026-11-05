@@ -487,14 +487,16 @@ router.get("/integrations", async (_req, res) => {
           ${integrationHealthTable.lastSyncAt} is not null
           and (
             not isfinite(${integrationHealthTable.lastSyncAt})
-            or abs(extract(epoch from ${integrationHealthTable.lastSyncAt})) > 8640000000000
+            or abs(extract(epoch from ${integrationHealthTable.lastSyncAt}) * 1000)
+              > ${JS_DATE_LIMIT_MS}
           )
         `,
         lastSuccessAtMalformed: sql<boolean>`
           ${integrationHealthTable.lastSuccessAt} is not null
           and (
             not isfinite(${integrationHealthTable.lastSuccessAt})
-            or abs(extract(epoch from ${integrationHealthTable.lastSuccessAt})) > 8640000000000
+            or abs(extract(epoch from ${integrationHealthTable.lastSuccessAt}) * 1000)
+              > ${JS_DATE_LIMIT_MS}
           )
         `,
       })
