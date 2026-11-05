@@ -259,25 +259,7 @@ for (const [path, inProgressOnly] of [
     .where(eq(titlesTable.id, trackedTitles.titleId))
     .limit(1)
     .as("tracked_catalog_title");
-  const trackedTitleSelection = {
-    id: trackedCatalogTitle.id,
-    type: trackedCatalogTitle.type,
-    name: trackedCatalogTitle.name,
-    overview: trackedCatalogTitle.overview,
-    posterUrl: trackedCatalogTitle.posterUrl,
-    backdropUrl: trackedCatalogTitle.backdropUrl,
-    year: trackedCatalogTitle.year,
-    genres: trackedCatalogTitle.genres,
-    altTitles: trackedCatalogTitle.altTitles,
-    imdbRating: trackedCatalogTitle.imdbRating,
-    rottenTomatoesScore: trackedCatalogTitle.rottenTomatoesScore,
-    runtimeMinutes: trackedCatalogTitle.runtimeMinutes,
-    status: trackedCatalogTitle.status,
-    popularity: trackedCatalogTitle.popularity,
-    tmdbId: trackedCatalogTitle.tmdbId,
-    imdbId: trackedCatalogTitle.imdbId,
-    createdAt: trackedCatalogTitle.createdAt,
-  };
+  const trackedTitleSelection = trackedCatalogTitle._.selectedFields;
   const searchPattern = search
     ? `%${search.replace(/[\\%_]/g, "\\$&")}%`
     : undefined;

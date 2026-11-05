@@ -110,6 +110,44 @@ describe("in-progress show discovery across large libraries", () => {
     expect((await supertest(app).get("/api/me/shows").query({ q: "x".repeat(101) })).status).toBe(400);
   });
 
+  it("serializes every current title field for tracked shows", async () => {
+    const titleId = titleIds[69];
+    await db.update(titlesTable).set({
+      overview: "Tracked title overview",
+      posterUrl: "https://example.test/poster.jpg",
+      backdropUrl: "https://example.test/backdrop.jpg",
+      year: 2025,
+      genres: ["drama", "mystery"],
+      imdbRating: 8.4,
+      rottenTomatoesScore: 93,
+      runtimeMinutes: 47,
+      status: "Returning Series",
+    }).where(eq(titlesTable.id, titleId));
+
+    const response = await supertest(app).get("/api/me/shows");
+
+    expect(response.status).toBe(200);
+    const trackedTitle = response.body.find(
+      (row: { title: { id: number } }) => row.title.id === titleId,
+    )?.title;
+    expect(trackedTitle).toEqual({
+      id: titleId,
+      type: "tv",
+      name: "__progress_page_69__",
+      overview: "Tracked title overview",
+      posterUrl: "https://example.test/poster.jpg",
+      backdropUrl: "https://example.test/backdrop.jpg",
+      year: 2025,
+      genres: ["drama", "mystery"],
+      imdbRating: 8.4,
+      rottenTomatoesScore: 93,
+      runtimeMinutes: 47,
+      status: "Returning Series",
+      inWatchlist: null,
+      watched: true,
+    });
+  });
+
   it("filters the full tracked-show collection by Up Next and Caught Up status", async () => {
     const completedEpisodeIds = episodeIds.slice(138, 140);
     await db.insert(watchedEpisodesTable).values(
