@@ -695,6 +695,11 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
     const initialIds = [...streamExportRowIds].sort((a, b) => b - a);
     const firstBatchLastId = initialIds[499];
     const batchQueries: string[] = [];
+    let transactionReleaseCount = 0;
+    let resolveTransactionReleased!: () => void;
+    const transactionReleased = new Promise<void>((resolve) => {
+      resolveTransactionReleased = resolve;
+    });
     const originalConnect = pool.connect.bind(pool);
     const connectSpy = vi.spyOn(pool, "connect").mockImplementation(((callback?: any) => {
       if (callback) return originalConnect(callback);
@@ -716,6 +721,8 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
         client.release = ((...args: any[]) => {
           client.query = originalQuery as typeof client.query;
           client.release = originalRelease as typeof client.release;
+          transactionReleaseCount += 1;
+          resolveTransactionReleased();
           return originalRelease(...args);
         }) as typeof client.release;
         return client;
@@ -797,12 +804,13 @@ describe("GET /api/admin/audit-log/export — filtered CSV download", () => {
         exportRequest.end();
       });
 
-      await Promise.all([backpressureStarted, clientClosed, serverClosed]);
+      await Promise.all([backpressureStarted, clientClosed, serverClosed, transactionReleased]);
       await new Promise<void>((resolve) => setImmediate(resolve));
 
       expect(forcedBackpressure).toBe(true);
       expect(backpressureListenersObserved).toBe(true);
       expect(batchQueries).toHaveLength(1);
+      expect(transactionReleaseCount).toBe(1);
       expect(serverResponse?.listeners("drain").every((listener) =>
         initialDrainListeners.includes(listener as (...args: any[]) => void),
       )).toBe(true);
