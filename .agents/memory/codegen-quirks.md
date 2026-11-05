@@ -11,3 +11,8 @@ description: Gotchas in the api-spec → api-zod/api-client-react codegen pipeli
 **Why:** The codegen check compares generated files against fresh Orval output, so manually trimming generated whitespace makes contract validation fail even when the types are unchanged.
 
 **How to apply:** Whenever editing `lib/api-spec/openapi.yaml` or its codegen, rerun the project codegen command and leave generated files as emitted.
+
+- OpenAPI string query parameters may generate as `zod.coerce.string()`, which turns repeated query values into one coerced string instead of rejecting them.
+
+**Why:** Coercion at the URL boundary can silently accept malformed duplicate filters even when the generated schema appears to validate a scalar.
+**How to apply:** Check raw Express query values before generated parsing for any scalar query parameter where repeated keys should produce a 400 response.

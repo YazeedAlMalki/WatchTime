@@ -2806,7 +2806,7 @@ export const getListAdminContributionsUrl = (params?: ListAdminContributionsPara
 }
 
 /**
- * @summary List community contributions by status
+ * @summary List community contributions by status, category, and severity
  */
 export const listAdminContributions = async (params?: ListAdminContributionsParams, options?: Parameters<typeof customFetch>[1]): Promise<SafetyContribution[]> => {
 
@@ -2853,7 +2853,7 @@ export type ListAdminContributionsQueryError = ErrorType<void>
 
 
 /**
- * @summary List community contributions by status
+ * @summary List community contributions by status, category, and severity
  */
 
 export function useListAdminContributions<TData = Awaited<ReturnType<typeof listAdminContributions>>, TError = ErrorType<void>>(

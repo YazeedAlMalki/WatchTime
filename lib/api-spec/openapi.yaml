@@ -742,11 +742,18 @@ paths:
     get:
       operationId: listAdminContributions
       tags: [admin]
-      summary: List community contributions by status
+      summary: List community contributions by status, category, and severity
       parameters:
         - name: status
           in: query
           schema: { type: string, enum: [pending, approved, rejected, flagged] }
+        - name: category
+          in: query
+          description: Exact contribution category to match
+          schema: { type: string, minLength: 1 }
+        - name: severity
+          in: query
+          schema: { type: string, enum: [none, mild, moderate, severe] }
         - name: limit
           in: query
           description: Maximum contributions to return (newest first, then descending ID)

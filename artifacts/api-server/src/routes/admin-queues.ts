@@ -15,9 +15,12 @@ const MAX_MODERATION_PAGE_SIZE = 100;
 const MAX_MODERATION_PAGE_OFFSET = 1_000_000;
 
 router.get("/contributions", async (req, res) => {
+  if (req.query.category !== undefined && typeof req.query.category !== "string") {
+    return res.status(400).json({ error: "Invalid contribution filters" });
+  }
   const parsed = ListAdminContributionsQueryParams.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: "Invalid contribution filters" });
-  const { status } = parsed.data;
+  const { status, category, severity } = parsed.data;
   const limit = parsed.data.limit ?? DEFAULT_MODERATION_PAGE_SIZE;
   const offset = parsed.data.offset ?? 0;
   if (limit > MAX_MODERATION_PAGE_SIZE || offset > MAX_MODERATION_PAGE_OFFSET) {
@@ -25,7 +28,11 @@ router.get("/contributions", async (req, res) => {
   }
   const rows = await db.select({ contribution: contributionsTable, titleName: titlesTable.name })
     .from(contributionsTable).innerJoin(titlesTable, eq(titlesTable.id, contributionsTable.titleId))
-    .where(status ? eq(contributionsTable.status, status) : undefined)
+    .where(and(
+      status ? eq(contributionsTable.status, status) : undefined,
+      category ? eq(contributionsTable.category, category) : undefined,
+      severity ? eq(contributionsTable.severity, severity) : undefined,
+    ))
     .orderBy(desc(contributionsTable.createdAt), desc(contributionsTable.id))
     .limit(limit)
     .offset(offset);

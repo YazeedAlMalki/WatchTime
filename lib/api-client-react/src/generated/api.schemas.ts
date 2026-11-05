@@ -1458,6 +1458,12 @@ before?: string;
 export type ListAdminContributionsParams = {
 status?: ListAdminContributionsStatus;
 /**
+ * Exact contribution category to match
+ * @minLength 1
+ */
+category?: string;
+severity?: ListAdminContributionsSeverity;
+/**
  * Maximum contributions to return (newest first, then descending ID)
  * @minimum 1
  * @maximum 100
@@ -1479,6 +1485,16 @@ export const ListAdminContributionsStatus = {
   approved: 'approved',
   rejected: 'rejected',
   flagged: 'flagged',
+} as const;
+
+export type ListAdminContributionsSeverity = typeof ListAdminContributionsSeverity[keyof typeof ListAdminContributionsSeverity];
+
+
+export const ListAdminContributionsSeverity = {
+  none: 'none',
+  mild: 'mild',
+  moderate: 'moderate',
+  severe: 'severe',
 } as const;
 
 export type ListAdminReportsParams = {

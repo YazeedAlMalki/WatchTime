@@ -111,6 +111,7 @@ export * from './listAdminContentAliasesOwnership';
 export * from './listAdminContentAliasesParams';
 export * from './listAdminContentRefreshBatchHistoryParams';
 export * from './listAdminContributionsParams';
+export * from './listAdminContributionsSeverity';
 export * from './listAdminContributionsStatus';
 export * from './listAdminFeedbackCategory';
 export * from './listAdminFeedbackParams';

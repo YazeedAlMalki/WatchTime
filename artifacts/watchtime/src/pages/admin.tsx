@@ -657,10 +657,14 @@ export function ModerationTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<string>("pending");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("all");
   const [offset, setOffset] = useState(0);
   const { data: contributions, isLoading } = useListAdminContributions(
     {
       ...(statusFilter !== "all" ? { status: statusFilter as any } : {}),
+      ...(categoryFilter !== "" ? { category: categoryFilter } : {}),
+      ...(severityFilter !== "all" ? { severity: severityFilter as any } : {}),
       limit: MODERATION_QUEUE_PAGE_SIZE + 1,
       offset,
     },
@@ -690,11 +694,13 @@ export function ModerationTab() {
         <h2 className="text-xl font-display font-bold">
           Community Contributions
         </h2>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
         <Select value={statusFilter} onValueChange={(value) => {
           setStatusFilter(value);
           setOffset(0);
         }}>
-          <SelectTrigger className="w-36">
+          <SelectTrigger className="w-36" aria-label="Filter by contribution status">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -702,7 +708,33 @@ export function ModerationTab() {
             <SelectItem value="approved">Approved</SelectItem>
             <SelectItem value="rejected">Rejected</SelectItem>
             <SelectItem value="flagged">Flagged</SelectItem>
-            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="all">All statuses</SelectItem>
+          </SelectContent>
+        </Select>
+        <Input
+          type="search"
+          className="w-48"
+          aria-label="Filter by contribution category"
+          placeholder="Category"
+          value={categoryFilter}
+          onChange={(event) => {
+            setCategoryFilter(event.target.value);
+            setOffset(0);
+          }}
+        />
+        <Select value={severityFilter} onValueChange={(value) => {
+          setSeverityFilter(value);
+          setOffset(0);
+        }}>
+          <SelectTrigger className="w-40" aria-label="Filter by contribution severity">
+            <SelectValue placeholder="All severities" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All severities</SelectItem>
+            <SelectItem value="none">None</SelectItem>
+            <SelectItem value="mild">Mild</SelectItem>
+            <SelectItem value="moderate">Moderate</SelectItem>
+            <SelectItem value="severe">Severe</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -712,7 +744,7 @@ export function ModerationTab() {
         <EmptyState
           icon={CheckCircle}
           title="No contributions"
-          desc={`No ${statusFilter} contributions at the moment.`}
+          desc="No contributions match the selected filters."
         />
       ) : (
         <div className="flex flex-col gap-3">

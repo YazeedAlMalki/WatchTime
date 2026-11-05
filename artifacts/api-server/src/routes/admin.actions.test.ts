@@ -381,6 +381,45 @@ describe("restored admin actions", () => {
     }
   });
 
+  it("filters contributions by category and severity before paginating", async () => {
+    const createdAt = new Date("2099-01-03T00:00:00.000Z");
+    const inserted = await db.insert(contributionsTable).values([
+      { userId: adminId, titleId, category: "violence", severity: "mild", status: "pending", createdAt },
+      { userId: adminId, titleId, category: "substance_use", severity: "severe", status: "pending", createdAt },
+      { userId: adminId, titleId, category: "violence", severity: "severe", status: "pending", createdAt },
+      { userId: adminId, titleId, category: "violence", severity: "mild", status: "approved", createdAt },
+      { userId: adminId, titleId, category: "violence", severity: "mild", status: "flagged", createdAt },
+      { userId: adminId, titleId, category: "language", severity: "moderate", status: "pending", createdAt },
+    ]).returning();
+    const matchingIds = inserted
+      .filter(({ category, severity }) => category === "violence" && severity === "mild")
+      .map(({ id }) => id)
+      .sort((a, b) => b - a);
+
+    const byCategory = await request(app)
+      .get("/api/admin/contributions?category=violence").expect(200);
+    expect(byCategory.body.length).toBe(4);
+    expect(byCategory.body.every((row: { category: string }) => row.category === "violence")).toBe(true);
+
+    const bySeverity = await request(app)
+      .get("/api/admin/contributions?severity=severe").expect(200);
+    expect(bySeverity.body.length).toBe(2);
+    expect(bySeverity.body.every((row: { severity: string }) => row.severity === "severe")).toBe(true);
+
+    const firstPage = await request(app)
+      .get("/api/admin/contributions?category=violence&severity=mild&limit=2&offset=0")
+      .expect(200);
+    const secondPage = await request(app)
+      .get("/api/admin/contributions?category=violence&severity=mild&limit=2&offset=2")
+      .expect(200);
+    expect([...firstPage.body, ...secondPage.body].map((row: { id: number }) => row.id))
+      .toEqual(matchingIds);
+    expect([...firstPage.body, ...secondPage.body].every(
+      (row: { category: string; severity: string }) =>
+        row.category === "violence" && row.severity === "mild",
+    )).toBe(true);
+  });
+
   it("records the previous and resulting contribution statuses in audit history", async () => {
     const [contribution] = await db.insert(contributionsTable).values({
       userId: adminId,
@@ -422,7 +461,9 @@ describe("restored admin actions", () => {
   it.each([
     "limit=0", "limit=101", "limit=-1", "limit=1.5", "limit=nope",
     "offset=-1", "offset=1000001", "offset=0.5", "offset=nope",
-    "status=unknown", "status=pending&status=approved", "limit=1&limit=2",
+    "status=unknown", "status=pending&status=approved", "category=",
+    "category=violence&category=language", "severity=extreme",
+    "severity=mild&severity=severe", "limit=1&limit=2",
   ])("rejects unsupported contribution filters: %s", async (query) => {
     await request(app).get(`/api/admin/contributions?${query}`).expect(400);
   });

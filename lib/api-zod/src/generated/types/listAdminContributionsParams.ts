@@ -5,10 +5,17 @@
  * WatchTime API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ListAdminContributionsSeverity } from './listAdminContributionsSeverity';
 import type { ListAdminContributionsStatus } from './listAdminContributionsStatus';
 
 export type ListAdminContributionsParams = {
 status?: ListAdminContributionsStatus;
+/**
+ * Exact contribution category to match
+ * @minLength 1
+ */
+category?: string;
+severity?: ListAdminContributionsSeverity;
 /**
  * Maximum contributions to return (newest first, then descending ID)
  * @minimum 1
