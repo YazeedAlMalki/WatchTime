@@ -44,10 +44,20 @@ export default function WatchlistScreen() {
     getNextPageParam: (lastPage) =>
       lastPage.length === PAGE_SIZE ? lastPage.at(-1)?.collectionCursor : undefined,
   });
-  const remove = useRemoveFromWatchlist({
+  const remove = useRemoveFromWatchlist<unknown, { accountId: string | null }>({
     mutation: {
-      onSuccess: () =>
-        queryClient.invalidateQueries({ queryKey: getGetMyWatchlistQueryKey() }),
+      onMutate: async () => ({ accountId: userId }),
+      onSuccess: (_data, _variables, context) => {
+        if (!context?.accountId || context.accountId !== userId) return;
+        return queryClient.invalidateQueries({
+          queryKey: [
+            ...getGetMyWatchlistQueryKey(),
+            'account',
+            context.accountId,
+            'infinite',
+          ],
+        });
+      },
     },
   });
 
