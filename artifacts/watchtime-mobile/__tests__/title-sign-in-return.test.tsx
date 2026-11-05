@@ -13,10 +13,14 @@ const mockAuth = {
 };
 const mockUseQueryForTitle = { current: false };
 const mockUseQueryForSafety = { current: false };
+const mockUseQueryForSimilar = { current: false };
 const mockSession = { token: 'session-account-a' };
 const mockTitleRequests: Array<{ id: number; token: string }> = [];
 const mockSafetyRequests: number[] = [];
 const mockFetchTitle = jest.fn();
+const mockSimilarTitleRequests: number[] = [];
+const mockFetchSimilarTitles = jest.fn();
+const mockResolveSimilarTitlesById: Record<number, (titles: typeof mockSimilarTitle[]) => void> = {};
 const mockResolveTitleByToken: Record<string, (title: typeof mockTitle) => void> = {};
 const mockRejectTitleByToken: Record<string, (error: Error) => void> = {};
 const mockResolveTitleById: Record<number, (title: typeof mockTitle) => void> = {};
@@ -40,6 +44,7 @@ const mockTitle = {
   inWatchlist: false,
   watched: false,
 };
+const mockSimilarTitle = { id: 1001, name: 'A related title' };
 const mockAdd = jest.fn();
 const mockRemove = jest.fn();
 const mockMark = jest.fn();
@@ -153,7 +158,19 @@ jest.mock('@workspace/api-client-react', () => ({
     }
     return { data: { episodes: [] }, isLoading: false, isError: false };
   },
-  useGetSimilarTitles: () => ({ data: [] }),
+  useGetSimilarTitles: (id: number) => {
+    if (mockUseQueryForSimilar.current) {
+      const { useQuery } = require('@tanstack/react-query');
+      return useQuery({
+        queryKey: [`/api/titles/${id}/similar`],
+        queryFn: async () => {
+          mockSimilarTitleRequests.push(id);
+          return mockFetchSimilarTitles(id);
+        },
+      });
+    }
+    return { data: [] };
+  },
   useGetTitleSafety: ({ titleId }: { titleId: number }) => {
     if (!mockUseQueryForSafety.current) {
       return { data: mockSafetyInfo.current, isLoading: false };
@@ -189,7 +206,11 @@ jest.mock('@/components/ui', () => ({
     return message ? React.createElement(Text, null, message) : null;
   },
   Loading: () => null,
-  PosterCard: () => null,
+  PosterCard: ({ title }: { title: { name: string } }) => {
+    const React = require('react');
+    const { Text } = require('react-native');
+    return React.createElement(Text, null, title.name);
+  },
 }));
 jest.mock('@/hooks/useColors', () => ({
   useColors: () => ({
@@ -209,18 +230,22 @@ describe('title action sign-in return', () => {
     mockAuth.current = { isLoaded: true, isSignedIn: false, isAuthAvailable: true, userId: null };
     mockUseQueryForTitle.current = false;
     mockUseQueryForSafety.current = false;
+    mockUseQueryForSimilar.current = false;
     mockSession.token = 'session-account-a';
     mockTitle.type = 'movie';
     mockTitle.seasons = [];
     mockTitleRequests.length = 0;
     mockSafetyRequests.length = 0;
     mockSeasonRequests.length = 0;
+    mockSimilarTitleRequests.length = 0;
     mockFetchTitle.mockReset();
+    mockFetchSimilarTitles.mockReset();
     Object.keys(mockResolveTitleByToken).forEach((token) => delete mockResolveTitleByToken[token]);
     Object.keys(mockRejectTitleByToken).forEach((token) => delete mockRejectTitleByToken[token]);
     Object.keys(mockResolveTitleById).forEach((id) => delete mockResolveTitleById[Number(id)]);
     Object.keys(mockResolveSafetyById).forEach((id) => delete mockResolveSafetyById[Number(id)]);
     Object.keys(mockResolveSeasonByToken).forEach((token) => delete mockResolveSeasonByToken[token]);
+    Object.keys(mockResolveSimilarTitlesById).forEach((id) => delete mockResolveSimilarTitlesById[Number(id)]);
     mockRoute.current = { id: '456' };
     mockTitle.inWatchlist = false;
     mockTitle.watched = false;
@@ -1017,9 +1042,13 @@ describe('title action sign-in return', () => {
   it('keeps title status and safety info matched when older requests resolve later', async () => {
     mockUseQueryForTitle.current = true;
     mockUseQueryForSafety.current = true;
+    mockUseQueryForSimilar.current = true;
     mockAuth.current = { isLoaded: true, isSignedIn: true, isAuthAvailable: true, userId: 'account-a' };
     mockFetchTitle.mockImplementation((id: number) => new Promise((resolve) => {
       mockResolveTitleById[id] = resolve;
+    }));
+    mockFetchSimilarTitles.mockImplementation((id: number) => new Promise((resolve) => {
+      mockResolveSimilarTitlesById[id] = resolve;
     }));
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity } },
@@ -1033,6 +1062,8 @@ describe('title action sign-in return', () => {
     await waitFor(() => {
       expect(mockTitleRequests).toContainEqual({ id: 456, token: 'session-account-a' });
       expect(mockResolveTitleById[456]).toEqual(expect.any(Function));
+      expect(mockSimilarTitleRequests).toContain(456);
+      expect(mockResolveSimilarTitlesById[456]).toEqual(expect.any(Function));
     });
 
     await act(async () => {
@@ -1043,8 +1074,13 @@ describe('title action sign-in return', () => {
     await waitFor(() => {
       expect(mockTitleRequests).toContainEqual({ id: 789, token: 'session-account-a' });
       expect(mockResolveTitleById[789]).toEqual(expect.any(Function));
+      expect(mockSimilarTitleRequests).toContain(789);
+      expect(mockResolveSimilarTitlesById[789]).toEqual(expect.any(Function));
     });
 
+    await act(async () => {
+      mockResolveSimilarTitlesById[789]?.([{ id: 2002, name: 'Suggestions for the newly selected title' }]);
+    });
     await act(async () => {
       mockResolveTitleById[789]?.({
         ...mockTitle,
@@ -1056,11 +1092,21 @@ describe('title action sign-in return', () => {
     });
     await waitFor(() => {
       expect(screen.getByText('The newly selected title')).toBeTruthy();
+      expect(screen.getByText('Suggestions for the newly selected title')).toBeTruthy();
       expect(screen.getByText('In Watchlist')).toBeTruthy();
       expect(screen.getByText('Mark watched')).toBeTruthy();
       expect(mockSafetyRequests).toContain(789);
       expect(mockResolveSafetyById[789]).toEqual(expect.any(Function));
     });
+
+    await act(async () => {
+      mockResolveSimilarTitlesById[456]?.([{ ...mockSimilarTitle, name: 'Suggestions for the previously selected title' }]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Suggestions for the newly selected title')).toBeTruthy();
+    });
+    expect(screen.queryByText('Suggestions for the previously selected title')).toBeNull();
 
     await act(async () => {
       mockResolveTitleById[456]?.({
