@@ -325,10 +325,78 @@ describe("large personal library", () => {
       name === "title_aliases_title_idx" || name === "title_aliases_title_normalized_idx",
     )).toBe(true);
     expect(aliasRowsScanned).toBeGreaterThan(0);
-    // At most about two title-scoped alias passes are needed for each match:
-    // one to qualify the title and one to return its selected alternate.
-    expect(aliasRowsScanned).toBeLessThanOrEqual(4 * PAGE_SIZE * SPARSE_ALIASES_PER_SHOW);
+    // PostgreSQL qualifies candidates before applying the requested ID order,
+    // so it may inspect every tracked alias, then read aliases again for the
+    // returned page. Both passes remain scoped to tracked titles.
+    expect(aliasRowsScanned).toBeLessThanOrEqual(
+      (SHOW_COUNT + PAGE_SIZE) * SPARSE_ALIASES_PER_SHOW,
+    );
     process.stdout.write(`Sparse alternate-title benchmark (${SHOW_COUNT} tracked shows, ${SHOW_COUNT * SPARSE_ALIASES_PER_SHOW} aliases, ${SHOW_COUNT / 2 * 2} matching aliases): ${JSON.stringify({ milliseconds: Math.round(searched.milliseconds), responseBytes: Buffer.byteLength(searched.response.text), aliasRowsScanned, aliasIndexes: [...new Set(aliasIndexes)], planMs: plan["Execution Time"] })}\n`);
+  }, 120_000);
+
+  it("keeps no-match alternate-title search bounded across every tracked show", async () => {
+    // Unlike the sparse-match case, no page can fill early: every tracked
+    // show's aliases must be checked before the empty result is known.
+    await db.delete(titleAliasesTable).where(inArray(titleAliasesTable.titleId, titleIds));
+    const aliases = titleIds.flatMap((titleId) =>
+      Array.from({ length: SPARSE_ALIASES_PER_SHOW }, (_, i) => {
+        const alias = `Background ${titleId}-${i}`;
+        return {
+          titleId, alias, normalizedAlias: alias.toLowerCase(), sourceName: "performance-fixture",
+        };
+      }),
+    );
+    for (let i = 0; i < aliases.length; i += 1000) {
+      await db.insert(titleAliasesTable).values(aliases.slice(i, i + 1000));
+    }
+    await pool.query("ANALYZE title_aliases");
+
+    const searched = await measuredPageFor(
+      "/api/me/shows?q=needle", PAGE_SIZE, undefined,
+    );
+    expect(searched.response.status).toBe(200);
+    expect(searched.response.body).toEqual([]);
+    expect(searched.samples.length).toBeGreaterThanOrEqual(1);
+    expect(searched.samples.length).toBeLessThanOrEqual(2);
+    expect(searched.samples.every((sample) => sample.rows <= PAGE_SIZE)).toBe(true);
+
+    const searchQuery = searched.samples.find((sample) => sample.sql.includes("title_aliases"));
+    expect(searchQuery).toBeDefined();
+    const explained = await pool.query(
+      `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${searchQuery!.sql}`,
+      searchQuery!.values,
+    );
+    const plan = explained.rows[0]["QUERY PLAN"][0] as {
+      "Execution Time": number;
+      Plan: Record<string, unknown>;
+    };
+    const aliasNodes: Record<string, unknown>[] = [];
+    const aliasIndexes: string[] = [];
+    const walk = (node: Record<string, unknown>) => {
+      if (node["Relation Name"] === "title_aliases") aliasNodes.push(node);
+      if (typeof node["Index Name"] === "string" && String(node["Index Name"]).startsWith("title_aliases_")) {
+        aliasIndexes.push(node["Index Name"] as string);
+      }
+      for (const child of (node.Plans ?? []) as Record<string, unknown>[]) walk(child);
+    };
+    walk(plan.Plan);
+    const aliasRowsScanned = aliasNodes.reduce((total, node) => {
+      const rows = Number(node["Actual Rows"] ?? 0);
+      const removed = Number(node["Rows Removed by Filter"] ?? 0);
+      const loops = Number(node["Actual Loops"] ?? 0);
+      return total + (rows + removed) * loops;
+    }, 0);
+
+    expect(aliasIndexes.some((name) =>
+      name === "title_aliases_title_idx" || name === "title_aliases_title_normalized_idx",
+    )).toBe(true);
+    expect(aliasRowsScanned).toBeGreaterThan(0);
+    // The empty search may inspect every alias of each tracked show, but
+    // should not scan the unrelated catalog's alias rows.
+    expect(aliasRowsScanned).toBeLessThanOrEqual(
+      2 * SHOW_COUNT * SPARSE_ALIASES_PER_SHOW,
+    );
+    process.stdout.write(`No-match alternate-title benchmark (${SHOW_COUNT} tracked shows, ${SHOW_COUNT * SPARSE_ALIASES_PER_SHOW} tracked aliases): ${JSON.stringify({ milliseconds: Math.round(searched.milliseconds), responseBytes: Buffer.byteLength(searched.response.text), aliasRowsScanned, aliasIndexes: [...new Set(aliasIndexes)], planMs: plan["Execution Time"] })}\n`);
   }, 120_000);
 
   it("keeps in-progress discovery bounded on first and later ID pages", async () => {
