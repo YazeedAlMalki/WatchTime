@@ -43,7 +43,12 @@ async function ensureLocalUser(clerkUserId: string): Promise<{
     .values({ id: clerkUserId, email, name, isAdmin: false })
     .onConflictDoNothing()
     .returning();
-  if (created) {
+  // When ADMIN_CLERK_USER_ID is set, only that Clerk user may ever be promoted,
+  // so a public deployment is not claimed by whoever signs up first. Unset keeps
+  // the original first-registered-user behaviour (dev instances).
+  const designatedAdmin = process.env.ADMIN_CLERK_USER_ID?.trim();
+  const mayBecomeAdmin = !designatedAdmin || designatedAdmin === clerkUserId;
+  if (created && mayBecomeAdmin) {
     // Promote the very first user to admin. The partial unique index
     // users_single_admin_idx guarantees at most one admin even under
     // concurrent first-signup races: the losing promotion simply fails.

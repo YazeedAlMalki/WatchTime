@@ -6,7 +6,7 @@ import { DrizzleRateLimitStore } from "./drizzleRateLimitStore";
  * Key generator that prefers authenticated userId, falls back to IP (with IPv6 normalisation).
  */
 function userOrIpKey(req: Request): string {
-  if ((req as any).userId) return (req as any).userId as string;
+  if (req.userId) return req.userId;
   return ipKeyGenerator(req.ip ?? "");
 }
 

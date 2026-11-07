@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import compression from "compression";
+import helmet from "helmet";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
@@ -81,6 +82,10 @@ app.use(compression({ threshold: 1024 }));
 app.use("/api", healthRouter);
 
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
+
+// Security headers for the API's own responses. Mounted after the Clerk proxy
+// so proxied Clerk assets keep the headers Clerk sends.
+app.use(helmet());
 
 // Transport overhead is allowed here; import-parsers enforces the 2 MiB limit
 // against raw UTF-8 content itself.
