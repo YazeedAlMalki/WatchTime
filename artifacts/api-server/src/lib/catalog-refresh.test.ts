@@ -3326,8 +3326,10 @@ describe("catalog refresh post-sync provider-health failure", () => {
       const cleanupSpy = vi.spyOn(db, "delete");
       const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
       runCatalogSyncMock.mockImplementationOnce(async (
-        ...[_options, selected, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
+        ...[_options, selectedItems, onProgress]: Parameters<typeof import("../seed-real").runCatalogSync>
       ) => {
+        // `items` has a default in the real signature, so it is optional here.
+        const selected = selectedItems ?? [];
         let successfulTitles = 0;
         for (const [index, item] of selected.entries()) {
           await onProgress!({
